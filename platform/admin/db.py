@@ -54,9 +54,19 @@ CREATE TABLE IF NOT EXISTS platform_events (
 """
 
 
+_SEED = """
+INSERT OR IGNORE INTO apps (name, description, route, backend_port) VALUES
+    ('Chat',             'AI chat interface',                        '/chat',      8010),
+    ('Writer',           'AI writing assistant',                     '/writer',    8011),
+    ('Coding Assistant', 'AI coding and GitHub integration',         '/coding',    8012),
+    ('Autocoder',        'Autonomous multi-agent development system','/autocoder', 8050);
+"""
+
+
 def init_db():
     with _open() as conn:
         conn.executescript(_SCHEMA)
+        conn.executescript(_SEED)
 
 
 @contextmanager
