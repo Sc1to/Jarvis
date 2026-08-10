@@ -4,6 +4,7 @@ COPY autocoder/conductor/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY memory/ memory/
 COPY tools/ tools/
+COPY health.py .
 COPY autocoder/conductor/ autocoder/conductor/
 WORKDIR /app/autocoder/conductor
 ENV PYTHONPATH=/app

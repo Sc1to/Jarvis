@@ -4,6 +4,7 @@ COPY admin/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY memory/ memory/
 COPY tools/ tools/
+COPY health.py .
 COPY admin/ admin/
 WORKDIR /app/admin
 ENV PYTHONPATH=/app

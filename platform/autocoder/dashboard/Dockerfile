@@ -3,6 +3,7 @@ WORKDIR /app
 COPY autocoder/dashboard/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY memory/ memory/
+COPY health.py .
 COPY autocoder/dashboard/ autocoder/dashboard/
 WORKDIR /app/autocoder/dashboard
 ENV PYTHONPATH=/app

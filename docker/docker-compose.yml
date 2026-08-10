@@ -2,8 +2,10 @@ services:
 
   # ── Infrastructure ────────────────────────────────────────────────────────────
 
+  # Profile "real" — real Ollama (requires GPU or large RAM)
   ollama:
     image: ollama/ollama:latest
+    profiles: [real]
     ports:
       - "11434:11434"
     volumes:
@@ -18,6 +20,24 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+
+  # Profile "mock" — lightweight mock, no GPU needed
+  mock-ollama:
+    build: ../scripts/dev/mock-ollama
+    profiles: [mock]
+    ports:
+      - "11434:11434"
+    environment:
+      - MOCK_DELAY_MS=50
+    networks:
+      default:
+        aliases:
+          - ollama
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
 
   chromadb:
     image: chromadb/chroma:latest
@@ -47,8 +67,6 @@ services:
     ports:
       - "8010:8010"
     env_file: .env.docker
-    depends_on:
-      - ollama
 
   writer:
     build:
@@ -57,8 +75,6 @@ services:
     ports:
       - "8011:8011"
     env_file: .env.docker
-    depends_on:
-      - ollama
 
   coding:
     build:
@@ -69,8 +85,6 @@ services:
     env_file: .env.docker
     volumes:
       - platform-data:/opt/platform/data
-    depends_on:
-      - ollama
 
   # ── Autocoder ─────────────────────────────────────────────────────────────────
 
@@ -100,7 +114,6 @@ services:
       - DASHBOARD_URL=http://autocoder-dashboard:8050
     depends_on:
       - re-agent
-      - ollama
 
   re-agent:
     build:
@@ -111,8 +124,6 @@ services:
     env_file: .env.docker
     volumes:
       - platform-data:/opt/platform/data
-    depends_on:
-      - ollama
 
 volumes:
   ollama-data:

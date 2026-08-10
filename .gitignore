@@ -1,0 +1,41 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+*.egg-info/
+dist/
+build/
+*.egg
+.pytest_cache/
+.mypy_cache/
+
+# Node
+node_modules/
+.env
+.env.local
+.env.*.local
+
+# Build output
+dist/
+build/
+
+# General
+.DS_Store
+*.log
+.idea/
+.vscode/
+*.swp
+*.swo
+Thumbs.db
+
+# Data — never commit the live database or vector store
+platform/data/*.db
+platform/data/chromadb/
+
+# Secrets — stored in SQLite config table, never in files
+*.pem
+*.key
+config.json
