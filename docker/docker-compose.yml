@@ -59,6 +59,7 @@ services:
       - platform-data:/opt/platform/data
     depends_on:
       - chromadb
+    restart: unless-stopped
 
   chat:
     build:
@@ -67,6 +68,7 @@ services:
     ports:
       - "8010:8010"
     env_file: .env.docker
+    restart: unless-stopped
 
   writer:
     build:
@@ -75,6 +77,7 @@ services:
     ports:
       - "8011:8011"
     env_file: .env.docker
+    restart: unless-stopped
 
   coding:
     build:
@@ -85,6 +88,7 @@ services:
     env_file: .env.docker
     volumes:
       - platform-data:/opt/platform/data
+    restart: unless-stopped
 
   # ── Autocoder ─────────────────────────────────────────────────────────────────
 
@@ -99,6 +103,7 @@ services:
       - platform-data:/opt/platform/data
     depends_on:
       - conductor
+    restart: unless-stopped
 
   conductor:
     build:
@@ -114,6 +119,7 @@ services:
       - DASHBOARD_URL=http://autocoder-dashboard:8050
     depends_on:
       - re-agent
+    restart: unless-stopped
 
   re-agent:
     build:
@@ -124,6 +130,7 @@ services:
     env_file: .env.docker
     volumes:
       - platform-data:/opt/platform/data
+    restart: unless-stopped
 
   caddy:
     image: caddy:2-alpine
