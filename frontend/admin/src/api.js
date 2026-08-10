@@ -12,6 +12,7 @@ export const getApps = () => api.get('/apps')
 export const createApp = (data) => api.post('/apps', data)
 export const deleteApp = (id) => api.delete(`/apps/${id}`)
 export const restartApp = (id) => api.post(`/apps/${id}/restart`)
+export const getAppAgents = (appId) => api.get(`/apps/${appId}/agents`)
 
 // Ollama
 export const getModels = () => api.get('/ollama/models')

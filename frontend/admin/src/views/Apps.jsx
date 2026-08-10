@@ -3,7 +3,7 @@ import { getApps, createApp, deleteApp, restartApp } from '../api.js'
 
 const EMPTY = { name: '', description: '', route: '', backend_port: '' }
 
-export default function Apps() {
+export default function Apps({ setSelectedApp }) {
   const [apps, setApps] = useState([])
   const [form, setForm] = useState(EMPTY)
   const [error, setError] = useState(null)
@@ -58,14 +58,19 @@ export default function Apps() {
       <div className="space-y-2">
         {apps.length === 0 && <p className="text-gray-500 text-sm">No apps registered.</p>}
         {apps.map(a => (
-          <div key={a.id} className="bg-gray-800 rounded-lg px-4 py-3 border border-gray-700 flex items-center gap-3">
+          <div
+            key={a.id}
+            className="bg-gray-800 rounded-lg px-4 py-3 border border-gray-700 flex items-center gap-3 cursor-pointer hover:border-gray-500 transition-colors"
+            onClick={() => setSelectedApp(a)}
+          >
             <div className="flex-1 min-w-0">
               <span className="text-sm font-medium">{a.name}</span>
               <span className="text-xs text-gray-500 ml-2">{a.route} → :{a.backend_port}</span>
               {a.description && <p className="text-xs text-gray-500 mt-0.5">{a.description}</p>}
             </div>
-            <button onClick={() => restart(a.id)} className="text-xs text-blue-400 hover:text-blue-300">Restart</button>
-            <button onClick={() => remove(a.id)} className="text-xs text-red-400 hover:text-red-300">Remove</button>
+            <button onClick={e => { e.stopPropagation(); restart(a.id) }} className="text-xs text-blue-400 hover:text-blue-300">Restart</button>
+            <button onClick={e => { e.stopPropagation(); remove(a.id) }} className="text-xs text-red-400 hover:text-red-300">Remove</button>
+            <span className="text-gray-600 text-xs">›</span>
           </div>
         ))}
       </div>

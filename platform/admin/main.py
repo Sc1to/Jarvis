@@ -352,13 +352,22 @@ def list_agents(db=Depends(get_db)):
         raise HTTPException(500, str(e))
 
 
+@app.get("/apps/{app_id}/agents")
+def list_app_agents(app_id: int, db=Depends(get_db)):
+    if not db.execute("SELECT 1 FROM apps WHERE id=?", (app_id,)).fetchone():
+        raise HTTPException(404, "App not found")
+    return [dict(r) for r in db.execute(
+        "SELECT * FROM agents WHERE app_id=? ORDER BY name", (app_id,)
+    ).fetchall()]
+
+
 @app.post("/agents", status_code=201)
 def create_agent(body: dict, db=Depends(get_db)):
     try:
         db.execute(
             """INSERT INTO agents
-               (name, description, model, tools, memory_scope, ui_type, ui_route, system_prompt)
-               VALUES (?,?,?,?,?,?,?,?)""",
+               (name, description, model, tools, memory_scope, ui_type, ui_route, system_prompt, app_id, calls)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
             (
                 body["name"],
                 body.get("description"),
@@ -368,6 +377,8 @@ def create_agent(body: dict, db=Depends(get_db)):
                 body.get("ui_type", "none"),
                 body.get("ui_route"),
                 body.get("system_prompt"),
+                body.get("app_id"),
+                json.dumps(body.get("calls", [])),
             ),
         )
         return {"status": "ok"}
@@ -379,10 +390,12 @@ def create_agent(body: dict, db=Depends(get_db)):
 def update_agent(agent_id: int, body: dict, db=Depends(get_db)):
     if not db.execute("SELECT 1 FROM agents WHERE id=?", (agent_id,)).fetchone():
         raise HTTPException(404, "Agent not found")
-    allowed = {"name", "description", "model", "tools", "memory_scope", "ui_type", "ui_route", "system_prompt"}
+    allowed = {"name", "description", "model", "tools", "memory_scope", "ui_type", "ui_route", "system_prompt", "app_id", "calls"}
     fields = {k: v for k, v in body.items() if k in allowed}
     if "tools" in fields:
         fields["tools"] = json.dumps(fields["tools"])
+    if "calls" in fields:
+        fields["calls"] = json.dumps(fields["calls"])
     sets = ", ".join(f"{k}=?" for k in fields)
     db.execute(f"UPDATE agents SET {sets} WHERE id=?", (*fields.values(), agent_id))
     return {"status": "ok"}

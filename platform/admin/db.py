@@ -67,6 +67,15 @@ def init_db():
     with _open() as conn:
         conn.executescript(_SCHEMA)
         conn.executescript(_SEED)
+        # Idempotent migrations — ignored if columns already exist
+        for sql in [
+            "ALTER TABLE agents ADD COLUMN app_id INTEGER REFERENCES apps(id)",
+            "ALTER TABLE agents ADD COLUMN calls TEXT DEFAULT '[]'",
+        ]:
+            try:
+                conn.execute(sql)
+            except Exception:
+                pass
 
 
 @contextmanager
