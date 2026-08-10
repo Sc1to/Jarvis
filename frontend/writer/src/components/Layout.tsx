@@ -1,4 +1,5 @@
 import { NavLink, Outlet, useNavigate, useParams } from 'react-router-dom'
+import { API } from '@/lib/api'
 import { useQuery } from '@tanstack/react-query'
 import { cn } from '@/lib/utils'
 import { Settings, Star, BookOpen, Eye, PenLine, History, ChevronLeft } from 'lucide-react'
@@ -18,7 +19,7 @@ export function BookLayout() {
 
   const { data: book } = useQuery({
     queryKey: ['book', bookId],
-    queryFn: () => fetch(`/api/books/${bookId}`).then(r => r.json()),
+    queryFn: () => fetch(`${API}/books/${bookId}`).then(r => r.json()),
     enabled: !!bookId,
   })
 

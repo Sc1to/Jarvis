@@ -9,13 +9,14 @@ import { Switch } from '@/components/ui/switch'
 import { Separator } from '@/components/ui/separator'
 import { CheckCircle, XCircle, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { API } from '@/lib/api'
 
 async function fetchSettings(): Promise<Record<string, string>> {
-  return fetch('/api/settings').then(r => r.json())
+  return fetch(`${API}/settings`).then(r => r.json())
 }
 
 async function saveSettings(data: Record<string, string>) {
-  await fetch('/api/settings', {
+  await fetch(`${API}/settings`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -97,21 +98,21 @@ export default function SettingsPage() {
   // Live model lists — fetched once keys are entered
   const geminiModels = useQuery({
     queryKey: ['models', 'gemini', geminiKey],
-    queryFn: () => fetch('/api/models/gemini').then(r => r.ok ? r.json() as Promise<{ id: string; name: string }[]> : Promise.reject()),
+    queryFn: () => fetch(`${API}/models/gemini`).then(r => r.ok ? r.json() as Promise<{ id: string; name: string }[]> : Promise.reject()),
     enabled: geminiKey.length > 10,
     retry: false,
     staleTime: 60_000,
   })
   const orModels = useQuery({
     queryKey: ['models', 'openrouter', openrouterKey],
-    queryFn: () => fetch('/api/models/openrouter').then(r => r.ok ? r.json() as Promise<{ id: string; name: string; free: boolean }[]> : Promise.reject()),
+    queryFn: () => fetch(`${API}/models/openrouter`).then(r => r.ok ? r.json() as Promise<{ id: string; name: string; free: boolean }[]> : Promise.reject()),
     enabled: openrouterKey.length > 10,
     retry: false,
     staleTime: 60_000,
   })
   const ollamaModels = useQuery({
     queryKey: ['models', 'ollama', ollamaHost],
-    queryFn: () => fetch('/api/models/ollama').then(r => r.ok ? r.json() as Promise<{ id: string; name: string }[]> : Promise.reject()),
+    queryFn: () => fetch(`${API}/models/ollama`).then(r => r.ok ? r.json() as Promise<{ id: string; name: string }[]> : Promise.reject()),
     retry: false,
     refetchInterval: 30_000,
     staleTime: 30_000,
@@ -122,13 +123,6 @@ export default function SettingsPage() {
     if (provider === 'openrouter')  return orModels.data ?? []
     if (provider === 'ollama')      return ollamaModels.data ?? []
     return []
-  }
-
-  function providerReady(provider: Provider): boolean {
-    if (provider === 'gemini')      return !geminiModels.isError && (geminiModels.data?.length ?? 0) > 0
-    if (provider === 'openrouter')  return !orModels.isError && (orModels.data?.length ?? 0) > 0
-    if (provider === 'ollama')      return !ollamaModels.isError && (ollamaModels.data?.length ?? 0) > 0
-    return false
   }
 
   function setAgent(key: string, field: 'provider' | 'model', value: string) {

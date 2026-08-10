@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Lock, Send, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { readSSE } from '@/lib/sse'
+import { API } from '@/lib/api'
 
 interface Message { role: 'user' | 'assistant'; content: string }
 
@@ -26,7 +27,7 @@ export default function NorthStarPage() {
   // Restore state on reload (if already locked)
   const { data: savedState } = useQuery({
     queryKey: ['north-star-state', bookId],
-    queryFn: () => fetch(`/api/books/${bookId}/phase1/north-star`).then(r => r.json()) as Promise<{ locked: boolean; document: string | null }>,
+    queryFn: () => fetch(`${API}/books/${bookId}/phase1/north-star`).then(r => r.json()) as Promise<{ locked: boolean; document: string | null }>,
   })
   useEffect(() => {
     if (savedState?.locked) {
@@ -52,7 +53,7 @@ export default function NorthStarPage() {
     setStreaming(true)
 
     try {
-      const resp = await fetch(`/api/books/${bookId}/phase1/north-star/reply`, {
+      const resp = await fetch(`${API}/books/${bookId}/phase1/north-star/reply`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: history }),
@@ -90,7 +91,7 @@ export default function NorthStarPage() {
   async function handleLock() {
     setLocking(true)
     try {
-      const resp = await fetch(`/api/books/${bookId}/phase1/north-star/lock`, {
+      const resp = await fetch(`${API}/books/${bookId}/phase1/north-star/lock`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages }),

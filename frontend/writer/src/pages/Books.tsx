@@ -1,20 +1,20 @@
 import { useState } from 'react'
+import { API } from '@/lib/api'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+import { Card, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Badge } from '@/components/ui/badge'
 import { BookOpen, Plus, Trash2, ArrowRight, Loader2 } from 'lucide-react'
 
 interface Book { id: string; title: string; created_at: number }
 
 async function fetchBooks(): Promise<Book[]> {
-  return fetch('/api/books').then(r => r.json())
+  return fetch(`${API}/books`).then(r => r.json())
 }
 
 async function createBook(title: string): Promise<Book> {
-  const r = await fetch('/api/books', {
+  const r = await fetch(`${API}/books`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ title }),
@@ -24,7 +24,7 @@ async function createBook(title: string): Promise<Book> {
 }
 
 async function deleteBook(id: string) {
-  await fetch(`/api/books/${id}`, { method: 'DELETE' })
+  await fetch(`${API}/books/${id}`, { method: 'DELETE' })
 }
 
 export default function BooksPage() {

@@ -33,11 +33,12 @@
     # All frontends use /<app>/api as their API base URL; backends have no /api prefix.
     # So /<app>/api/* strips /<app>/api before proxying, /<app>/* strips /<app> for static.
 
+    handle /admin/api* {
+        uri strip_prefix /admin/api
+        reverse_proxy admin:8000
+    }
+
     handle /admin* {
-        handle /admin/api* {
-            uri strip_prefix /admin/api
-            reverse_proxy admin:8000
-        }
         handle @admin-built {
             uri strip_prefix /admin
             root * /srv/admin
@@ -50,11 +51,12 @@
         }
     }
 
+    handle /chat/api* {
+        uri strip_prefix /chat/api
+        reverse_proxy chat:8010
+    }
+
     handle /chat* {
-        handle /chat/api* {
-            uri strip_prefix /chat/api
-            reverse_proxy chat:8010
-        }
         handle @chat-built {
             uri strip_prefix /chat
             root * /srv/chat
@@ -67,11 +69,12 @@
         }
     }
 
+    handle /writer/api* {
+        uri strip_prefix /writer
+        reverse_proxy writer:8011
+    }
+
     handle /writer* {
-        handle /writer/api* {
-            uri strip_prefix /writer/api
-            reverse_proxy writer:8011
-        }
         handle @writer-built {
             uri strip_prefix /writer
             root * /srv/writer
@@ -84,11 +87,12 @@
         }
     }
 
+    handle /coding/api* {
+        uri strip_prefix /coding/api
+        reverse_proxy coding:8012
+    }
+
     handle /coding* {
-        handle /coding/api* {
-            uri strip_prefix /coding/api
-            reverse_proxy coding:8012
-        }
         handle @coding-built {
             uri strip_prefix /coding
             root * /srv/coding
@@ -101,11 +105,12 @@
         }
     }
 
+    handle /autocoder/api* {
+        uri strip_prefix /autocoder/api
+        reverse_proxy autocoder-dashboard:8050
+    }
+
     handle /autocoder* {
-        handle /autocoder/api* {
-            uri strip_prefix /autocoder/api
-            reverse_proxy autocoder-dashboard:8050
-        }
         handle @autocoder-built {
             uri strip_prefix /autocoder
             root * /srv/autocoder

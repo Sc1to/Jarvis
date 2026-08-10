@@ -7,6 +7,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 import { readSSE } from '@/lib/sse'
+import { API } from '@/lib/api'
 import { ChevronRight, Play, CheckCircle, Lock, Loader2, BookOpen, MapPin, Users } from 'lucide-react'
 
 const TIERS = [
@@ -41,18 +42,18 @@ export default function BibleWorkshopPage() {
 
   const { data: savedTiers } = useQuery<TierEntry[]>({
     queryKey: ['bible-tiers', bookId],
-    queryFn: () => fetch(`/api/books/${bookId}/phase1/bible/tiers`).then(r => r.json()),
+    queryFn: () => fetch(`${API}/books/${bookId}/phase1/bible/tiers`).then(r => r.json()),
   })
 
   const { data: phase2Status, refetch: refetchP2Status } = useQuery({
     queryKey: ['phase2-status', bookId],
-    queryFn: () => fetch(`/api/books/${bookId}/phase2/status`).then(r => r.json()),
+    queryFn: () => fetch(`${API}/books/${bookId}/phase2/status`).then(r => r.json()),
     refetchInterval: false,
   })
 
   const { data: bible, refetch: refetchBible } = useQuery<Bible>({
     queryKey: ['bible', bookId],
-    queryFn: () => fetch(`/api/books/${bookId}/bible`).then(r => r.json()),
+    queryFn: () => fetch(`${API}/books/${bookId}/bible`).then(r => r.json()),
     enabled: !!phase2Status?.bible_exists,
   })
 
@@ -101,7 +102,7 @@ export default function BibleWorkshopPage() {
     setContents(prev => { const n = [...prev]; n[idx] = ''; return n })
     setStreaming(true)
     try {
-      const resp = await fetch(`/api/books/${bookId}/phase1/bible/run-tier`, {
+      const resp = await fetch(`${API}/books/${bookId}/phase1/bible/run-tier`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tier: idx + 1 }),
@@ -127,7 +128,7 @@ export default function BibleWorkshopPage() {
 
   async function approveTier(idx: number) {
     const content = contents[idx] ?? ''
-    await fetch(`/api/books/${bookId}/phase1/bible/approve-tier`, {
+    await fetch(`${API}/books/${bookId}/phase1/bible/approve-tier`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tier: idx + 1, content }),
@@ -145,7 +146,7 @@ export default function BibleWorkshopPage() {
 
   async function injectAndRerun() {
     if (!directive.trim()) return
-    await fetch(`/api/books/${bookId}/phase1/bible/directive`, {
+    await fetch(`${API}/books/${bookId}/phase1/bible/directive`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ directive }),
@@ -154,11 +155,11 @@ export default function BibleWorkshopPage() {
     runTier(activeTier)
   }
 
-  async function runP2(endpoint: string, label: string, nextStep: P2Step) {
+  async function runP2(endpoint: string, _label: string, nextStep: P2Step) {
     setP2Step(nextStep)
     setP2Log('')
     try {
-      const resp = await fetch(`/api/books/${bookId}/phase2/${endpoint}`, { method: 'POST' })
+      const resp = await fetch(`${API}/books/${bookId}/phase2/${endpoint}`, { method: 'POST' })
       for await (const event of readSSE(resp)) {
         if (event.type === 'token') {
           setP2Log(prev => prev + event.content)
@@ -181,7 +182,7 @@ export default function BibleWorkshopPage() {
   }
 
   async function approveP2() {
-    await fetch(`/api/books/${bookId}/phase2/approve`, { method: 'POST' })
+    await fetch(`${API}/books/${bookId}/phase2/approve`, { method: 'POST' })
     await refetchP2Status()
     qc.invalidateQueries({ queryKey: ['bible', bookId] })
   }

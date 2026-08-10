@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { API } from '@/lib/api'
 import { useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Badge } from '@/components/ui/badge'
@@ -14,13 +15,13 @@ export default function HistoryPage() {
 
   const { data: log = [] } = useQuery<Commit[]>({
     queryKey: ['git-log', bookId],
-    queryFn: () => fetch(`/api/books/${bookId}/git/log`).then(r => r.json()),
+    queryFn: () => fetch(`${API}/books/${bookId}/git/log`).then(r => r.json()),
     refetchInterval: 15_000,
   })
 
   const { data: diff } = useQuery({
     queryKey: ['git-diff', bookId, selected],
-    queryFn: () => fetch(`/api/books/${bookId}/git/diff/${selected}`).then(r => r.json()),
+    queryFn: () => fetch(`${API}/books/${bookId}/git/diff/${selected}`).then(r => r.json()),
     enabled: !!selected,
   })
 

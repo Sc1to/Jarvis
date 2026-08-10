@@ -7,10 +7,8 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 import { readSSE } from '@/lib/sse'
-import { Play, CheckCircle, XCircle, Loader2, ChevronRight, Lock, AlertTriangle } from 'lucide-react'
-import { EditorState } from '@codemirror/state'
-import { EditorView, lineNumbers, drawSelection, keymap } from '@codemirror/view'
-import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
+import { API } from '@/lib/api'
+import { Play, CheckCircle, Loader2, Lock, AlertTriangle } from 'lucide-react'
 
 interface ChapterSummary {
   chapter: number
@@ -55,33 +53,6 @@ interface ProgressEvent {
   entity_count?: number
 }
 
-function ProseEditor({ initialValue, onChange }: { initialValue: string; onChange: (v: string) => void }) {
-  const editorRef = useRef<HTMLDivElement>(null)
-  const viewRef = useRef<EditorView | null>(null)
-
-  useEffect(() => {
-    if (!editorRef.current) return
-    const state = EditorState.create({
-      doc: initialValue,
-      extensions: [
-        lineNumbers(), history(), drawSelection(),
-        keymap.of([...defaultKeymap, ...historyKeymap]),
-        EditorView.lineWrapping,
-        EditorView.updateListener.of(u => { if (u.docChanged) onChange(u.state.doc.toString()) }),
-        EditorView.theme({
-          '&': { height: '100%', fontSize: '1.05rem', fontFamily: '"Lora", Georgia, serif' },
-          '.cm-scroller': { overflow: 'auto', lineHeight: '1.85' },
-          '.cm-content': { padding: '1.5rem' },
-          '&.cm-focused': { outline: 'none' },
-        }),
-      ],
-    })
-    viewRef.current = new EditorView({ state, parent: editorRef.current })
-    return () => viewRef.current?.destroy()
-  }, [])
-
-  return <div ref={editorRef} className="h-full border border-border rounded-lg overflow-hidden" />
-}
 
 function EventFeed({ events }: { events: ProgressEvent[] }) {
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -143,7 +114,7 @@ export default function WritingLoopPage() {
     next_chapter: number | null
   }>({
     queryKey: ['phase3-status', bookId],
-    queryFn: () => fetch(`/api/books/${bookId}/phase3/status`).then(r => r.json()),
+    queryFn: () => fetch(`${API}/books/${bookId}/phase3/status`).then(r => r.json()),
   })
 
   const [activeChapter, setActiveChapter] = useState<number | null>(null)
@@ -158,7 +129,7 @@ export default function WritingLoopPage() {
   const { data: chapterData, refetch: refetchChapter } = useQuery<{ chapter: number; content: string; meta: ChapterMeta } | null>({
     queryKey: ['chapter', bookId, activeChapter],
     queryFn: () => activeChapter
-      ? fetch(`/api/books/${bookId}/phase3/chapter/${activeChapter}`).then(r => r.json())
+      ? fetch(`${API}/books/${bookId}/phase3/chapter/${activeChapter}`).then(r => r.json())
       : Promise.resolve(null),
     enabled: activeChapter !== null,
   })
@@ -186,7 +157,7 @@ export default function WritingLoopPage() {
     setChapterDone(false)
 
     try {
-      const resp = await fetch(`/api/books/${bookId}/phase3/write-chapter`, {
+      const resp = await fetch(`${API}/books/${bookId}/phase3/write-chapter`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chapter }),
@@ -212,7 +183,7 @@ export default function WritingLoopPage() {
     setEvents([])
 
     try {
-      const resp = await fetch(`/api/books/${bookId}/phase3/chapter/${chapter}/approve`, { method: 'POST' })
+      const resp = await fetch(`${API}/books/${bookId}/phase3/chapter/${chapter}/approve`, { method: 'POST' })
       for await (const ev of readSSE(resp)) {
         const event = ev as ProgressEvent
         if (event.type !== 'token') {
@@ -235,7 +206,7 @@ export default function WritingLoopPage() {
     setEvents([])
 
     try {
-      const resp = await fetch(`/api/books/${bookId}/phase3/chapter/${chapter}/scene/${scene}/rewrite`, {
+      const resp = await fetch(`${API}/books/${bookId}/phase3/chapter/${chapter}/scene/${scene}/rewrite`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ directive: rewriteDirective }),

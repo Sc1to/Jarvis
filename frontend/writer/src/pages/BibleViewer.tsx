@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { API } from '@/lib/api'
 import { useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Input } from '@/components/ui/input'
@@ -21,7 +22,7 @@ export default function BibleViewerPage() {
 
   const { data: bible } = useQuery({
     queryKey: ['bible', bookId],
-    queryFn: () => fetch(`/api/books/${bookId}/bible`).then(r => r.json()),
+    queryFn: () => fetch(`${API}/books/${bookId}/bible`).then(r => r.json()),
     refetchInterval: 10_000,
   })
 

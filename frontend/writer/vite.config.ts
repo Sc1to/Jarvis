@@ -8,10 +8,14 @@ export default defineConfig({
   resolve: {
     alias: { '@': path.resolve(__dirname, './src') },
   },
+  base: '/writer/',
   server: {
     port: 5177,
     proxy: {
-      '/api': 'http://localhost:8011',
+      '/writer/api': {
+        target: 'http://localhost:8011',
+        rewrite: (path) => path.replace('/writer/api', ''),
+      },
     },
   },
 })
