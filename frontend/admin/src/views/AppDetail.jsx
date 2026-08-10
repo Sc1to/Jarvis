@@ -1,53 +1,172 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { getAppAgents, createAgent, updateAgent, deleteAgent, getModels } from '../api.js'
 
 const TOOLS = ['filesystem', 'terminal', 'git', 'github', 'web', 'test_runner', 'code_interpreter']
 const EMPTY_AGENT = { name: '', description: '', model: '', tools: [], memory_scope: 'session', ui_type: 'none', ui_route: '', system_prompt: '', calls: [] }
 
-function FlowDiagram({ agents }) {
-  if (agents.length === 0) return null
+// ── Communication diagram ─────────────────────────────────────────────────────
+
+const NODE_W = 172
+const NODE_H = 72
+const H_GAP  = 76
+const V_GAP  = 16
+const PAD_X  = 32
+const PAD_Y  = 44
+
+const PHASE_MAP = {
+  1: { color: '#3B7EF6', label: 'Phase 1' },
+  2: { color: '#C47A1E', label: 'Phase 2' },
+  3: { color: '#16A17A', label: 'Phase 3' },
+  0: { color: '#7C5CDB', label: 'Agent'   },
+}
+
+function detectPhase(agent) {
+  const d = (agent.description || '').toLowerCase()
+  if (d.includes('phase 1')) return 1
+  if (d.includes('phase 2')) return 2
+  if (d.includes('phase 3')) return 3
+  return 0
+}
+
+function shortLabel(name) {
+  const parts = name.split('_')
+  const tail = parts.length > 2 ? parts.slice(-2) : parts
+  return tail.map(p => p.length <= 3 ? p.toUpperCase() : p[0].toUpperCase() + p.slice(1)).join(' ')
+}
+
+function buildLayout(agents) {
+  if (!agents.length) return { positions: {}, edges: [], svgW: 0, svgH: 0 }
+
   const byName = Object.fromEntries(agents.map(a => [a.name, a]))
-  const allCalled = new Set(agents.flatMap(a => JSON.parse(a.calls || '[]')))
-  const roots = agents.filter(a => !allCalled.has(a.name))
-  const start = roots.length > 0 ? roots : [agents[0]]
+  const called = new Set(agents.flatMap(a => JSON.parse(a.calls || '[]')))
+  const roots  = agents.filter(a => !called.has(a.name))
 
   const levels = []
-  const visited = new Set()
-  let frontier = start
-  while (frontier.length > 0) {
-    levels.push(frontier)
-    frontier.forEach(a => visited.add(a.name))
+  const placed = new Set()
+  let front = roots.length ? roots : [agents[0]]
+  while (front.length) {
+    levels.push(front)
+    front.forEach(a => placed.add(a.name))
     const next = []
-    frontier.forEach(a => {
-      JSON.parse(a.calls || '[]').forEach(n => {
-        if (byName[n] && !visited.has(n)) { visited.add(n); next.push(byName[n]) }
-      })
-    })
-    frontier = next
+    front.forEach(a => JSON.parse(a.calls || '[]').forEach(n => {
+      if (byName[n] && !placed.has(n)) { placed.add(n); next.push(byName[n]) }
+    }))
+    front = next
   }
-  // append any agents not reachable from roots (disconnected)
-  const unseen = agents.filter(a => !visited.has(a.name))
-  if (unseen.length > 0) levels.push(unseen)
+  const orphans = agents.filter(a => !placed.has(a.name))
+  if (orphans.length) levels.push(orphans)
+
+  const maxRows = Math.max(...levels.map(l => l.length))
+  const svgH = PAD_Y * 2 + maxRows * NODE_H + (maxRows - 1) * V_GAP
+  const svgW = PAD_X * 2 + levels.length * NODE_W + (levels.length - 1) * H_GAP
+
+  const positions = {}
+  levels.forEach((level, li) => {
+    const blockH = level.length * NODE_H + (level.length - 1) * V_GAP
+    const y0 = (svgH - blockH) / 2
+    level.forEach((a, ni) => {
+      positions[a.name] = { x: PAD_X + li * (NODE_W + H_GAP), y: y0 + ni * (NODE_H + V_GAP) }
+    })
+  })
+
+  const edges = agents.flatMap(a =>
+    JSON.parse(a.calls || '[]')
+      .filter(n => positions[a.name] && positions[n])
+      .map(n => ({ from: a.name, to: n, phase: detectPhase(a) }))
+  )
+
+  return { positions, edges, svgW, svgH }
+}
+
+function CommunicationDiagram({ agents }) {
+  const { positions, edges, svgW, svgH } = useMemo(() => buildLayout(agents), [agents])
+  if (!agents.length) return null
+
+  const presentPhases = [...new Set(agents.map(detectPhase))].filter(p => p > 0)
 
   return (
-    <div className="bg-gray-800 rounded-lg border border-gray-700 p-4 overflow-x-auto">
-      <p className="text-xs text-gray-400 mb-3 uppercase tracking-wide">Call flow</p>
-      <div className="flex items-start gap-3">
-        {levels.map((level, i) => (
-          <div key={i} className="flex items-start gap-3">
-            <div className="flex flex-col gap-2">
-              {level.map(agent => (
-                <div key={agent.id} className="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-xs min-w-[130px]">
-                  <div className="font-medium text-white truncate">{agent.name}</div>
-                  <div className="text-gray-400 truncate mt-0.5">{agent.model || '—'}</div>
-                </div>
-              ))}
-            </div>
-            {i < levels.length - 1 && (
-              <div className="self-center text-gray-500 text-base mt-1">→</div>
-            )}
+    <div style={{ background: '#0c1118', borderRadius: 12, border: '1px solid #1e2535', position: 'relative', overflow: 'hidden' }}>
+      {/* dot grid */}
+      <div style={{
+        position: 'absolute', inset: 0, pointerEvents: 'none',
+        backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.055) 1px, transparent 1px)',
+        backgroundSize: '22px 22px',
+      }} />
+
+      {/* header row */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px 0', position: 'relative', zIndex: 1 }}>
+        <span style={{ fontSize: 10, fontFamily: 'monospace', color: '#485068', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+          Agent communication
+        </span>
+        {presentPhases.length > 0 && (
+          <div style={{ display: 'flex', gap: 12 }}>
+            {presentPhases.map(p => (
+              <span key={p} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: '#5a6478', fontFamily: 'monospace' }}>
+                <span style={{ width: 8, height: 8, borderRadius: 2, background: PHASE_MAP[p].color, display: 'inline-block', opacity: 0.85 }} />
+                {PHASE_MAP[p].label}
+              </span>
+            ))}
           </div>
-        ))}
+        )}
+      </div>
+
+      {/* diagram canvas */}
+      <div style={{ overflowX: 'auto' }}>
+        <div style={{ position: 'relative', width: svgW, height: svgH }}>
+
+          {/* SVG: edges */}
+          <svg width={svgW} height={svgH} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+            <defs>
+              {Object.entries(PHASE_MAP).map(([p, { color }]) => (
+                <marker key={p} id={`tip-${p}`} markerWidth="7" markerHeight="7" refX="5.5" refY="3.5" orient="auto">
+                  <path d="M0,1 L0,6 L6,3.5 z" fill={color} fillOpacity="0.65" />
+                </marker>
+              ))}
+            </defs>
+            {edges.map((e, i) => {
+              const f = positions[e.from], t = positions[e.to]
+              const x1 = f.x + NODE_W, y1 = f.y + NODE_H / 2
+              const x2 = t.x,          y2 = t.y + NODE_H / 2
+              const cx = (x1 + x2) / 2
+              return (
+                <path key={i}
+                  d={`M${x1},${y1} C${cx},${y1} ${cx},${y2} ${x2},${y2}`}
+                  stroke={PHASE_MAP[e.phase].color} strokeWidth="1.5"
+                  strokeOpacity="0.42" fill="none"
+                  markerEnd={`url(#tip-${e.phase})`}
+                />
+              )
+            })}
+          </svg>
+
+          {/* HTML: nodes */}
+          {agents.map(a => {
+            const pos = positions[a.name]
+            if (!pos) return null
+            const { color, label } = PHASE_MAP[detectPhase(a)]
+            return (
+              <div key={a.name} style={{
+                position: 'absolute', left: pos.x, top: pos.y,
+                width: NODE_W, height: NODE_H, boxSizing: 'border-box',
+                background: '#141b27', border: '1px solid #222c3f',
+                borderLeft: `3px solid ${color}`, borderRadius: 8,
+                padding: '10px 12px', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 4,
+              }}>
+                <span style={{ fontSize: 9, fontFamily: 'monospace', color, textTransform: 'uppercase', letterSpacing: '0.09em', opacity: 0.8 }}>
+                  {label}
+                </span>
+                <span style={{ fontSize: 12, fontWeight: 700, fontFamily: 'monospace', color: '#dde4f0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {shortLabel(a.name)}
+                </span>
+                {a.description && (
+                  <span style={{ fontSize: 10, color: '#49566e', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: 1.3 }}>
+                    {a.description}
+                  </span>
+                )}
+              </div>
+            )
+          })}
+        </div>
       </div>
     </div>
   )
@@ -314,8 +433,7 @@ export default function AppDetail({ app, onBack }) {
 
       {error && <p className="text-red-400 text-sm">{error}</p>}
 
-      {/* Flow diagram */}
-      {agents.length > 0 && <FlowDiagram agents={agents} />}
+      {agents.length > 0 && <CommunicationDiagram agents={agents} />}
 
       {/* Agent cards */}
       <div className="space-y-4">
