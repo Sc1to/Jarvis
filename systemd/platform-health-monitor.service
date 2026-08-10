@@ -1,0 +1,16 @@
+[Unit]
+Description=Platform Health Monitor
+After=network.target platform-admin.service
+Wants=platform-admin.service
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/platform
+ExecStart=/opt/platform/scripts/venv/bin/python /opt/platform/scripts/health-monitor.py
+Restart=always
+RestartSec=10
+Environment=PYTHONPATH=/opt/platform
+
+[Install]
+WantedBy=multi-user.target

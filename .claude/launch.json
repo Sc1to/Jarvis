@@ -1,0 +1,41 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "chat-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "frontend/chat", "run", "dev", "--", "--port", "5173"],
+      "port": 5173
+    },
+    {
+      "name": "admin-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "frontend/admin", "run", "dev", "--", "--port", "5174"],
+      "port": 5174
+    },
+    {
+      "name": "coding-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "frontend/coding", "run", "dev", "--", "--port", "5175"],
+      "port": 5175
+    }
+    ,{
+      "name": "writer-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "frontend/writer", "run", "dev", "--", "--port", "5177"],
+      "port": 5177
+    }
+    ,{
+      "name": "autocoder-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "frontend/autocoder", "run", "dev", "--", "--port", "5176"],
+      "port": 5176
+    }
+    ,{
+      "name": "trading-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "frontend/trading", "run", "dev", "--", "--port", "5178"],
+      "port": 5178
+    }
+  ]
+}

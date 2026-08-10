@@ -1,0 +1,125 @@
+services:
+
+  # ── Infrastructure ────────────────────────────────────────────────────────────
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    # GPU passthrough (remove deploy block if no GPU on dev machine)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  chromadb:
+    image: chromadb/chroma:latest
+    ports:
+      - "8020:8000"
+    volumes:
+      - chroma-data:/chroma/chroma
+
+  # ── Platform apps ─────────────────────────────────────────────────────────────
+
+  admin:
+    build:
+      context: ../platform
+      dockerfile: admin/Dockerfile
+    ports:
+      - "8000:8000"
+    env_file: .env.docker
+    volumes:
+      - platform-data:/opt/platform/data
+    depends_on:
+      - chromadb
+
+  chat:
+    build:
+      context: ../platform
+      dockerfile: chat/Dockerfile
+    ports:
+      - "8010:8010"
+    env_file: .env.docker
+    depends_on:
+      - ollama
+
+  writer:
+    build:
+      context: ../platform
+      dockerfile: writer/Dockerfile
+    ports:
+      - "8011:8011"
+    env_file: .env.docker
+    depends_on:
+      - ollama
+
+  coding:
+    build:
+      context: ../platform
+      dockerfile: coding/Dockerfile
+    ports:
+      - "8012:8012"
+    env_file: .env.docker
+    volumes:
+      - platform-data:/opt/platform/data
+    depends_on:
+      - ollama
+
+  # ── Autocoder ─────────────────────────────────────────────────────────────────
+
+  autocoder-dashboard:
+    build:
+      context: ../platform
+      dockerfile: autocoder/dashboard/Dockerfile
+    ports:
+      - "8050:8050"
+    env_file: .env.docker
+    volumes:
+      - platform-data:/opt/platform/data
+    depends_on:
+      - conductor
+
+  conductor:
+    build:
+      context: ../platform
+      dockerfile: autocoder/conductor/Dockerfile
+    ports:
+      - "8001:8001"
+    env_file: .env.docker
+    volumes:
+      - platform-data:/opt/platform/data
+      - projects-data:/opt/platform/data/projects
+    environment:
+      - DASHBOARD_URL=http://autocoder-dashboard:8050
+    depends_on:
+      - re-agent
+      - ollama
+
+  re-agent:
+    build:
+      context: ../platform
+      dockerfile: autocoder/re-agent/Dockerfile
+    ports:
+      - "8002:8002"
+    env_file: .env.docker
+    volumes:
+      - platform-data:/opt/platform/data
+    depends_on:
+      - ollama
+
+volumes:
+  ollama-data:
+  chroma-data:
+  platform-data:
+  projects-data:
+
+networks:
+  default:
+    name: platform-dev

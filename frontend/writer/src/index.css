@@ -1,0 +1,28 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* iA Writer-style editor: monospace, wide lines, breathing room */
+.editor-area {
+  font-family: 'Menlo', 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 1rem;
+  line-height: 1.8;
+  resize: none;
+  outline: none;
+  border: none;
+  background: transparent;
+  width: 100%;
+  min-height: calc(100vh - 8rem);
+  color: inherit;
+  caret-color: #60a5fa;
+}
+
+.editor-area::placeholder {
+  color: #4b5563;
+}
+
+/* Remove textarea default styles */
+textarea:focus {
+  outline: none;
+  box-shadow: none;
+}

@@ -1,0 +1,14 @@
+[Unit]
+Description=Platform Chat Service
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/platform/chat
+ExecStart=/opt/platform/chat/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8010
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
