@@ -2,6 +2,7 @@ import datetime
 import json
 import logging
 import os
+import shutil
 import sqlite3 as _sqlite3
 import subprocess
 import sys
@@ -290,6 +291,8 @@ def tailscale_status():
 
 def _do_update_check():
     """Background task: run apt check and cache result in SQLite config table."""
+    if not shutil.which("sudo"):
+        return  # not a systemd host (Docker dev)
     try:
         subprocess.run(["sudo", "apt-get", "update", "-qq"], timeout=60, capture_output=True)
         r = subprocess.run(["apt", "list", "--upgradable", "--quiet"],
