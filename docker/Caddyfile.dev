@@ -21,6 +21,10 @@
         root /srv/autocoder
         try_files /index.html
     }
+    @trading-built file {
+        root /srv/trading
+        try_files /index.html
+    }
 
     # Internal service APIs — declared before the catch-all app handles
     handle /api/conductor* {
@@ -108,6 +112,29 @@
     handle /autocoder/api* {
         uri strip_prefix /autocoder/api
         reverse_proxy autocoder-dashboard:8050
+    }
+
+    handle /trading/audit* {
+        uri strip_prefix /trading/audit
+        reverse_proxy trading-auditor:8031
+    }
+
+    handle /trading/api* {
+        uri strip_prefix /trading/api
+        reverse_proxy trading:8030
+    }
+
+    handle /trading* {
+        handle @trading-built {
+            uri strip_prefix /trading
+            root * /srv/trading
+            try_files {path} /index.html
+            file_server
+        }
+        handle {
+            uri strip_prefix /trading
+            reverse_proxy trading:8030
+        }
     }
 
     handle /autocoder* {

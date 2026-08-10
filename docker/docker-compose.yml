@@ -90,6 +90,34 @@ services:
       - platform-data:/opt/platform/data
     restart: unless-stopped
 
+  # ── Trading ───────────────────────────────────────────────────────────────────
+
+  trading:
+    build:
+      context: ../platform
+      dockerfile: trading/Dockerfile
+    ports:
+      - "8030:8030"
+    env_file: .env.docker
+    volumes:
+      - platform-data:/opt/platform/data
+    depends_on:
+      - admin
+    restart: unless-stopped
+
+  trading-auditor:
+    build:
+      context: ../platform
+      dockerfile: trading/auditor/Dockerfile
+    ports:
+      - "8031:8031"
+    env_file: .env.docker
+    volumes:
+      - platform-data:/opt/platform/data
+    depends_on:
+      - trading
+    restart: unless-stopped
+
   # ── Autocoder ─────────────────────────────────────────────────────────────────
 
   autocoder-dashboard:
@@ -143,12 +171,14 @@ services:
       - ../frontend/writer/dist:/srv/writer:ro
       - ../frontend/coding/dist:/srv/coding:ro
       - ../frontend/autocoder/dist:/srv/autocoder:ro
+      - ../frontend/trading/dist:/srv/trading:ro
     depends_on:
       - admin
       - chat
       - writer
       - coding
       - autocoder-dashboard
+      - trading
     restart: unless-stopped
 
 volumes:
