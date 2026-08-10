@@ -7,4 +7,4 @@ COPY trading/ trading/
 WORKDIR /app/trading
 ENV PYTHONPATH=/app
 EXPOSE 8030
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8030"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8030", "--loop", "asyncio"]
