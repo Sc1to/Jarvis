@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from health import health_payload
 
 START_TIME = time.time()
-OLLAMA = "http://localhost:11434"
+OLLAMA = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
