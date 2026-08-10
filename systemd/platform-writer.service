@@ -6,6 +6,7 @@ After=network.target
 Type=simple
 User=ubuntu
 WorkingDirectory=/opt/platform/writer
+Environment=WRITER_DATA_DIR=/opt/platform/data/writer
 ExecStart=/opt/platform/writer/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8011
 Restart=always
 RestartSec=5

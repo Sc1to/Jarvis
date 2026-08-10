@@ -56,6 +56,7 @@ ok "Repository ready"
 # ── Data directories ──────────────────────────────────────────────────────────
 
 sudo mkdir -p "$PLATFORM/data/projects"
+sudo mkdir -p "$PLATFORM/data/writer"
 sudo chown -R jarvis:jarvis "$PLATFORM/data"
 ok "Data directories created"
 

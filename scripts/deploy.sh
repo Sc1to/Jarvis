@@ -4,6 +4,7 @@
 # Examples:
 #   ./deploy.sh          — deploy all services
 #   ./deploy.sh admin    — deploy only the admin service
+#   ./deploy.sh writer   — deploys writer backend AND frontend
 
 set -euo pipefail
 
@@ -15,6 +16,7 @@ info() { echo -e "       $*"; }
 
 HOST="jarvis@ms-s1"
 PLATFORM="/opt/platform"
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 # service-name → (port, relative-path-under-platform, systemd-unit)
 declare -A SVC_PORT=(
@@ -33,6 +35,16 @@ declare -A SVC_PORT=(
   [trading]=8030
   [trading-auditor]=8031
 )
+# Services that also have a React frontend (service-name → frontend/ subdirectory)
+declare -A SVC_FRONTEND=(
+  [admin]=admin
+  [chat]=chat
+  [writer]=writer
+  [coding]=coding
+  [autocoder-dashboard]=autocoder
+  [trading]=trading
+)
+
 declare -A SVC_DIR=(
   [admin]=admin
   [chat]=chat
@@ -49,6 +61,26 @@ declare -A SVC_DIR=(
   [trading]=trading
   [trading-auditor]=trading/auditor
 )
+
+deploy_frontend() {
+  local app="$1"
+  local frontend_dir="${REPO_ROOT}/frontend/${app}"
+
+  if [ ! -d "$frontend_dir" ]; then
+    warn "No frontend directory at frontend/${app} — skipping"
+    return 0
+  fi
+
+  info "Building frontend/${app}..."
+  npm --prefix "$frontend_dir" run build
+
+  info "Uploading frontend/${app}/dist/..."
+  ssh "$HOST" "mkdir -p ${PLATFORM}/frontend/${app}"
+  scp -r "${frontend_dir}/dist/" "${HOST}:${PLATFORM}/frontend/${app}/dist/"
+
+  info "Reloading Caddy..."
+  ssh "$HOST" "sudo systemctl reload caddy"
+}
 
 check_ssh() {
   if ! ssh -o ConnectTimeout=5 -o BatchMode=yes "$HOST" true 2>/dev/null; then
@@ -85,11 +117,18 @@ curl -sf http://localhost:${port}/health > /dev/null
 EOF
 
   if [ $? -eq 0 ]; then
-    ok "$name"
+    ok "$name backend"
   else
     fail "$name — health check failed after restart"
     return 1
   fi
+
+  if [[ -n "${SVC_FRONTEND[$name]+_}" ]]; then
+    deploy_frontend "${SVC_FRONTEND[$name]}"
+    ok "$name frontend"
+  fi
+
+  ok "$name"
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────────
