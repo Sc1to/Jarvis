@@ -13,10 +13,11 @@ interface Message { role: 'user' | 'assistant'; content: string }
 
 export default function NorthStarPage() {
   const { bookId } = useParams<{ bookId: string }>()
-  const [messages, setMessages] = useState<Message[]>([{
+  const INITIAL_MESSAGE: Message = {
     role: 'assistant',
     content: "Let's build your North Star — the anchor document that all agents will treat as a hard constraint.\n\nTell me about your novel. What's the core of it? Start wherever feels right: a character, an image, a feeling, a line you can't get out of your head.",
-  }])
+  }
+  const [messages, setMessages] = useState<Message[]>([INITIAL_MESSAGE])
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
   const [locking, setLocking] = useState(false)
@@ -24,16 +25,18 @@ export default function NorthStarPage() {
   const [northStarDoc, setNorthStarDoc] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
 
-  // Restore state on reload (if already locked)
+  // Restore state on reload
   const { data: savedState } = useQuery({
     queryKey: ['north-star-state', bookId],
-    queryFn: () => fetch(`${API}/books/${bookId}/phase1/north-star`).then(r => r.json()) as Promise<{ locked: boolean; document: string | null }>,
+    queryFn: () => fetch(`${API}/books/${bookId}/phase1/north-star`).then(r => r.json()) as Promise<{ locked: boolean; document: string | null; messages: Message[] | null }>,
   })
   useEffect(() => {
-    if (savedState?.locked) {
+    if (!savedState) return
+    if (savedState.locked) {
       setLocked(true)
       setNorthStarDoc(savedState.document)
     }
+    if (savedState.messages?.length) setMessages(savedState.messages)
   }, [savedState])
 
   useEffect(() => {
@@ -76,6 +79,14 @@ export default function NorthStarPage() {
           })
           break
         }
+      }
+      if (text) {
+        const saved = [...history, { role: 'assistant' as const, content: text }]
+        fetch(`${API}/books/${bookId}/phase1/north-star/messages`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messages: saved }),
+        })
       }
     } catch {
       setMessages(prev => {

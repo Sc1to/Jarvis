@@ -87,11 +87,26 @@ def _read_tiers(book_id: str) -> list[dict]:
 
 @router.get("/books/{book_id}/phase1/north-star")
 def get_north_star(book_id: str):
-    path = os.path.join(db.data_dir(book_id), "north_star.md")
-    if not os.path.exists(path):
-        return {"locked": False, "document": None}
-    with open(path) as f:
-        return {"locked": True, "document": f.read()}
+    book_dir = db.data_dir(book_id)
+    ns_path = os.path.join(book_dir, "north_star.md")
+    chat_path = os.path.join(book_dir, "north_star_chat.json")
+    messages = json.load(open(chat_path)) if os.path.exists(chat_path) else None
+    if not os.path.exists(ns_path):
+        return {"locked": False, "document": None, "messages": messages}
+    with open(ns_path) as f:
+        return {"locked": True, "document": f.read(), "messages": messages}
+
+
+class SaveMessagesBody(BaseModel):
+    messages: list[dict]
+
+
+@router.patch("/books/{book_id}/phase1/north-star/messages")
+def save_north_star_messages(book_id: str, body: SaveMessagesBody):
+    path = os.path.join(db.ensure_data_dir(book_id), "north_star_chat.json")
+    with open(path, "w") as f:
+        json.dump(body.messages, f)
+    return {"ok": True}
 
 
 class ReplyBody(BaseModel):
