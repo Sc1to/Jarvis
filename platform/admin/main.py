@@ -213,9 +213,20 @@ def restart_app(app_id: int, db=Depends(get_db)):
         raise HTTPException(404, "App not found")
     service = f"platform-{row['name'].lower().replace(' ', '-')}"
     try:
-        subprocess.run(["sudo", "systemctl", "restart", service], check=True, timeout=15)
+        result = subprocess.run(
+            ["sudo", "systemctl", "restart", service],
+            check=True, timeout=15,
+            capture_output=True, text=True,
+        )
         return {"status": "ok", "service": service}
+    except subprocess.CalledProcessError as e:
+        log.error("systemctl restart %s failed: %s", service, e.stderr or e.stdout or str(e))
+        raise HTTPException(500, f"systemctl restart failed: {e.stderr or str(e)}")
+    except FileNotFoundError:
+        log.warning("systemctl not found — skipping restart (dev/Docker environment)")
+        return {"status": "ok", "service": service, "note": "no-op: not a systemd host"}
     except Exception as e:
+        log.error("restart %s error: %s", service, e)
         raise HTTPException(500, str(e))
 
 
