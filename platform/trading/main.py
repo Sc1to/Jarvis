@@ -44,14 +44,11 @@ async def lifespan(_app: FastAPI):
     log.info("Universe seeded")
 
     from scheduler import register_jobs
-    scheduler = AsyncScheduler()
-    await scheduler.start_in_background()
-    await register_jobs(scheduler)
-    log.info("Trading scheduler started")
-
-    yield
-
-    await scheduler.stop()
+    async with AsyncScheduler() as scheduler:
+        await register_jobs(scheduler)
+        await scheduler.start_in_background()
+        log.info("Trading scheduler started")
+        yield
     log.info("Trading scheduler stopped")
 
 

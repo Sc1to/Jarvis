@@ -326,12 +326,11 @@ def _weekly_pnl(conn: sqlite3.Connection, pool: str) -> float:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    scheduler = AsyncScheduler()
-    await scheduler.start_in_background()
-    await scheduler.add_schedule(run_audit, IntervalTrigger(hours=2), id="audit")
-    log.info("Compliance auditor started — auditing every 2 hours")
-    yield
-    await scheduler.stop()
+    async with AsyncScheduler() as scheduler:
+        await scheduler.add_schedule(run_audit, IntervalTrigger(hours=2), id="audit")
+        await scheduler.start_in_background()
+        log.info("Compliance auditor started — auditing every 2 hours")
+        yield
 
 
 app = FastAPI(title="Platform Trading Auditor", version=VERSION, lifespan=lifespan)
