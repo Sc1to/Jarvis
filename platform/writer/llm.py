@@ -93,7 +93,7 @@ async def _ollama_tokens(model: str, messages: list[dict], system: str | None) -
                     pass
 
 
-def _provider_tokens(provider: str, model: str, messages: list[dict], system: str | None) -> AsyncGenerator[str, None]:
+def provider_tokens(provider: str, model: str, messages: list[dict], system: str | None = None) -> AsyncGenerator[str, None]:
     if provider == "gemini":
         return _gemini_tokens(model, messages, system)
     if provider == "openrouter":
@@ -112,7 +112,7 @@ def stream_chat(agent_key: str, messages: list[dict], system: str | None = None)
             yield f'data: {json.dumps({"type": "error", "message": f"Agent \"{agent_key}\" has no model assigned. Go to Settings."})}\n\n'
             return
         try:
-            async for token in _provider_tokens(provider, model, messages, system):
+            async for token in provider_tokens(provider, model, messages, system):
                 yield f'data: {json.dumps({"type": "token", "content": token})}\n\n'
             yield f'data: {json.dumps({"type": "done"})}\n\n'
         except Exception as e:
@@ -134,6 +134,6 @@ async def call_llm(agent_key: str, messages: list[dict], system: str | None = No
         raise ValueError(f'Agent "{agent_key}" has no model assigned')
 
     result = ""
-    async for token in _provider_tokens(provider, model, messages, system):
+    async for token in provider_tokens(provider, model, messages, system):
         result += token
     return result

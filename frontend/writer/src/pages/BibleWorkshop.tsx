@@ -7,7 +7,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 import { readSSE } from '@/lib/sse'
-import { ChevronRight, Play, CheckCircle, Lock, Loader2 } from 'lucide-react'
+import { ChevronRight, Play, CheckCircle, Lock, Loader2, BookOpen, MapPin, Users } from 'lucide-react'
 
 const TIERS = [
   { id: 1, label: 'Book',     question: 'What happens in this book?' },
@@ -17,8 +17,23 @@ const TIERS = [
 ]
 
 type TierStatus = 'locked' | 'active' | 'running' | 'review' | 'approved'
+type P2Step = 'idle' | 'consolidating' | 'researching' | 'done'
 
 interface TierEntry { content: string | null; approved: boolean }
+interface BibleEntity {
+  type: string; name: string; aliases?: string[]
+  coreFacts?: Record<string, string>
+  eventLog?: { act: number; chapter: number; event: string }[]
+  lifecycle?: number[]
+}
+interface Bible { ledger: Record<string, BibleEntity>; metadata?: Record<string, unknown> }
+
+const TYPE_ICON: Record<string, typeof BookOpen> = {
+  character: Users,
+  location: MapPin,
+  faction: Users,
+  object: BookOpen,
+}
 
 export default function BibleWorkshopPage() {
   const { bookId } = useParams<{ bookId: string }>()
@@ -29,14 +44,31 @@ export default function BibleWorkshopPage() {
     queryFn: () => fetch(`/api/books/${bookId}/phase1/bible/tiers`).then(r => r.json()),
   })
 
-  // content[i] = what's currently displayed for tier i (may be streaming)
+  const { data: phase2Status, refetch: refetchP2Status } = useQuery({
+    queryKey: ['phase2-status', bookId],
+    queryFn: () => fetch(`/api/books/${bookId}/phase2/status`).then(r => r.json()),
+    refetchInterval: false,
+  })
+
+  const { data: bible, refetch: refetchBible } = useQuery<Bible>({
+    queryKey: ['bible', bookId],
+    queryFn: () => fetch(`/api/books/${bookId}/bible`).then(r => r.json()),
+    enabled: !!phase2Status?.bible_exists,
+  })
+
   const [contents, setContents] = useState<(string | null)[]>([null, null, null, null])
   const [statuses, setStatuses] = useState<TierStatus[]>(['active', 'locked', 'locked', 'locked'])
   const [activeTier, setActiveTier] = useState(0)
   const [streaming, setStreaming] = useState(false)
   const [directive, setDirective] = useState('')
 
-  // Restore from server on load
+  // Phase 2 state
+  const [p2Step, setP2Step] = useState<P2Step>('idle')
+  const [p2Log, setP2Log] = useState('')
+
+  const allTiersApproved = statuses.every(s => s === 'approved')
+
+  // Restore tiers from server
   useEffect(() => {
     if (!savedTiers) return
     const next: TierStatus[] = ['active', 'locked', 'locked', 'locked']
@@ -55,18 +87,25 @@ export default function BibleWorkshopPage() {
     setActiveTier(active)
   }, [savedTiers])
 
+  // Sync p2Step from server state
+  useEffect(() => {
+    if (!phase2Status) return
+    const s = phase2Status.phase2_status
+    if (s === 'approved') setP2Step('done')
+    else if (s === 'researched') setP2Step('done')
+    else if (s === 'consolidated') setP2Step('done')
+  }, [phase2Status])
+
   async function runTier(idx: number) {
     setStatuses(prev => { const n = [...prev]; n[idx] = 'running'; return n })
     setContents(prev => { const n = [...prev]; n[idx] = ''; return n })
     setStreaming(true)
-
     try {
       const resp = await fetch(`/api/books/${bookId}/phase1/bible/run-tier`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tier: idx + 1 }),
       })
-
       let text = ''
       for await (const event of readSSE(resp)) {
         if (event.type === 'token' && event.content) {
@@ -99,9 +138,9 @@ export default function BibleWorkshopPage() {
       if (idx + 1 < 4) n[idx + 1] = 'active'
       return n
     })
-    const next = idx + 1 < 4 ? idx + 1 : idx
-    setActiveTier(next)
+    setActiveTier(idx + 1 < 4 ? idx + 1 : idx)
     qc.invalidateQueries({ queryKey: ['bible-tiers', bookId] })
+    refetchP2Status()
   }
 
   async function injectAndRerun() {
@@ -115,9 +154,56 @@ export default function BibleWorkshopPage() {
     runTier(activeTier)
   }
 
+  async function runP2(endpoint: string, label: string, nextStep: P2Step) {
+    setP2Step(nextStep)
+    setP2Log('')
+    try {
+      const resp = await fetch(`/api/books/${bookId}/phase2/${endpoint}`, { method: 'POST' })
+      for await (const event of readSSE(resp)) {
+        if (event.type === 'token') {
+          setP2Log(prev => prev + event.content)
+        } else if (event.type === 'status') {
+          setP2Log(prev => prev + `\n[${event.message}]\n`)
+        } else if (event.type === 'saved') {
+          setP2Log(prev => prev + `\n\n✓ Saved — ${event.entity_count} entities`)
+          await refetchP2Status()
+          await refetchBible()
+        } else if (event.type === 'error') {
+          setP2Log(prev => prev + `\n⚠ ${event.message}`)
+          setP2Step('idle')
+          return
+        }
+      }
+    } catch {
+      setP2Log(prev => prev + '\n⚠ Connection error')
+      setP2Step('idle')
+    }
+  }
+
+  async function approveP2() {
+    await fetch(`/api/books/${bookId}/phase2/approve`, { method: 'POST' })
+    await refetchP2Status()
+    qc.invalidateQueries({ queryKey: ['bible', bookId] })
+  }
+
+  // Group entities by type for sidebar
+  const ledger = bible?.ledger ?? {}
+  const byType: Record<string, [string, BibleEntity][]> = {}
+  for (const [id, entity] of Object.entries(ledger)) {
+    const t = entity.type ?? 'other'
+    ;(byType[t] ??= []).push([id, entity])
+  }
+  const typeOrder = ['character', 'location', 'faction', 'object']
+  const sortedTypes = [...new Set([...typeOrder, ...Object.keys(byType)])].filter(t => byType[t])
+
+  const p2Approved = phase2Status?.phase2_approved
+  const p2Status = phase2Status?.phase2_status ?? 'idle'
+  const bibleExists = phase2Status?.bible_exists
+  const entityCount = phase2Status?.entity_count ?? 0
+
   return (
     <div className="flex h-full">
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 flex flex-col overflow-hidden">
         {/* Tier stepper */}
         <div className="flex items-center gap-2 px-6 py-4 border-b border-border">
           {TIERS.map((tier, i) => (
@@ -142,6 +228,7 @@ export default function BibleWorkshopPage() {
         </div>
 
         <div className="flex-1 overflow-y-auto px-6 py-6 space-y-4">
+          {/* ── Phase 1: Active tier ── */}
           <div className="flex items-start justify-between">
             <div>
               <h2 className="font-semibold">Tier {TIERS[activeTier].id} — {TIERS[activeTier].label}</h2>
@@ -170,10 +257,9 @@ export default function BibleWorkshopPage() {
             </div>
           </div>
 
-          {/* Output card */}
           <Card className="min-h-[300px]">
             <CardContent className="p-5">
-              {(statuses[activeTier] === 'locked') && (
+              {statuses[activeTier] === 'locked' && (
                 <p className="text-sm text-muted-foreground italic">Complete the tier above to unlock this one.</p>
               )}
               {statuses[activeTier] === 'active' && !contents[activeTier] && (
@@ -188,7 +274,6 @@ export default function BibleWorkshopPage() {
             </CardContent>
           </Card>
 
-          {/* Directive injection (only when in review) */}
           {statuses[activeTier] === 'review' && (
             <div className="space-y-2">
               <Separator />
@@ -210,26 +295,164 @@ export default function BibleWorkshopPage() {
               </div>
             </div>
           )}
+
+          {/* ── Phase 2 panel (appears when all tiers approved) ── */}
+          {allTiersApproved && (
+            <>
+              <Separator className="my-4" />
+              <div className="space-y-4">
+                <div>
+                  <h2 className="font-semibold">Phase 2 — Research &amp; Entity Completion</h2>
+                  <p className="text-sm text-muted-foreground">
+                    Consolidate the bible into a structured entity ledger, then enrich every entity.
+                  </p>
+                </div>
+
+                {/* Step 1: Consolidate */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className={cn(
+                        'flex items-center justify-center w-5 h-5 rounded-full text-xs font-bold',
+                        bibleExists ? 'bg-emerald-500/20 text-emerald-500' : 'bg-muted text-muted-foreground'
+                      )}>1</span>
+                      <span className="text-sm font-medium">Consolidate entity ledger</span>
+                      {bibleExists && <CheckCircle size={13} className="text-emerald-500" />}
+                    </div>
+                    {!p2Approved && (
+                      <Button
+                        size="sm"
+                        variant={bibleExists ? 'outline' : 'default'}
+                        disabled={p2Step === 'consolidating' || p2Step === 'researching'}
+                        onClick={() => runP2('consolidate', 'Consolidating…', 'consolidating')}
+                      >
+                        {p2Step === 'consolidating'
+                          ? <><Loader2 size={12} className="animate-spin mr-1" />Running…</>
+                          : bibleExists ? 'Re-run' : 'Run'}
+                      </Button>
+                    )}
+                  </div>
+                  {bibleExists && <p className="text-xs text-muted-foreground pl-7">{entityCount} entities in ledger</p>}
+                </div>
+
+                {/* Step 2: Research */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className={cn(
+                        'flex items-center justify-center w-5 h-5 rounded-full text-xs font-bold',
+                        (p2Status === 'researched' || p2Status === 'approved') ? 'bg-emerald-500/20 text-emerald-500'
+                          : bibleExists ? 'bg-muted text-foreground' : 'bg-muted text-muted-foreground/40'
+                      )}>2</span>
+                      <span className={cn('text-sm font-medium', !bibleExists && 'text-muted-foreground/40')}>
+                        Research &amp; complete entities
+                      </span>
+                      {(p2Status === 'researched' || p2Status === 'approved') && <CheckCircle size={13} className="text-emerald-500" />}
+                    </div>
+                    {!p2Approved && bibleExists && (
+                      <Button
+                        size="sm"
+                        variant={(p2Status === 'researched') ? 'outline' : 'default'}
+                        disabled={p2Step === 'consolidating' || p2Step === 'researching'}
+                        onClick={() => runP2('run', 'Researching…', 'researching')}
+                      >
+                        {p2Step === 'researching'
+                          ? <><Loader2 size={12} className="animate-spin mr-1" />Running…</>
+                          : (p2Status === 'researched' || p2Status === 'approved') ? 'Re-run' : 'Run'}
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Step 3: Approve */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className={cn(
+                      'flex items-center justify-center w-5 h-5 rounded-full text-xs font-bold',
+                      p2Approved ? 'bg-emerald-500/20 text-emerald-500'
+                        : (p2Status === 'researched') ? 'bg-muted text-foreground' : 'bg-muted text-muted-foreground/40'
+                    )}>3</span>
+                    <span className={cn('text-sm font-medium', !bibleExists && 'text-muted-foreground/40')}>
+                      Approve &amp; unlock Writing Loop
+                    </span>
+                    {p2Approved && <CheckCircle size={13} className="text-emerald-500" />}
+                  </div>
+                  {!p2Approved && p2Status === 'researched' && (
+                    <Button size="sm" onClick={approveP2} className="gap-2">
+                      <Lock size={13} />Approve Phase 2
+                    </Button>
+                  )}
+                  {p2Approved && <Badge variant="success">Writing Loop unlocked</Badge>}
+                </div>
+
+                {/* Streaming log */}
+                {p2Log && (
+                  <Card className="bg-muted/30">
+                    <CardContent className="p-4">
+                      <pre className="text-xs font-mono whitespace-pre-wrap leading-relaxed text-muted-foreground max-h-48 overflow-y-auto">
+                        {p2Log}
+                        {(p2Step === 'consolidating' || p2Step === 'researching') && (
+                          <span className="animate-pulse">▋</span>
+                        )}
+                      </pre>
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+            </>
+          )}
         </div>
       </div>
 
-      {/* Entity ledger sidebar — populated by Phase 2 */}
+      {/* Entity ledger sidebar */}
       <div className="w-72 border-l border-border flex flex-col">
         <div className="px-4 py-4 border-b border-border">
           <h3 className="text-sm font-medium">Entity Ledger</h3>
-          <p className="text-xs text-muted-foreground">Single source of truth — never deleted</p>
+          <p className="text-xs text-muted-foreground">
+            {entityCount > 0 ? `${entityCount} entities` : 'Populated in Phase 2'}
+          </p>
         </div>
-        <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
-          {['Characters', 'Locations', 'Factions'].map(type => (
-            <div key={type}>
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider py-1">{type}</p>
-              <Card className="bg-muted/30">
-                <CardContent className="px-3 py-2">
-                  <p className="text-xs text-muted-foreground italic">Populated in Phase 2</p>
-                </CardContent>
-              </Card>
-            </div>
-          ))}
+        <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+          {sortedTypes.length === 0 ? (
+            ['Characters', 'Locations', 'Factions'].map(type => (
+              <div key={type}>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider py-1">{type}</p>
+                <Card className="bg-muted/30">
+                  <CardContent className="px-3 py-2">
+                    <p className="text-xs text-muted-foreground italic">Populated in Phase 2</p>
+                  </CardContent>
+                </Card>
+              </div>
+            ))
+          ) : (
+            sortedTypes.map(type => {
+              const Icon = TYPE_ICON[type] ?? BookOpen
+              const entities = byType[type]
+              return (
+                <div key={type}>
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider py-1">
+                    {type}s ({entities.length})
+                  </p>
+                  <div className="space-y-1">
+                    {entities.map(([id, entity]) => (
+                      <div key={id} className="flex items-start gap-2 px-2 py-1.5 rounded-md hover:bg-muted/50 transition-colors">
+                        <Icon size={12} className="mt-0.5 shrink-0 text-muted-foreground" />
+                        <div className="min-w-0">
+                          <p className="text-xs font-medium truncate">{entity.name}</p>
+                          {entity.aliases && entity.aliases.length > 0 && (
+                            <p className="text-[10px] text-muted-foreground truncate">
+                              {entity.aliases.slice(0, 2).join(', ')}
+                            </p>
+                          )}
+                        </div>
+                        <span className="text-[9px] text-muted-foreground/60 ml-auto shrink-0">{id}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )
+            })
+          )}
         </div>
       </div>
     </div>
