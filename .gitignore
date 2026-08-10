@@ -34,6 +34,7 @@ Thumbs.db
 # Data — never commit the live database or vector store
 platform/data/*.db
 platform/data/chromadb/
+platform/writer/data/
 
 # Secrets — stored in SQLite config table, never in files
 *.pem
