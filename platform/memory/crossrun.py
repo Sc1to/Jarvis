@@ -1,11 +1,14 @@
 import logging
+import os
 from dataclasses import dataclass, field
+from urllib.parse import urlparse
 from uuid import uuid4
 
 log = logging.getLogger(__name__)
 
-CHROMA_HOST = "localhost"
-CHROMA_PORT = 8020
+_url = urlparse(os.environ.get("CHROMADB_URL", "http://localhost:8020"))
+CHROMA_HOST = _url.hostname or "localhost"
+CHROMA_PORT = _url.port or 8020
 
 try:
     import chromadb as _chromadb
