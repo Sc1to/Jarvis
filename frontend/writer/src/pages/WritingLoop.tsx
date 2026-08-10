@@ -1,18 +1,59 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams } from 'react-router-dom'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Switch } from '@/components/ui/switch'
-import { Label } from '@/components/ui/label'
+import { Card, CardContent } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
-import { Play, CheckCircle, XCircle, Edit3, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { readSSE } from '@/lib/sse'
+import { Play, CheckCircle, XCircle, Loader2, ChevronRight, Lock, AlertTriangle } from 'lucide-react'
 import { EditorState } from '@codemirror/state'
 import { EditorView, lineNumbers, drawSelection, keymap } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 
-type LoopStatus = 'idle' | 'writing' | 'qa' | 'qa-pass' | 'qa-fail' | 'editing'
+interface ChapterSummary {
+  chapter: number
+  status: 'written' | 'approved' | 'unknown'
+  scene_count: number
+  approved: boolean
+  bible_updated: boolean
+}
+
+interface SceneResult {
+  scene: number
+  brief: string
+  entry_state: string
+  exit_state: string
+  attempts: number
+  qa_pass: boolean
+  qa_notes: string
+  word_count: number
+}
+
+interface ChapterMeta {
+  chapter: number
+  scene_count: number
+  scenes: SceneResult[]
+  status: string
+  approved_at: string | null
+  bible_updated: boolean
+}
+
+interface ProgressEvent {
+  type: string
+  scene?: number
+  total?: number
+  attempt?: number
+  brief?: string
+  pass?: boolean
+  notes?: string
+  issues?: { type: string; description: string; severity: string }[]
+  word_count?: number
+  scene_count?: number
+  message?: string
+  entity_count?: number
+}
 
 function ProseEditor({ initialValue, onChange }: { initialValue: string; onChange: (v: string) => void }) {
   const editorRef = useRef<HTMLDivElement>(null)
@@ -23,14 +64,10 @@ function ProseEditor({ initialValue, onChange }: { initialValue: string; onChang
     const state = EditorState.create({
       doc: initialValue,
       extensions: [
-        lineNumbers(),
-        history(),
-        drawSelection(),
+        lineNumbers(), history(), drawSelection(),
         keymap.of([...defaultKeymap, ...historyKeymap]),
         EditorView.lineWrapping,
-        EditorView.updateListener.of(update => {
-          if (update.docChanged) onChange(update.state.doc.toString())
-        }),
+        EditorView.updateListener.of(u => { if (u.docChanged) onChange(u.state.doc.toString()) }),
         EditorView.theme({
           '&': { height: '100%', fontSize: '1.05rem', fontFamily: '"Lora", Georgia, serif' },
           '.cm-scroller': { overflow: 'auto', lineHeight: '1.85' },
@@ -46,194 +83,395 @@ function ProseEditor({ initialValue, onChange }: { initialValue: string; onChang
   return <div ref={editorRef} className="h-full border border-border rounded-lg overflow-hidden" />
 }
 
-export default function WritingLoopPage() {
-  const { bookId } = useParams<{ bookId: string }>()
-  const [autoMode, setAutoMode] = useState(false)
-  const [status, setStatus] = useState<LoopStatus>('idle')
-  const [qaAttempt, setQaAttempt] = useState(0)
-  const [sceneText, setSceneText] = useState('')
-  const [editedText, setEditedText] = useState('')
-  const [qaNote, setQaNote] = useState('')
-  const [rejectNote, setRejectNote] = useState('')
-
-  // Mock scene data — will come from /api/phase3
-  const scene = {
-    number: '003',
-    brief: 'The party arrives at Constantinople after a storm-delayed crossing. Hamid discovers the city has changed more than expected — the fire is now known, and he is recognised.',
-    entryState: 'Party aboard ship, approaching Constantinople (LOC_004). Hamid (CHAR_012) unknown in the city. Fire of 1203 has occurred.',
-    exitState: 'Party ashore in Constantinople. Hamid recognised by a harbour merchant. Fire aftermath visible throughout the waterfront.',
-  }
-
-  function runScene() {
-    setStatus('writing')
-    setQaAttempt(0)
-    setSceneText('')
-    // TODO: SSE stream from /api/phase3/run-scene
-    setTimeout(() => {
-      setSceneText('The galley slid into the Golden Horn on the third morning after the storm, its single sail carrying the smell of salt and smoke. Constantinople rose before them — or what remained of it.\n\nHamid stood at the bow and said nothing. He had been here before, years ago, when the sea walls still gleamed white. Now the waterfront was patched with timber where stone had fallen, and the smell of old ash had worked itself into the very wind off the water.\n\n"It burned," said Brother Tomás, appearing at his elbow with his customary precision for stating the obvious.\n\n"It burned," Hamid agreed.\n\nThey were barely at the dock when a merchant loading bales of wool turned, looked, and looked again.')
-      setStatus('qa')
-      setTimeout(() => {
-        setQaAttempt(1)
-        setQaNote('Exit state verified: party ashore ✓, Hamid recognised ✓, fire aftermath established ✓. Foreshadowing SEED_003 planted. Voice consistent with narrative_voice.md.')
-        setStatus('qa-pass')
-      }, 1200)
-    }, 2000)
-  }
-
-  function approve() {
-    setStatus('idle')
-    setQaAttempt(0)
-    // TODO: POST /api/books/:bookId/phase3/approve
-  }
-
-  function reject() {
-    setStatus('idle')
-    // TODO: POST /api/books/:bookId/phase3/reject { notes: rejectNote }
-  }
-
-  function startEdit() {
-    setEditedText(sceneText)
-    setStatus('editing')
-  }
-
-  function submitEdit() {
-    setSceneText(editedText)
-    setStatus('qa-pass')
-    // TODO: POST /api/phase3/edit { scene: editedText }
-  }
+function EventFeed({ events }: { events: ProgressEvent[] }) {
+  const bottomRef = useRef<HTMLDivElement>(null)
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [events.length])
 
   return (
-    <div className="flex h-full flex-col">
-      {/* Top bar */}
-      <div className="flex items-center gap-4 px-6 py-3 border-b border-border">
-        <div>
-          <h2 className="font-semibold text-sm">Writing Loop</h2>
-          <p className="text-xs text-muted-foreground">Phase 3 · Scene {scene.number}</p>
+    <div className="flex-1 overflow-y-auto px-6 py-4 space-y-1 font-mono text-xs">
+      {events.map((ev, i) => {
+        if (ev.type === 'plan_done') return (
+          <p key={i} className="text-muted-foreground">Extracted {ev.scene_count} scenes</p>
+        )
+        if (ev.type === 'scene_start') return (
+          <p key={i} className="text-foreground font-medium mt-2">
+            Scene {ev.scene}/{ev.total} — {ev.brief}
+          </p>
+        )
+        if (ev.type === 'rewrite_start') return (
+          <p key={i} className="text-amber-500">↩ Rewrite scene {ev.scene} (attempt {ev.attempt})</p>
+        )
+        if (ev.type === 'scene_written') return (
+          <p key={i} className="text-muted-foreground">Written — {ev.word_count} words</p>
+        )
+        if (ev.type === 'qa_start') return (
+          <p key={i} className="text-muted-foreground">QA checking…</p>
+        )
+        if (ev.type === 'qa_result') return (
+          <p key={i} className={ev.pass ? 'text-emerald-500' : 'text-red-500'}>
+            QA {ev.pass ? 'pass' : 'fail'} — {ev.notes}
+          </p>
+        )
+        if (ev.type === 'chapter_done') return (
+          <p key={i} className="text-emerald-500 font-medium mt-2">
+            ✓ Chapter {ev.scene} complete — {ev.scene_count} scenes
+          </p>
+        )
+        if (ev.type === 'status') return (
+          <p key={i} className="text-muted-foreground">{ev.message}</p>
+        )
+        if (ev.type === 'saved') return (
+          <p key={i} className="text-emerald-500">✓ Saved — {ev.entity_count} entities in ledger</p>
+        )
+        if (ev.type === 'error') return (
+          <p key={i} className="text-red-500">⚠ {ev.message}</p>
+        )
+        return null
+      })}
+      <div ref={bottomRef} />
+    </div>
+  )
+}
+
+export default function WritingLoopPage() {
+  const { bookId } = useParams<{ bookId: string }>()
+  const qc = useQueryClient()
+
+  const { data: status, refetch: refetchStatus } = useQuery<{
+    phase2_approved: boolean
+    chapters: ChapterSummary[]
+    next_chapter: number | null
+  }>({
+    queryKey: ['phase3-status', bookId],
+    queryFn: () => fetch(`/api/books/${bookId}/phase3/status`).then(r => r.json()),
+  })
+
+  const [activeChapter, setActiveChapter] = useState<number | null>(null)
+  const [writing, setWriting] = useState(false)
+  const [approving, setApproving] = useState(false)
+  const [events, setEvents] = useState<ProgressEvent[]>([])
+  const [chapterDone, setChapterDone] = useState(false)
+  const [rewriteScene, setRewriteScene] = useState<number | null>(null)
+  const [rewriteDirective, setRewriteDirective] = useState('')
+  const [rewriting, setRewriting] = useState(false)
+
+  const { data: chapterData, refetch: refetchChapter } = useQuery<{ chapter: number; content: string; meta: ChapterMeta } | null>({
+    queryKey: ['chapter', bookId, activeChapter],
+    queryFn: () => activeChapter
+      ? fetch(`/api/books/${bookId}/phase3/chapter/${activeChapter}`).then(r => r.json())
+      : Promise.resolve(null),
+    enabled: activeChapter !== null,
+  })
+
+  // Auto-select first unwritten chapter on load
+  useEffect(() => {
+    if (!status || activeChapter !== null) return
+    if (status.chapters.length > 0) {
+      setActiveChapter(status.chapters[0].chapter)
+    } else if (status.next_chapter) {
+      setActiveChapter(status.next_chapter)
+    }
+  }, [status])
+
+  // When switching chapters, reset writing state
+  useEffect(() => {
+    setEvents([])
+    setChapterDone(false)
+    setRewriteScene(null)
+  }, [activeChapter])
+
+  async function writeChapter(chapter: number) {
+    setWriting(true)
+    setEvents([])
+    setChapterDone(false)
+
+    try {
+      const resp = await fetch(`/api/books/${bookId}/phase3/write-chapter`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chapter }),
+      })
+      for await (const ev of readSSE(resp)) {
+        const event = ev as ProgressEvent
+        if (event.type !== 'token') {
+          setEvents(prev => [...prev, event])
+        }
+        if (event.type === 'chapter_done') {
+          setChapterDone(true)
+          await refetchStatus()
+          await refetchChapter()
+        }
+      }
+    } finally {
+      setWriting(false)
+    }
+  }
+
+  async function approveChapter(chapter: number) {
+    setApproving(true)
+    setEvents([])
+
+    try {
+      const resp = await fetch(`/api/books/${bookId}/phase3/chapter/${chapter}/approve`, { method: 'POST' })
+      for await (const ev of readSSE(resp)) {
+        const event = ev as ProgressEvent
+        if (event.type !== 'token') {
+          setEvents(prev => [...prev, event])
+        }
+        if (event.type === 'saved') {
+          await refetchStatus()
+          await refetchChapter()
+          qc.invalidateQueries({ queryKey: ['bible', bookId] })
+        }
+      }
+    } finally {
+      setApproving(false)
+    }
+  }
+
+  async function doRewrite(chapter: number, scene: number) {
+    if (!rewriteDirective.trim()) return
+    setRewriting(true)
+    setEvents([])
+
+    try {
+      const resp = await fetch(`/api/books/${bookId}/phase3/chapter/${chapter}/scene/${scene}/rewrite`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ directive: rewriteDirective }),
+      })
+      for await (const ev of readSSE(resp)) {
+        const event = ev as ProgressEvent
+        if (event.type !== 'token') {
+          setEvents(prev => [...prev, event])
+        }
+        if (event.type === 'saved') {
+          setRewriteScene(null)
+          setRewriteDirective('')
+          await refetchChapter()
+        }
+      }
+    } finally {
+      setRewriting(false)
+    }
+  }
+
+  const chapters = status?.chapters ?? []
+  const nextChapter = status?.next_chapter ?? null
+  const isLocked = !status?.phase2_approved
+
+  const meta = chapterData?.meta
+  const scenes = meta?.scenes ?? []
+  const isWritten = !!chapterData?.content
+  const isApproved = meta?.status === 'approved'
+  const busy = writing || approving || rewriting
+
+  // Show writing progress OR chapter content
+  const showProgress = writing || approving || (events.length > 0 && !chapterDone)
+  const showProse = isWritten && !showProgress
+
+  return (
+    <div className="flex h-full">
+      {/* Left: chapter list */}
+      <div className="w-44 border-r border-border flex flex-col shrink-0">
+        <div className="px-3 py-4 border-b border-border">
+          <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Chapters</h3>
         </div>
-        <div className="flex-1" />
-        <div className="flex items-center gap-2">
-          <Switch id="auto" checked={autoMode} onCheckedChange={setAutoMode} />
-          <Label htmlFor="auto" className="text-sm cursor-pointer">Automatic mode</Label>
+        <div className="flex-1 overflow-y-auto py-2">
+          {isLocked && (
+            <p className="px-3 py-2 text-xs text-muted-foreground italic">Approve Phase 2 first.</p>
+          )}
+          {chapters.map(ch => (
+            <button
+              key={ch.chapter}
+              onClick={() => !busy && setActiveChapter(ch.chapter)}
+              disabled={busy}
+              className={cn(
+                'w-full flex items-center gap-2 px-3 py-2 text-sm transition-colors',
+                activeChapter === ch.chapter ? 'bg-accent text-accent-foreground' : 'hover:bg-muted/50',
+                busy && 'opacity-50 cursor-not-allowed',
+              )}
+            >
+              <span className={cn(
+                'w-1.5 h-1.5 rounded-full shrink-0',
+                ch.approved ? 'bg-emerald-500' : 'bg-amber-400',
+              )} />
+              Chapter {ch.chapter}
+            </button>
+          ))}
+          {nextChapter && !isLocked && (
+            <>
+              {chapters.length > 0 && <Separator className="my-2" />}
+              <button
+                onClick={() => !busy && setActiveChapter(nextChapter)}
+                disabled={busy}
+                className={cn(
+                  'w-full flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted/50',
+                  activeChapter === nextChapter && 'bg-accent text-accent-foreground',
+                )}
+              >
+                + Chapter {nextChapter}
+              </button>
+            </>
+          )}
         </div>
-        {status === 'idle' && (
-          <Button size="sm" onClick={runScene} className="gap-2">
-            <Play size={13} />
-            Write scene
-          </Button>
+      </div>
+
+      {/* Main content */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Top bar */}
+        <div className="flex items-center gap-3 px-5 py-3 border-b border-border shrink-0">
+          <div className="flex-1 min-w-0">
+            <h2 className="font-semibold text-sm truncate">
+              {activeChapter ? `Chapter ${activeChapter}` : 'Writing Loop'}
+            </h2>
+            <p className="text-xs text-muted-foreground">
+              {isApproved ? 'Approved' : meta ? `${scenes.length} scenes` : activeChapter === nextChapter ? 'Not yet written' : ''}
+            </p>
+          </div>
+
+          {activeChapter !== null && (
+            <>
+              {/* Write button (first write or already written chapter — can re-run) */}
+              {activeChapter === nextChapter && !writing && (
+                <Button size="sm" onClick={() => writeChapter(activeChapter)} className="gap-2" disabled={busy}>
+                  <Play size={13} />Write Chapter {activeChapter}
+                </Button>
+              )}
+              {writing && (
+                <Badge variant="secondary" className="gap-1.5">
+                  <Loader2 size={12} className="animate-spin" />Writing…
+                </Badge>
+              )}
+              {/* Approve button — shown for written, unapproved chapters */}
+              {isWritten && !isApproved && !approving && !writing && (
+                <Button size="sm" onClick={() => approveChapter(activeChapter)} className="gap-2" disabled={busy}>
+                  <Lock size={13} />Approve Chapter
+                </Button>
+              )}
+              {approving && (
+                <Badge variant="secondary" className="gap-1.5">
+                  <Loader2 size={12} className="animate-spin" />Updating Bible…
+                </Badge>
+              )}
+              {isApproved && <Badge variant="success">Approved</Badge>}
+            </>
+          )}
+        </div>
+
+        {/* Body */}
+        {!activeChapter && (
+          <div className="flex-1 flex items-center justify-center">
+            <p className="text-sm text-muted-foreground">
+              {isLocked ? 'Complete Phase 2 to unlock writing.' : 'Select a chapter to begin.'}
+            </p>
+          </div>
+        )}
+
+        {activeChapter && showProgress && (
+          <EventFeed events={events} />
+        )}
+
+        {activeChapter && !showProgress && !isWritten && (
+          <div className="flex-1 flex items-center justify-center">
+            <div className="text-center space-y-2">
+              <p className="text-sm text-muted-foreground">Chapter {activeChapter} not yet written.</p>
+              <Button size="sm" onClick={() => writeChapter(activeChapter)} disabled={busy} className="gap-2">
+                <Play size={13} />Write now
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {activeChapter && showProse && (
+          <div className="flex-1 overflow-y-auto px-8 py-6">
+            <div className="max-w-2xl mx-auto">
+              {rewriteScene !== null ? (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <Button variant="ghost" size="sm" onClick={() => setRewriteScene(null)}>← Back</Button>
+                    <span className="text-sm font-medium">Rewrite Scene {rewriteScene}</span>
+                  </div>
+                  <textarea
+                    value={rewriteDirective}
+                    onChange={e => setRewriteDirective(e.target.value)}
+                    placeholder="Describe what to change in this scene…"
+                    rows={3}
+                    className="w-full resize-none rounded-md border border-input bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  />
+                  <Button
+                    size="sm"
+                    onClick={() => doRewrite(activeChapter, rewriteScene)}
+                    disabled={!rewriteDirective.trim() || rewriting}
+                    className="gap-2"
+                  >
+                    {rewriting ? <><Loader2 size={12} className="animate-spin" />Rewriting…</> : 'Rewrite scene'}
+                  </Button>
+                </div>
+              ) : (
+                <pre className="whitespace-pre-wrap font-serif text-base leading-relaxed text-foreground">
+                  {chapterData?.content}
+                </pre>
+              )}
+            </div>
+          </div>
         )}
       </div>
 
-      {/* Scene state strip */}
-      <div className="flex items-stretch border-b border-border text-xs">
-        <div className="flex-1 px-4 py-2 border-r border-border">
-          <span className="text-muted-foreground font-medium uppercase tracking-wider">Entry</span>
-          <p className="mt-0.5 text-foreground/80">{scene.entryState}</p>
+      {/* Right sidebar: scenes + QA */}
+      <div className="w-72 border-l border-border flex flex-col shrink-0">
+        <div className="px-4 py-4 border-b border-border">
+          <h3 className="text-sm font-medium">Scenes</h3>
+          <p className="text-xs text-muted-foreground">
+            {scenes.length > 0 ? `${scenes.length} scenes · ${scenes.reduce((a, s) => a + s.word_count, 0).toLocaleString()} words` : 'No scenes yet'}
+          </p>
         </div>
-        <div className="px-3 flex items-center text-muted-foreground">
-          <ChevronRight size={14} />
-        </div>
-        <div className="flex-1 px-4 py-2">
-          <span className="text-muted-foreground font-medium uppercase tracking-wider">Exit (contract)</span>
-          <p className="mt-0.5 text-foreground/80">{scene.exitState}</p>
-        </div>
-      </div>
-
-      {/* Main area */}
-      <div className="flex flex-1 min-h-0">
-        {/* Prose panel */}
-        <div className="flex-1 overflow-y-auto p-6">
-          {status === 'idle' && (
-            <div className="text-center py-20">
-              <p className="text-sm text-muted-foreground">Ready to write scene {scene.number}.</p>
-              <p className="text-xs text-muted-foreground mt-1">{scene.brief}</p>
-            </div>
+        <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
+          {scenes.length === 0 && (
+            <p className="text-xs text-muted-foreground italic px-1">Write the chapter to see scene details.</p>
           )}
-          {status === 'writing' && (
-            <p className="text-sm text-muted-foreground italic animate-pulse">Writer agent generating scene prose…</p>
-          )}
-          {(status === 'qa' || status === 'qa-pass' || status === 'qa-fail') && (
-            <div className="prose-display text-foreground leading-relaxed whitespace-pre-wrap">
-              {sceneText}
-            </div>
-          )}
-          {status === 'editing' && (
-            <div className="h-full min-h-[400px]">
-              <ProseEditor initialValue={editedText} onChange={setEditedText} />
-            </div>
-          )}
-        </div>
-
-        {/* QA sidebar */}
-        <div className="w-72 border-l border-border flex flex-col">
-          <div className="px-4 py-3 border-b border-border">
-            <h3 className="text-sm font-medium">QA Status</h3>
-          </div>
-          <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
-            {status === 'qa' && (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <span className="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-                QA agent checking…
-              </div>
-            )}
-            {status === 'qa-pass' && (
-              <>
-                <div className="flex items-center gap-2">
-                  <CheckCircle size={14} className="text-emerald-500" />
-                  <span className="text-sm font-medium text-emerald-500">Pass</span>
-                  <Badge variant="outline" className="text-xs ml-auto">Attempt {qaAttempt}/3</Badge>
-                </div>
-                <p className="text-xs text-muted-foreground">{qaNote}</p>
-              </>
-            )}
-            {status === 'qa-fail' && (
-              <>
-                <div className="flex items-center gap-2">
-                  <XCircle size={14} className="text-red-500" />
-                  <span className="text-sm font-medium text-red-500">Fail</span>
-                  <Badge variant="outline" className="text-xs ml-auto">Attempt {qaAttempt}/3</Badge>
-                </div>
-                <p className="text-xs text-muted-foreground">{qaNote}</p>
-              </>
-            )}
-
-            {status === 'qa-pass' && !autoMode && (
-              <>
-                <Separator />
-                <div className="space-y-2">
-                  <Button className="w-full" size="sm" onClick={approve}>
-                    Approve scene
-                  </Button>
-                  <textarea
-                    value={rejectNote}
-                    onChange={e => setRejectNote(e.target.value)}
-                    placeholder="Rejection notes…"
-                    rows={2}
-                    className="w-full resize-none rounded-md border border-input bg-transparent px-2 py-1.5 text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                  />
-                  <div className="flex gap-2">
-                    <Button variant="outline" size="sm" className="flex-1" onClick={reject} disabled={!rejectNote.trim()}>
-                      Reject
-                    </Button>
-                    <Button variant="ghost" size="sm" className="flex-1 gap-1" onClick={startEdit}>
-                      <Edit3 size={12} />
-                      Edit
-                    </Button>
+          {scenes.map(s => (
+            <Card key={s.scene} className={cn('bg-muted/20', rewriteScene === s.scene && 'ring-1 ring-ring')}>
+              <CardContent className="px-3 py-2 space-y-1.5">
+                <div className="flex items-center justify-between gap-1">
+                  <span className="text-xs font-medium">Scene {s.scene}</span>
+                  <div className="flex items-center gap-1">
+                    {s.qa_pass
+                      ? <CheckCircle size={11} className="text-emerald-500" />
+                      : <AlertTriangle size={11} className="text-amber-400" />
+                    }
+                    {s.attempts > 1 && (
+                      <Badge variant="outline" className="text-[10px] px-1 py-0">{s.attempts} attempts</Badge>
+                    )}
                   </div>
                 </div>
-              </>
-            )}
-
-            {status === 'editing' && (
-              <>
-                <Separator />
-                <p className="text-xs text-muted-foreground">Editing directly. The Bible Updater will still run on your approved version.</p>
-                <Button className="w-full" size="sm" onClick={submitEdit}>
-                  Approve edited scene
-                </Button>
-              </>
-            )}
-          </div>
+                <p className="text-[11px] text-muted-foreground leading-snug line-clamp-2">{s.brief}</p>
+                {s.qa_notes && (
+                  <p className="text-[10px] text-muted-foreground/70 italic line-clamp-2">{s.qa_notes}</p>
+                )}
+                <div className="flex items-center justify-between pt-0.5">
+                  <span className="text-[10px] text-muted-foreground">{s.word_count.toLocaleString()} words</span>
+                  {isWritten && !isApproved && (
+                    <button
+                      onClick={() => { setRewriteScene(s.scene); setRewriteDirective('') }}
+                      className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      Rewrite
+                    </button>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          ))}
         </div>
+        {isApproved && (
+          <div className="px-4 py-3 border-t border-border">
+            <div className="flex items-center gap-2 text-xs text-emerald-500">
+              <CheckCircle size={12} />
+              <span>Bible updated — Chapter {activeChapter} locked</span>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

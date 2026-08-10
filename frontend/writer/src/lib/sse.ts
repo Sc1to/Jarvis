@@ -1,7 +1,8 @@
 export interface SSEEvent {
-  type: 'token' | 'done' | 'error'
+  type: string
   content?: string
   message?: string
+  [key: string]: unknown
 }
 
 export async function* readSSE(resp: Response): AsyncGenerator<SSEEvent> {
