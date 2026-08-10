@@ -59,7 +59,8 @@ INSERT OR IGNORE INTO apps (name, description, route, backend_port) VALUES
     ('Chat',             'AI chat interface',                        '/chat',      8010),
     ('Writer',           'AI writing assistant',                     '/writer',    8011),
     ('Coding Assistant', 'AI coding and GitHub integration',         '/coding',    8012),
-    ('Autocoder',        'Autonomous multi-agent development system','/autocoder', 8050);
+    ('Autocoder',        'Autonomous multi-agent development system','/autocoder', 8050),
+    ('Trading',          'Autonomous two-pool trading system',       '/trading',   8030);
 """
 
 
@@ -78,6 +79,32 @@ def init_db():
             except Exception:
                 pass
         _seed_writer_agents(conn)
+        _seed_trading_agents(conn)
+
+
+def _seed_trading_agents(conn):
+    trading_id = conn.execute("SELECT id FROM apps WHERE name='Trading'").fetchone()
+    if not trading_id:
+        return
+    tid = trading_id[0]
+    agents = [
+        ("trading_monitor_stocks",       "Momentum monitor — S&P 500 + NASDAQ 100",          '[]'),
+        ("trading_monitor_crypto",       "Momentum monitor — top 20 crypto by market cap",   '[]'),
+        ("trading_wsb_dd",               "WSB DD post scraper and thesis scorer",             '[]'),
+        ("trading_wsb_mentions",         "WSB ticker mention velocity tracker",               '[]'),
+        ("trading_validator_signal",     "Multi-source conviction scorer (0–100)",            '[]'),
+        ("trading_validator_risk_gate",  "Hard-coded pre-order compliance gate",              '[]'),
+        ("trading_execution_stocks",     "IBKR order placement and fill confirmation",        '[]'),
+        ("trading_execution_crypto",     "Coinbase order placement and fill confirmation",    '[]'),
+        ("trading_position_manager",     "Trailing stop and P&L tracker for open positions",  '[]'),
+        ("trading_auditor_compliance",   "Independent position audit (port 8031)",            '[]'),
+        ("trading_learning_engine",      "Daily signal weight tuning and shadow portfolio",   '[]'),
+    ]
+    for name, desc, calls in agents:
+        conn.execute(
+            "INSERT OR IGNORE INTO agents (name, description, model, app_id, calls) VALUES (?,?,?,?,?)",
+            (name, desc, "", tid, calls),
+        )
 
 
 def _seed_writer_agents(conn):
