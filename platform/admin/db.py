@@ -71,11 +71,33 @@ def init_db():
         for sql in [
             "ALTER TABLE agents ADD COLUMN app_id INTEGER REFERENCES apps(id)",
             "ALTER TABLE agents ADD COLUMN calls TEXT DEFAULT '[]'",
+            "CREATE UNIQUE INDEX IF NOT EXISTS agents_name_unique ON agents(name)",
         ]:
             try:
                 conn.execute(sql)
             except Exception:
                 pass
+        _seed_writer_agents(conn)
+
+
+def _seed_writer_agents(conn):
+    writer_id = conn.execute("SELECT id FROM apps WHERE name='Writer'").fetchone()
+    if not writer_id:
+        return
+    wid = writer_id[0]
+    agents = [
+        ("platform_writer_story_architect",  "Phase 1A: North Star conversation",      '["platform_writer_bible_agent"]'),
+        ("platform_writer_bible_agent",       "Phase 1B: Tiered bible iteration",       '[]'),
+        ("platform_writer_research_agent",    "Phase 2: Research & entity completion",  '[]'),
+        ("platform_writer_writer_agent",      "Phase 3: Scene prose generation",        '["platform_writer_qa_agent"]'),
+        ("platform_writer_qa_agent",          "Phase 3: Scene quality & consistency",   '["platform_writer_bible_updater"]'),
+        ("platform_writer_bible_updater",     "Phase 3: Bible update & Git commit",     '[]'),
+    ]
+    for name, desc, calls in agents:
+        conn.execute(
+            "INSERT OR IGNORE INTO agents (name, description, model, app_id, calls) VALUES (?,?,?,?,?)",
+            (name, desc, "", wid, calls),
+        )
 
 
 @contextmanager
