@@ -125,6 +125,25 @@ services:
     volumes:
       - platform-data:/opt/platform/data
 
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./Caddyfile.dev:/etc/caddy/Caddyfile
+      - ../frontend/admin/dist:/srv/admin:ro
+      - ../frontend/chat/dist:/srv/chat:ro
+      - ../frontend/writer/dist:/srv/writer:ro
+      - ../frontend/coding/dist:/srv/coding:ro
+      - ../frontend/autocoder/dist:/srv/autocoder:ro
+    depends_on:
+      - admin
+      - chat
+      - writer
+      - coding
+      - autocoder-dashboard
+    restart: unless-stopped
+
 volumes:
   ollama-data:
   chroma-data:

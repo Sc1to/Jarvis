@@ -1,0 +1,92 @@
+:80 {
+    # Named matchers: true when the frontend dist has been built and mounted.
+    # Falls back to reverse_proxy when the dist dir is empty (default dev state).
+    @admin-built file {
+        root /srv/admin
+        try_files /index.html
+    }
+    @chat-built file {
+        root /srv/chat
+        try_files /index.html
+    }
+    @writer-built file {
+        root /srv/writer
+        try_files /index.html
+    }
+    @coding-built file {
+        root /srv/coding
+        try_files /index.html
+    }
+    @autocoder-built file {
+        root /srv/autocoder
+        try_files /index.html
+    }
+
+    # Internal service APIs — declared before the catch-all app handles
+    handle /api/conductor* {
+        reverse_proxy conductor:8001
+    }
+    handle /api/re-agent* {
+        reverse_proxy re-agent:8002
+    }
+
+    handle /admin* {
+        handle @admin-built {
+            uri strip_prefix /admin
+            root * /srv/admin
+            try_files {path} /index.html
+            file_server
+        }
+        handle {
+            reverse_proxy admin:8000
+        }
+    }
+
+    handle /chat* {
+        handle @chat-built {
+            uri strip_prefix /chat
+            root * /srv/chat
+            try_files {path} /index.html
+            file_server
+        }
+        handle {
+            reverse_proxy chat:8010
+        }
+    }
+
+    handle /writer* {
+        handle @writer-built {
+            uri strip_prefix /writer
+            root * /srv/writer
+            try_files {path} /index.html
+            file_server
+        }
+        handle {
+            reverse_proxy writer:8011
+        }
+    }
+
+    handle /coding* {
+        handle @coding-built {
+            uri strip_prefix /coding
+            root * /srv/coding
+            try_files {path} /index.html
+            file_server
+        }
+        handle {
+            reverse_proxy coding:8012
+        }
+    }
+
+    handle /autocoder* {
+        handle @autocoder-built {
+            uri strip_prefix /autocoder
+            root * /srv/autocoder
+            try_files {path} /index.html
+            file_server
+        }
+        handle {
+            reverse_proxy autocoder-dashboard:8050
+        }
+    }
+}
