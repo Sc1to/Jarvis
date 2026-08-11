@@ -28,6 +28,7 @@ export const getUpdates = () => api.get('/updates/available')
 export const applyUpdates = () => api.post('/updates/apply')
 export const gitPull = () => api.post('/git/pull')
 export const restartService = (app) => api.post(`/services/${app}/restart`)
+export const deployService = (app) => api.post(`/services/${app}/deploy`)
 
 // Agents
 export const getAgents = () => api.get('/agents')

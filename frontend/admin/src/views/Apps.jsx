@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getApps, createApp, deleteApp, restartApp } from '../api.js'
+import { getApps, createApp, deleteApp, deployService } from '../api.js'
 
 const EMPTY = { name: '', description: '', route: '', backend_port: '' }
 
@@ -8,6 +8,7 @@ export default function Apps({ setSelectedApp }) {
   const [form, setForm] = useState(EMPTY)
   const [error, setError] = useState(null)
   const [msg, setMsg] = useState(null)
+  const [deploying, setDeploying] = useState({})
 
   async function load() {
     try { setApps((await getApps()).data) } catch (e) { setError(e.message) }
@@ -33,8 +34,17 @@ export default function Apps({ setSelectedApp }) {
     try { await deleteApp(id); load() } catch (e) { setError(e.message) }
   }
 
-  async function restart(id) {
-    try { await restartApp(id); setMsg('Restart triggered') } catch (e) { setError(e.message) }
+  async function deploy(a) {
+    setError(null)
+    setDeploying(d => ({ ...d, [a.id]: true }))
+    try {
+      const r = await deployService(a.name.toLowerCase())
+      setMsg(r.data.message ?? 'Deploy started — rebuilding frontend, check back in ~1 min')
+    } catch (e) {
+      setError(e.response?.data?.detail ?? e.message)
+    } finally {
+      setDeploying(d => ({ ...d, [a.id]: false }))
+    }
   }
 
   return (
@@ -68,7 +78,13 @@ export default function Apps({ setSelectedApp }) {
               <span className="text-xs text-gray-500 ml-2">{a.route} → :{a.backend_port}</span>
               {a.description && <p className="text-xs text-gray-500 mt-0.5">{a.description}</p>}
             </div>
-            <button onClick={e => { e.stopPropagation(); restart(a.id) }} className="text-xs text-blue-400 hover:text-blue-300">Restart</button>
+            <button
+              onClick={e => { e.stopPropagation(); deploy(a) }}
+              disabled={deploying[a.id]}
+              className="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {deploying[a.id] ? 'Pulling…' : 'Deploy'}
+            </button>
             <button onClick={e => { e.stopPropagation(); remove(a.id) }} className="text-xs text-red-400 hover:text-red-300">Remove</button>
             <span className="text-gray-600 text-xs">›</span>
           </div>

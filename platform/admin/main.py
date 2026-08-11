@@ -7,6 +7,7 @@ import sqlite3 as _sqlite3
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -383,6 +384,15 @@ _SERVICE_UNITS: dict[str, list[str]] = {
     ],
 }
 
+_FRONTEND_DIRS: dict[str, str] = {
+    "admin":     "frontend/admin",
+    "chat":      "frontend/chat",
+    "writer":    "frontend/writer",
+    "coding":    "frontend/coding",
+    "autocoder": "frontend/autocoder",
+    "trading":   "frontend/trading",
+}
+
 
 @app.post("/git/pull")
 def git_pull():
@@ -413,6 +423,52 @@ def restart_service(app: str):
         return {"status": "ok", "message": f"Restarting {app}"}
     except Exception as e:
         raise HTTPException(500, str(e))
+
+
+def _run_deploy(repo: str, frontend_dirs: list[str], units: list[str], app_name: str):
+    try:
+        for d in frontend_dirs:
+            r = subprocess.run(
+                ["bash", "-lc", f"npm --prefix '{repo}/{d}' ci --silent && npm --prefix '{repo}/{d}' run build --silent"],
+                timeout=300, capture_output=True, text=True,
+            )
+            if r.returncode != 0:
+                log.error("npm build failed for %s: %s", d, r.stderr or r.stdout)
+                return
+        if units:
+            subprocess.run(["sudo", "systemctl", "restart"] + units, timeout=30)
+        subprocess.run(["sudo", "systemctl", "reload", "caddy"], timeout=10)
+        log.info("Deploy complete: %s", app_name)
+    except Exception as e:
+        log.error("Deploy failed for %s: %s", app_name, e)
+
+
+@app.post("/services/{app}/deploy")
+def deploy_service(app: str):
+    if app == "all":
+        units = [u for units in _SERVICE_UNITS.values() for u in units]
+        frontend_dirs = list(_FRONTEND_DIRS.values())
+    else:
+        units = _SERVICE_UNITS.get(app)
+        if units is None:
+            raise HTTPException(404, f"Unknown app: {app}")
+        frontend_dirs = [_FRONTEND_DIRS[app]] if app in _FRONTEND_DIRS else []
+
+    try:
+        r = subprocess.run(
+            ["git", "-C", REPO_PATH, "pull"],
+            capture_output=True, text=True, timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        raise HTTPException(504, "git pull timed out")
+    if r.returncode != 0:
+        raise HTTPException(500, r.stderr.strip() or "git pull failed")
+
+    threading.Thread(
+        target=_run_deploy, args=(REPO_PATH, frontend_dirs, units, app), daemon=True
+    ).start()
+
+    return {"status": "ok", "output": r.stdout.strip(), "message": f"Pulled. Building and restarting {app}…"}
 
 
 # ── App prompts ───────────────────────────────────────────────────────────────
