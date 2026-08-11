@@ -103,6 +103,7 @@ def get_internet_entry(session_id: str, entry_id: int):
 # ── Ollama models ─────────────────────────────────────────────────────────────
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+RE_AGENT_URL = os.environ.get("RE_AGENT_URL", "http://localhost:8002")
 
 @app.get("/ollama/models")
 async def list_ollama_models():
@@ -114,6 +115,29 @@ async def list_ollama_models():
             return {"data": names, "status": "ok"}
     except Exception as e:
         return {"data": [], "status": "error", "detail": str(e)}
+
+
+# ── RE-agent proxy ────────────────────────────────────────────────────────────
+
+@app.post("/re-agent/session/start")
+async def re_start(body: dict):
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        r = await client.post(f"{RE_AGENT_URL}/session/start", json=body)
+        return r.json()
+
+
+@app.post("/re-agent/session/{session_id}/message")
+async def re_message(session_id: str, body: dict):
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        r = await client.post(f"{RE_AGENT_URL}/session/{session_id}/message", json=body)
+        return r.json()
+
+
+@app.post("/re-agent/session/{session_id}/finalise")
+async def re_finalise(session_id: str):
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        r = await client.post(f"{RE_AGENT_URL}/session/{session_id}/finalise")
+        return r.json()
 
 
 # ── Projects ──────────────────────────────────────────────────────────────────

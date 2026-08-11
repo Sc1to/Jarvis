@@ -18,6 +18,10 @@ export const deleteProject = (id) => api.delete(`/projects/${id}`)
 export const exportProject = (projectId, destPath) =>
   api.post(`/projects/${projectId}/export`, { dest_path: destPath })
 
+export const startReSession = (projectId) => api.post('/re-agent/session/start', { project_id: projectId })
+export const sendReMessage = (id, message) => api.post(`/re-agent/session/${id}/message`, { message })
+export const finaliseReSession = (id) => api.post(`/re-agent/session/${id}/finalise`)
+
 export const getAgentsStatus = () => api.get('/agents/status')
 export const getOllamaModels = () => api.get('/ollama/models')
 
