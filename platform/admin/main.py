@@ -414,30 +414,28 @@ def git_pull():
 def restart_service(app: str):
     if app == "all":
         units = [u for units in _SERVICE_UNITS.values() for u in units]
-        frontend_dirs = list(_FRONTEND_DIRS.values())
     else:
         units = _SERVICE_UNITS.get(app)
         if units is None:
             raise HTTPException(404, f"Unknown app: {app}")
-        frontend_dirs = [_FRONTEND_DIRS[app]] if app in _FRONTEND_DIRS else []
 
-    threading.Thread(target=_run_deploy, args=(REPO_PATH, frontend_dirs, units, app), daemon=True).start()
+    threading.Thread(target=_run_deploy, args=(REPO_PATH, units, app), daemon=True).start()
     return {"status": "ok", "message": f"Rebuilding and restarting {app}…"}
 
 
-def _run_deploy(repo: str, frontend_dirs: list[str], units: list[str], app_name: str):
+def _run_deploy(repo: str, units: list[str], app_name: str):
     try:
-        for d in frontend_dirs:
-            r = subprocess.run(
-                ["bash", "-lc", f"npm --prefix '{repo}/{d}' ci --silent && npm --prefix '{repo}/{d}' run build --silent"],
-                timeout=300, capture_output=True, text=True,
-            )
-            if r.returncode != 0:
-                log.error("npm build failed for %s: %s", d, r.stderr or r.stdout)
-                return
+        script = os.path.join(repo, "scripts", "build-frontends.sh")
+        targets = [] if app_name == "all" else [app_name]
+        r = subprocess.run(
+            ["bash", "-l", script] + targets,
+            timeout=300, capture_output=True, text=True,
+        )
+        if r.returncode != 0:
+            log.error("build-frontends.sh failed for %s: %s", app_name, r.stderr or r.stdout)
+            return
         if units:
             subprocess.run(["sudo", "systemctl", "restart"] + units, timeout=30)
-        subprocess.run(["sudo", "systemctl", "reload", "caddy"], timeout=10)
         log.info("Deploy complete: %s", app_name)
     except Exception as e:
         log.error("Deploy failed for %s: %s", app_name, e)
@@ -447,12 +445,10 @@ def _run_deploy(repo: str, frontend_dirs: list[str], units: list[str], app_name:
 def deploy_service(app: str):
     if app == "all":
         units = [u for units in _SERVICE_UNITS.values() for u in units]
-        frontend_dirs = list(_FRONTEND_DIRS.values())
     else:
         units = _SERVICE_UNITS.get(app)
         if units is None:
             raise HTTPException(404, f"Unknown app: {app}")
-        frontend_dirs = [_FRONTEND_DIRS[app]] if app in _FRONTEND_DIRS else []
 
     try:
         r = subprocess.run(
@@ -465,7 +461,7 @@ def deploy_service(app: str):
         raise HTTPException(500, r.stderr.strip() or "git pull failed")
 
     threading.Thread(
-        target=_run_deploy, args=(REPO_PATH, frontend_dirs, units, app), daemon=True
+        target=_run_deploy, args=(REPO_PATH, units, app), daemon=True
     ).start()
 
     return {"status": "ok", "output": r.stdout.strip(), "message": f"Pulled. Building and restarting {app}…"}
