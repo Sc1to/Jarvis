@@ -19,6 +19,8 @@
 #   6. Reload systemd and restart Ollama
 #   7. Verify Ollama is reachable at http://localhost:11434
 
+# Phase 2 — fully implemented (replaces the stub that printed "not yet implemented")
+
 set -euo pipefail
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
