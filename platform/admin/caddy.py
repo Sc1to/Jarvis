@@ -27,7 +27,12 @@ def _reload():
 
 def add_route(route: str, backend_port: int):
     content = _read()
-    block = f'    handle {route}/* {{\n        reverse_proxy localhost:{backend_port}\n    }}\n'
+    block = (
+        f'    handle {route}* {{\n'
+        f'        uri strip_prefix {route}\n'
+        f'        reverse_proxy localhost:{backend_port}\n'
+        f'    }}\n'
+    )
     idx = content.rfind('}')
     content = content[:idx] + block + content[idx:]
     _write(content)
@@ -37,6 +42,6 @@ def add_route(route: str, backend_port: int):
 def remove_route(route: str):
     content = _read()
     escaped = re.escape(route)
-    content = re.sub(rf'\n\s*handle {escaped}/\*\s*\{{[^}}]*\}}', '', content)
+    content = re.sub(rf'\n\s*handle {escaped}\*\s*\{{[^}}]*\}}', '', content)
     _write(content)
     _reload()
