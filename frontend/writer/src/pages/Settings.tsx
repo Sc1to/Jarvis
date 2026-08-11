@@ -12,7 +12,9 @@ import { cn } from '@/lib/utils'
 import { API } from '@/lib/api'
 
 async function fetchSettings(): Promise<Record<string, string>> {
-  return fetch(`${API}/settings`).then(r => r.json())
+  const r = await fetch(`${API}/settings`)
+  if (!r.ok) throw new Error(String(r.status))
+  return r.json()
 }
 
 async function saveSettings(data: Record<string, string>) {
