@@ -1,129 +1,103 @@
 #!/usr/bin/env bash
-# First-time platform setup on a fresh Ubuntu mini PC (ms-s1).
-# Run from the dev machine: ./first-time-setup.sh
-# Requires: SSH key auth already configured to jarvis@ms-s1
+# first-time-setup.sh — Deploy platform services to the mini PC for the first time.
+# Run from the dev machine after setup.sh has been run on the mini PC.
+# Requires: SSH key auth to jarvis@ms-s1 (Tailscale must be running on both machines).
+# Safe to re-run — skips venvs that already exist, pulls latest code if repo exists.
 
 set -euo pipefail
 
 GREEN='\033[0;32m' RED='\033[0;31m' YELLOW='\033[1;33m' NC='\033[0m'
 ok()   { echo -e "${GREEN}[OK]${NC}   $*"; }
 fail() { echo -e "${RED}[FAIL]${NC} $*"; }
-warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 info() { echo -e "       $*"; }
 
 HOST="jarvis@ms-s1"
-PLATFORM="/opt/platform"
-REPO="https://github.com/yourusername/jarvis.git"  # TODO: set actual repo URL
+REPO="https://github.com/Sc1to/Jarvis.git"
 
-# Check SSH
+# ── SSH check ─────────────────────────────────────────────────────────────────
 if ! ssh -o ConnectTimeout=5 -o BatchMode=yes "$HOST" true 2>/dev/null; then
-  fail "Cannot reach $HOST"
-  info "Make sure: 1) Tailscale is running, 2) SSH key is configured on ms-s1"
-  exit 1
+    fail "Cannot reach $HOST — check Tailscale and SSH key auth"
+    exit 1
 fi
 ok "SSH connection verified"
 
-ssh "$HOST" bash -s << 'REMOTE'
+# ── Remote setup ──────────────────────────────────────────────────────────────
+ssh "$HOST" bash -s << REMOTE
 set -euo pipefail
 
-GREEN='\033[0;32m' RED='\033[0;31m' NC='\033[0m'
-ok()   { echo -e "${GREEN}[OK]${NC}   $*"; }
-info() { echo -e "       $*"; }
+GREEN='\033[0;32m' NC='\033[0m'
+ok()   { echo -e "\${GREEN}[OK]\${NC}   \$*"; }
+info() { echo -e "       \$*"; }
 
-PLATFORM="/opt/platform"
+REPO_PATH="/opt/platform"
+PLATFORM="\${REPO_PATH}/platform"
 
-# ── System packages ───────────────────────────────────────────────────────────
-
-info "Installing system packages..."
-sudo apt-get update -qq
-sudo apt-get install -y -qq git python3.12 python3.12-venv python3.12-dev \
-  curl build-essential nodejs npm
-ok "System packages installed"
-
-# ── Clone repository ──────────────────────────────────────────────────────────
-
-if [ -d "$PLATFORM/.git" ]; then
-  info "Repository already exists — pulling latest..."
-  cd "$PLATFORM" && git pull origin main
+# ── Clone or update repo ──────────────────────────────────────────────────────
+if [ -d "\${REPO_PATH}/.git" ]; then
+    info "Repository exists — pulling latest..."
+    git -C "\${REPO_PATH}" pull origin main --quiet
 else
-  info "Cloning repository..."
-  sudo mkdir -p "$PLATFORM"
-  sudo chown jarvis:jarvis "$PLATFORM"
-  git clone REPO_PLACEHOLDER "$PLATFORM"
+    info "Cloning into existing directory..."
+    git -C "\${REPO_PATH}" init --quiet
+    git -C "\${REPO_PATH}" remote add origin ${REPO}
+    git -C "\${REPO_PATH}" fetch --quiet
+    git -C "\${REPO_PATH}" checkout -t origin/main --quiet
 fi
 ok "Repository ready"
 
 # ── Data directories ──────────────────────────────────────────────────────────
+mkdir -p "\${REPO_PATH}/data/"{projects,writer,chromadb}
+ok "Data directories ready"
 
-sudo mkdir -p "$PLATFORM/data/projects"
-sudo mkdir -p "$PLATFORM/data/writer"
-sudo chown -R jarvis:jarvis "$PLATFORM/data"
-ok "Data directories created"
-
-# ── Virtual environments and dependencies ─────────────────────────────────────
-
+# ── Virtual environments ──────────────────────────────────────────────────────
 SERVICES=(
-  "admin"
-  "chat"
-  "writer"
-  "coding"
-  "autocoder/conductor"
-  "autocoder/re-agent"
-  "autocoder/dashboard"
-  "autocoder/specialists/backend"
-  "autocoder/specialists/frontend"
-  "autocoder/specialists/db"
-  "autocoder/specialists/tester"
-  "autocoder/specialists/refactorer"
-  "trading"
-  "memory"
-  "tools"
+    "memory"
+    "tools"
+    "admin"
+    "chat"
+    "writer"
+    "coding"
+    "trading"
+    "autocoder/conductor"
+    "autocoder/re-agent"
+    "autocoder/dashboard"
+    "autocoder/specialists/backend"
+    "autocoder/specialists/frontend"
+    "autocoder/specialists/db"
+    "autocoder/specialists/tester"
+    "autocoder/specialists/refactorer"
 )
 
-for svc in "${SERVICES[@]}"; do
-  dir="$PLATFORM/$svc"
-  if [ -f "$dir/requirements.txt" ]; then
-    info "Setting up venv for $svc..."
-    python3.12 -m venv "$dir/venv"
-    "$dir/venv/bin/pip" install --quiet -r "$dir/requirements.txt"
-    ok "$svc"
-  fi
+for svc in "\${SERVICES[@]}"; do
+    dir="\${PLATFORM}/\${svc}"
+    if [ ! -f "\${dir}/requirements.txt" ]; then
+        info "Skipping \${svc} — no requirements.txt yet"
+        continue
+    fi
+    if [ -d "\${dir}/venv" ]; then
+        info "\${svc} venv exists — updating dependencies..."
+    else
+        info "Creating venv for \${svc}..."
+        python3.12 -m venv "\${dir}/venv"
+    fi
+    "\${dir}/venv/bin/pip" install --quiet -r "\${dir}/requirements.txt"
+    ok "\${svc}"
 done
-
-# Trading auditor has its own entry point but shares trading requirements
-if [ -f "$PLATFORM/trading/requirements.txt" ]; then
-  mkdir -p "$PLATFORM/trading/auditor"
-  [ -d "$PLATFORM/trading/auditor/venv" ] || ln -sf "$PLATFORM/trading/venv" "$PLATFORM/trading/auditor/venv"
-fi
 
 # ── Systemd units ─────────────────────────────────────────────────────────────
-
-info "Installing systemd service units..."
-sudo cp "$PLATFORM/systemd/"*.service /etc/systemd/system/
+info "Installing systemd units..."
+sudo cp "\${REPO_PATH}/systemd/"*.service /etc/systemd/system/
 sudo systemctl daemon-reload
-
-for unit in $(ls "$PLATFORM/systemd/"); do
-  sudo systemctl enable "${unit%.service}" 2>/dev/null || true
+for unit in "\${REPO_PATH}/systemd/"*.service; do
+    name="\$(basename "\${unit%.service}")"
+    sudo systemctl enable "\${name}" 2>/dev/null || true
 done
 ok "Systemd units installed and enabled"
-
-# ── Frontend dist directories ─────────────────────────────────────────────────
-
-for app in admin chat writer coding autocoder trading; do
-  mkdir -p "$PLATFORM/frontend/$app/dist"
-done
-ok "Frontend directories created (deploy frontends separately with deploy-frontend.sh)"
 
 echo ""
 ok "First-time setup complete"
 echo ""
-echo "Next steps:"
-echo "  1. Install Ollama: curl -fsSL https://ollama.com/install.sh | sh"
-echo "  2. Pull models: ollama pull qwen2.5:14b && ollama pull qwen2.5-coder:32b"
-echo "  3. Install and configure Caddy (see docs/SETUP.md Part 4)"
-echo "  4. Start services: sudo systemctl start platform-admin platform-chat"
-echo "  5. Run validation: python3 scripts/validate-platform.py"
+echo "  Next: bash scripts/validate-platform.py"
 REMOTE
 
-ok "Remote setup complete"
-warn "Remember to set the actual GitHub repo URL in this script (REPO_PLACEHOLDER)"
+ok "Done"

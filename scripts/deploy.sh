@@ -46,20 +46,20 @@ declare -A SVC_FRONTEND=(
 )
 
 declare -A SVC_DIR=(
-  [admin]=admin
-  [chat]=chat
-  [writer]=writer
-  [coding]=coding
-  [autocoder-conductor]=autocoder/conductor
-  [autocoder-re-agent]=autocoder/re-agent
-  [autocoder-dashboard]=autocoder/dashboard
-  [autocoder-specialist-backend]=autocoder/specialists/backend
-  [autocoder-specialist-frontend]=autocoder/specialists/frontend
-  [autocoder-specialist-db]=autocoder/specialists/db
-  [autocoder-specialist-tester]=autocoder/specialists/tester
-  [autocoder-specialist-refactorer]=autocoder/specialists/refactorer
-  [trading]=trading
-  [trading-auditor]=trading/auditor
+  [admin]=platform/admin
+  [chat]=platform/chat
+  [writer]=platform/writer
+  [coding]=platform/coding
+  [autocoder-conductor]=platform/autocoder/conductor
+  [autocoder-re-agent]=platform/autocoder/re-agent
+  [autocoder-dashboard]=platform/autocoder/dashboard
+  [autocoder-specialist-backend]=platform/autocoder/specialists/backend
+  [autocoder-specialist-frontend]=platform/autocoder/specialists/frontend
+  [autocoder-specialist-db]=platform/autocoder/specialists/db
+  [autocoder-specialist-tester]=platform/autocoder/specialists/tester
+  [autocoder-specialist-refactorer]=platform/autocoder/specialists/refactorer
+  [trading]=platform/trading
+  [trading-auditor]=platform/trading/auditor
 )
 
 deploy_frontend() {

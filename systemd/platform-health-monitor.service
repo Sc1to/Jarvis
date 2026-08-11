@@ -5,9 +5,9 @@ Wants=platform-admin.service
 
 [Service]
 Type=simple
-User=ubuntu
+User=jarvis
 WorkingDirectory=/opt/platform
-ExecStart=/opt/platform/scripts/venv/bin/python /opt/platform/scripts/health-monitor.py
+ExecStart=/opt/platform/platform/scripts/venv/bin/python /opt/platform/scripts/health-monitor.py
 Restart=always
 RestartSec=10
 Environment=PYTHONPATH=/opt/platform
