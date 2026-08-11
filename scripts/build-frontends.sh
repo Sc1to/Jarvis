@@ -101,7 +101,7 @@ http://${TAILSCALE_IP} {
     }
 
     handle /writer/api* {
-        uri strip_prefix /writer/api
+        uri strip_prefix /writer
         reverse_proxy localhost:8011
     }
     handle /writer* {

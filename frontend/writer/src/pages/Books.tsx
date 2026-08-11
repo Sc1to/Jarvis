@@ -10,7 +10,9 @@ import { BookOpen, Plus, Trash2, ArrowRight, Loader2 } from 'lucide-react'
 interface Book { id: string; title: string; created_at: number }
 
 async function fetchBooks(): Promise<Book[]> {
-  return fetch(`${API}/books`).then(r => r.json())
+  const r = await fetch(`${API}/books`)
+  if (!r.ok) throw new Error(`${r.status}`)
+  return r.json()
 }
 
 async function createBook(title: string): Promise<Book> {
