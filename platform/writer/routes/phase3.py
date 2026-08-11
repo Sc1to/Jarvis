@@ -3,11 +3,12 @@ import os
 import re
 from datetime import datetime, timezone
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 import db
+from deps import current_user
 import llm
 
 router = APIRouter()
@@ -121,9 +122,9 @@ def _extract_json_list(text: str) -> list:
         raise ValueError("No JSON array found")
     return json.loads(text[s:e])
 
-async def _call(provider: str, model: str, messages: list[dict], system: str) -> str:
+async def _call(provider: str, model: str, messages: list[dict], system: str, user_id: str = "local") -> str:
     result = ""
-    async for token in llm.provider_tokens(provider, model, messages, system):
+    async for token in llm.provider_tokens(provider, model, messages, system, user_id):
         result += token
     return result
 
@@ -168,7 +169,7 @@ class WriteChapterBody(BaseModel):
     chapter: int
 
 @router.post("/books/{book_id}/phase3/write-chapter")
-def write_chapter(book_id: str, body: WriteChapterBody):
+def write_chapter(book_id: str, body: WriteChapterBody, user: str = Depends(current_user)):
     async def generate():
         chapter = body.chapter
         book_dir = db.data_dir(book_id)
@@ -198,6 +199,7 @@ def write_chapter(book_id: str, body: WriteChapterBody):
                 planner_provider, planner_model,
                 [{"role": "user", "content": f"Chapter number: {chapter}\n\nTier 4 (Scenes bible):\n\n{tier4_content}"}],
                 SCENE_PLANNER_SYSTEM,
+                user,
             )
             scene_plan = _extract_json_list(plan_text)
         except Exception as e:
@@ -260,6 +262,7 @@ def write_chapter(book_id: str, body: WriteChapterBody):
                         writer_provider, writer_model,
                         [{"role": "user", "content": writer_user}],
                         WRITER_SYSTEM,
+                        user,
                     ):
                         scene_text += token
                         yield _sse({"type": "token", "content": token})
@@ -278,7 +281,7 @@ def write_chapter(book_id: str, body: WriteChapterBody):
                     f"## Scene to review\n\n{scene_text}"
                 )
                 try:
-                    qa_text = await _call(qa_provider, qa_model, [{"role": "user", "content": qa_user}], QA_SYSTEM)
+                    qa_text = await _call(qa_provider, qa_model, [{"role": "user", "content": qa_user}], QA_SYSTEM, user)
                     qa_result = _extract_json(qa_text)
                 except Exception as e:
                     qa_result = {"pass": True, "issues": [{"type": "system", "description": str(e), "severity": "warning"}], "notes": "QA skipped"}
@@ -350,7 +353,7 @@ def get_chapter(book_id: str, chapter: int):
 # ── Approve Chapter (runs Bible Updater) ──────────────────────────────────────
 
 @router.post("/books/{book_id}/phase3/chapter/{chapter}/approve")
-def approve_chapter(book_id: str, chapter: int):
+def approve_chapter(book_id: str, chapter: int, user: str = Depends(current_user)):
     async def generate():
         bu_provider = db.get_setting("agent_bible_updater_provider")
         bu_model = db.get_setting("agent_bible_updater_model")
@@ -378,7 +381,7 @@ def approve_chapter(book_id: str, chapter: int):
 
         full_text = ""
         try:
-            async for token in llm.provider_tokens(bu_provider, bu_model, [{"role": "user", "content": bu_user}], BIBLE_UPDATER_SYSTEM):
+            async for token in llm.provider_tokens(bu_provider, bu_model, [{"role": "user", "content": bu_user}], BIBLE_UPDATER_SYSTEM, user):
                 full_text += token
                 yield _sse({"type": "token", "content": token})
         except Exception as e:
@@ -421,7 +424,7 @@ class RewriteBody(BaseModel):
     directive: str
 
 @router.post("/books/{book_id}/phase3/chapter/{chapter}/scene/{scene}/rewrite")
-def rewrite_scene(book_id: str, chapter: int, scene: int, body: RewriteBody):
+def rewrite_scene(book_id: str, chapter: int, scene: int, body: RewriteBody, user: str = Depends(current_user)):
     async def generate():
         writer_provider = db.get_setting("agent_writer_agent_provider")
         writer_model = db.get_setting("agent_writer_agent_model")
@@ -470,6 +473,7 @@ def rewrite_scene(book_id: str, chapter: int, scene: int, body: RewriteBody):
                 writer_provider, writer_model,
                 [{"role": "user", "content": writer_user}],
                 WRITER_SYSTEM,
+                user,
             ):
                 scene_text += token
                 yield _sse({"type": "token", "content": token})

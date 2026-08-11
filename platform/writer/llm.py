@@ -10,8 +10,8 @@ import db
 logger = logging.getLogger(__name__)
 
 
-async def _gemini_tokens(model: str, messages: list[dict], system: str | None) -> AsyncGenerator[str, None]:
-    api_key = db.get_setting("gemini_api_key")
+async def _gemini_tokens(model: str, messages: list[dict], system: str | None, user_id: str) -> AsyncGenerator[str, None]:
+    api_key = db.get_user_key(user_id, "gemini")
     if not api_key:
         raise ValueError("Gemini API key not configured in Settings")
 
@@ -42,8 +42,8 @@ async def _gemini_tokens(model: str, messages: list[dict], system: str | None) -
                     pass
 
 
-async def _openrouter_tokens(model: str, messages: list[dict], system: str | None) -> AsyncGenerator[str, None]:
-    api_key = db.get_setting("openrouter_api_key")
+async def _openrouter_tokens(model: str, messages: list[dict], system: str | None, user_id: str) -> AsyncGenerator[str, None]:
+    api_key = db.get_user_key(user_id, "openrouter")
     if not api_key:
         raise ValueError("OpenRouter API key not configured in Settings")
 
@@ -73,7 +73,74 @@ async def _openrouter_tokens(model: str, messages: list[dict], system: str | Non
                     pass
 
 
-async def _ollama_tokens(model: str, messages: list[dict], system: str | None) -> AsyncGenerator[str, None]:
+async def _anthropic_tokens(model: str, messages: list[dict], system: str | None, user_id: str) -> AsyncGenerator[str, None]:
+    api_key = db.get_user_key(user_id, "anthropic")
+    if not api_key:
+        raise ValueError("Anthropic API key not configured in Settings")
+
+    body: dict = {
+        "model": model,
+        "max_tokens": 8192,
+        "stream": True,
+        "messages": [m for m in messages if m["role"] != "system"],
+    }
+    if system:
+        body["system"] = system
+
+    async with httpx.AsyncClient(timeout=120) as client:
+        async with client.stream(
+            "POST",
+            "https://api.anthropic.com/v1/messages",
+            json=body,
+            headers={"x-api-key": api_key, "anthropic-version": "2023-06-01"},
+        ) as r:
+            r.raise_for_status()
+            async for line in r.aiter_lines():
+                if not line.startswith("data: "):
+                    continue
+                raw = line[6:].strip()
+                try:
+                    d = json.loads(raw)
+                    if d.get("type") == "content_block_delta":
+                        text = d.get("delta", {}).get("text", "")
+                        if text:
+                            yield text
+                except Exception:
+                    pass
+
+
+async def _openai_tokens(model: str, messages: list[dict], system: str | None, user_id: str) -> AsyncGenerator[str, None]:
+    api_key = db.get_user_key(user_id, "openai")
+    if not api_key:
+        raise ValueError("OpenAI API key not configured in Settings")
+
+    msgs = ([{"role": "system", "content": system}] if system else []) + messages
+    body = {"model": model, "stream": True, "messages": msgs}
+
+    async with httpx.AsyncClient(timeout=120) as client:
+        async with client.stream(
+            "POST",
+            "https://api.openai.com/v1/chat/completions",
+            json=body,
+            headers={"Authorization": f"Bearer {api_key}"},
+        ) as r:
+            r.raise_for_status()
+            async for line in r.aiter_lines():
+                if not line.startswith("data: "):
+                    continue
+                raw = line[6:].strip()
+                if raw == "[DONE]":
+                    return
+                try:
+                    d = json.loads(raw)
+                    text = d.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                    if text:
+                        yield text
+                except Exception:
+                    pass
+
+
+async def _ollama_tokens(model: str, messages: list[dict], system: str | None, user_id: str) -> AsyncGenerator[str, None]:
     host = db.get_setting("ollama_host") or "http://localhost:11434"
     msgs = ([{"role": "system", "content": system}] if system else []) + messages
     body = {"model": model, "stream": True, "messages": msgs}
@@ -93,17 +160,21 @@ async def _ollama_tokens(model: str, messages: list[dict], system: str | None) -
                     pass
 
 
-def provider_tokens(provider: str, model: str, messages: list[dict], system: str | None = None) -> AsyncGenerator[str, None]:
+def provider_tokens(provider: str, model: str, messages: list[dict], system: str | None = None, user_id: str = "local") -> AsyncGenerator[str, None]:
     if provider == "gemini":
-        return _gemini_tokens(model, messages, system)
+        return _gemini_tokens(model, messages, system, user_id)
     if provider == "openrouter":
-        return _openrouter_tokens(model, messages, system)
+        return _openrouter_tokens(model, messages, system, user_id)
+    if provider == "anthropic":
+        return _anthropic_tokens(model, messages, system, user_id)
+    if provider == "openai":
+        return _openai_tokens(model, messages, system, user_id)
     if provider == "ollama":
-        return _ollama_tokens(model, messages, system)
+        return _ollama_tokens(model, messages, system, user_id)
     raise ValueError(f"Unknown provider: {provider}")
 
 
-def stream_chat(agent_key: str, messages: list[dict], system: str | None = None) -> StreamingResponse:
+def stream_chat(agent_key: str, messages: list[dict], system: str | None = None, user_id: str = "local") -> StreamingResponse:
     async def generate():
         provider = db.get_setting(f"agent_{agent_key}_provider")
         model = db.get_setting(f"agent_{agent_key}_model")
@@ -112,7 +183,7 @@ def stream_chat(agent_key: str, messages: list[dict], system: str | None = None)
             yield f'data: {json.dumps({"type": "error", "message": f"Agent \"{agent_key}\" has no model assigned. Go to Settings."})}\n\n'
             return
         try:
-            async for token in provider_tokens(provider, model, messages, system):
+            async for token in provider_tokens(provider, model, messages, system, user_id):
                 yield f'data: {json.dumps({"type": "token", "content": token})}\n\n'
             yield f'data: {json.dumps({"type": "done"})}\n\n'
         except Exception as e:
@@ -126,7 +197,7 @@ def stream_chat(agent_key: str, messages: list[dict], system: str | None = None)
     )
 
 
-async def call_llm(agent_key: str, messages: list[dict], system: str | None = None) -> str:
+async def call_llm(agent_key: str, messages: list[dict], system: str | None = None, user_id: str = "local") -> str:
     provider = db.get_setting(f"agent_{agent_key}_provider")
     model = db.get_setting(f"agent_{agent_key}_model")
 
@@ -134,6 +205,6 @@ async def call_llm(agent_key: str, messages: list[dict], system: str | None = No
         raise ValueError(f'Agent "{agent_key}" has no model assigned')
 
     result = ""
-    async for token in provider_tokens(provider, model, messages, system):
+    async for token in provider_tokens(provider, model, messages, system, user_id):
         result += token
     return result

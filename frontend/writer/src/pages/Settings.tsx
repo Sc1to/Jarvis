@@ -23,7 +23,7 @@ async function saveSettings(data: Record<string, string>) {
   })
 }
 
-type Provider = 'gemini' | 'openrouter' | 'ollama' | ''
+type Provider = 'gemini' | 'openrouter' | 'anthropic' | 'openai' | 'ollama' | ''
 
 interface AgentAssignment { provider: Provider; model: string }
 
@@ -69,9 +69,11 @@ export default function SettingsPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
   })
 
-  const [geminiKey, setGeminiKey]       = useState('')
-  const [openrouterKey, setOpenrouterKey] = useState('')
-  const [ollamaHost, setOllamaHost]     = useState('http://localhost:11434')
+  const [geminiKey, setGeminiKey]           = useState('')
+  const [openrouterKey, setOpenrouterKey]   = useState('')
+  const [anthropicKey, setAnthropicKey]     = useState('')
+  const [openaiKey, setOpenaiKey]           = useState('')
+  const [ollamaHost, setOllamaHost]         = useState('http://localhost:11434')
   const [autoMode, setAutoMode]         = useState(false)
   const [agents, setAgents] = useState<Record<string, AgentAssignment>>(() =>
     Object.fromEntries(AGENTS.map(a => [a.key, { provider: '' as Provider, model: '' }]))
@@ -80,6 +82,8 @@ export default function SettingsPage() {
   useEffect(() => {
     if (saved.gemini_api_key)     setGeminiKey(saved.gemini_api_key)
     if (saved.openrouter_api_key) setOpenrouterKey(saved.openrouter_api_key)
+    if (saved.anthropic_api_key)  setAnthropicKey(saved.anthropic_api_key)
+    if (saved.openai_api_key)     setOpenaiKey(saved.openai_api_key)
     if (saved.ollama_host)        setOllamaHost(saved.ollama_host)
     if (saved.auto_mode)          setAutoMode(saved.auto_mode === 'true')
     // Restore agent assignments from saved settings
@@ -110,6 +114,20 @@ export default function SettingsPage() {
     retry: false,
     staleTime: 60_000,
   })
+  const anthropicModels = useQuery({
+    queryKey: ['models', 'anthropic', anthropicKey],
+    queryFn: () => fetch(`${API}/models/anthropic`).then(r => r.ok ? r.json() as Promise<{ id: string; name: string }[]> : Promise.reject()),
+    enabled: anthropicKey.length > 10,
+    retry: false,
+    staleTime: 60_000,
+  })
+  const openaiModels = useQuery({
+    queryKey: ['models', 'openai', openaiKey],
+    queryFn: () => fetch(`${API}/models/openai`).then(r => r.ok ? r.json() as Promise<{ id: string; name: string }[]> : Promise.reject()),
+    enabled: openaiKey.length > 10,
+    retry: false,
+    staleTime: 60_000,
+  })
   const ollamaModels = useQuery({
     queryKey: ['models', 'ollama', ollamaHost],
     queryFn: () => fetch(`${API}/models/ollama`).then(r => r.ok ? r.json() as Promise<{ id: string; name: string }[]> : Promise.reject()),
@@ -121,6 +139,8 @@ export default function SettingsPage() {
   function modelsForProvider(provider: Provider): { id: string; name: string; free?: boolean }[] {
     if (provider === 'gemini')      return geminiModels.data ?? []
     if (provider === 'openrouter')  return orModels.data ?? []
+    if (provider === 'anthropic')   return anthropicModels.data ?? []
+    if (provider === 'openai')      return openaiModels.data ?? []
     if (provider === 'ollama')      return ollamaModels.data ?? []
     return []
   }
@@ -143,6 +163,8 @@ export default function SettingsPage() {
     mutation.mutate({
       gemini_api_key:      geminiKey,
       openrouter_api_key:  openrouterKey,
+      anthropic_api_key:   anthropicKey,
+      openai_api_key:      openaiKey,
       ollama_host:         ollamaHost,
       auto_mode:           String(autoMode),
       ...agentSettings,
@@ -150,8 +172,10 @@ export default function SettingsPage() {
   }
 
   const availableProviders: { value: Provider; label: string }[] = [
-    ...(geminiKey.length > 10     ? [{ value: 'gemini'      as Provider, label: 'Google Gemini' }] : []),
-    ...(openrouterKey.length > 10 ? [{ value: 'openrouter'  as Provider, label: 'OpenRouter'    }] : []),
+    ...(anthropicKey.length > 10  ? [{ value: 'anthropic'   as Provider, label: 'Anthropic (Claude)' }] : []),
+    ...(openaiKey.length > 10     ? [{ value: 'openai'      as Provider, label: 'OpenAI'              }] : []),
+    ...(geminiKey.length > 10     ? [{ value: 'gemini'      as Provider, label: 'Google Gemini'       }] : []),
+    ...(openrouterKey.length > 10 ? [{ value: 'openrouter'  as Provider, label: 'OpenRouter'          }] : []),
     { value: 'ollama' as Provider, label: 'Ollama (local)' },
   ]
 
@@ -209,6 +233,48 @@ export default function SettingsPage() {
 
       <Card>
         <CardHeader className="pb-3">
+          <CardTitle className="text-base">Anthropic (Claude)</CardTitle>
+          <CardDescription>Claude models. Get your key at console.anthropic.com.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="space-y-2">
+            <Label htmlFor="anthropic-key">API Key</Label>
+            <div className="flex items-center gap-2">
+              <Input id="anthropic-key" type="password" value={anthropicKey} onChange={e => setAnthropicKey(e.target.value)} placeholder="sk-ant-..." className="font-mono text-xs" />
+              {anthropicModels.isLoading
+                ? <Loader2 size={14} className="animate-spin text-muted-foreground" />
+                : <StatusDot ok={anthropicKey.length > 10 ? !anthropicModels.isError : null} />}
+            </div>
+          </div>
+          {anthropicModels.data && (
+            <p className="text-xs text-muted-foreground">{anthropicModels.data.length} models available</p>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">OpenAI</CardTitle>
+          <CardDescription>GPT and o-series models. Get your key at platform.openai.com.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="space-y-2">
+            <Label htmlFor="openai-key">API Key</Label>
+            <div className="flex items-center gap-2">
+              <Input id="openai-key" type="password" value={openaiKey} onChange={e => setOpenaiKey(e.target.value)} placeholder="sk-..." className="font-mono text-xs" />
+              {openaiModels.isLoading
+                ? <Loader2 size={14} className="animate-spin text-muted-foreground" />
+                : <StatusDot ok={openaiKey.length > 10 ? !openaiModels.isError : null} />}
+            </div>
+          </div>
+          {openaiModels.data && (
+            <p className="text-xs text-muted-foreground">{openaiModels.data.length} models available</p>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-3">
           <CardTitle className="text-base">Local (Ollama)</CardTitle>
           <CardDescription>Models served from your local Ollama instance. No API key required.</CardDescription>
         </CardHeader>
@@ -242,9 +308,11 @@ export default function SettingsPage() {
           {AGENTS.map((agent, i) => {
             const assignment = agents[agent.key]
             const models = modelsForProvider(assignment.provider)
-            const loading = assignment.provider === 'gemini' ? geminiModels.isLoading
+            const loading = assignment.provider === 'gemini'     ? geminiModels.isLoading
               : assignment.provider === 'openrouter' ? orModels.isLoading
-              : assignment.provider === 'ollama' ? ollamaModels.isLoading
+              : assignment.provider === 'anthropic'  ? anthropicModels.isLoading
+              : assignment.provider === 'openai'     ? openaiModels.isLoading
+              : assignment.provider === 'ollama'     ? ollamaModels.isLoading
               : false
 
             return (

@@ -2,11 +2,12 @@ import json
 import os
 from datetime import datetime, timezone
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
 import db
 import llm
+from deps import current_user
 
 router = APIRouter()
 
@@ -104,7 +105,7 @@ def phase2_status(book_id: str):
 # ── Consolidate ────────────────────────────────────────────────────────────────
 
 @router.post("/books/{book_id}/phase2/consolidate")
-def consolidate(book_id: str):
+def consolidate(book_id: str, user: str = Depends(current_user)):
     async def generate():
         provider = db.get_setting("agent_bible_agent_provider")
         model = db.get_setting("agent_bible_agent_model")
@@ -133,7 +134,7 @@ def consolidate(book_id: str):
 
         full_text = ""
         try:
-            async for token in llm.provider_tokens(provider, model, messages, CONSOLIDATOR_SYSTEM):
+            async for token in llm.provider_tokens(provider, model, messages, CONSOLIDATOR_SYSTEM, user):
                 full_text += token
                 yield f'data: {json.dumps({"type": "token", "content": token})}\n\n'
         except Exception as e:
@@ -176,7 +177,7 @@ def consolidate(book_id: str):
 # ── Research & Complete ────────────────────────────────────────────────────────
 
 @router.post("/books/{book_id}/phase2/run")
-def research_run(book_id: str):
+def research_run(book_id: str, user: str = Depends(current_user)):
     async def generate():
         provider = db.get_setting("agent_research_agent_provider")
         model = db.get_setting("agent_research_agent_model")
@@ -200,7 +201,7 @@ def research_run(book_id: str):
 
         full_text = ""
         try:
-            async for token in llm.provider_tokens(provider, model, messages, RESEARCH_SYSTEM):
+            async for token in llm.provider_tokens(provider, model, messages, RESEARCH_SYSTEM, user):
                 full_text += token
                 yield f'data: {json.dumps({"type": "token", "content": token})}\n\n'
         except Exception as e:

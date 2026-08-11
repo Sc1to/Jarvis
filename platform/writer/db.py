@@ -28,6 +28,12 @@ def _get_conn() -> sqlite3.Connection:
                 title      TEXT NOT NULL,
                 created_at INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS user_api_keys (
+                user_id  TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                api_key  TEXT NOT NULL,
+                PRIMARY KEY (user_id, provider)
+            );
         """)
         _conn.commit()
     return _conn
@@ -41,6 +47,29 @@ def get_setting(key: str) -> str | None:
 def set_setting(key: str, value: str) -> None:
     _get_conn().execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
     _get_conn().commit()
+
+
+def get_user_key(user_id: str, provider: str) -> str | None:
+    row = _get_conn().execute(
+        "SELECT api_key FROM user_api_keys WHERE user_id = ? AND provider = ?",
+        (user_id, provider),
+    ).fetchone()
+    return row["api_key"] if row else None
+
+
+def set_user_key(user_id: str, provider: str, api_key: str) -> None:
+    _get_conn().execute(
+        "INSERT OR REPLACE INTO user_api_keys (user_id, provider, api_key) VALUES (?, ?, ?)",
+        (user_id, provider, api_key),
+    )
+    _get_conn().commit()
+
+
+def get_user_keys(user_id: str) -> dict[str, str]:
+    rows = _get_conn().execute(
+        "SELECT provider, api_key FROM user_api_keys WHERE user_id = ?", (user_id,)
+    ).fetchall()
+    return {r["provider"]: r["api_key"] for r in rows}
 
 
 def get_all_settings() -> dict[str, str]:

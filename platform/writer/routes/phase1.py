@@ -2,12 +2,13 @@ import json
 import os
 from datetime import datetime, timezone
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from git import Repo
 from pydantic import BaseModel
 
 import db
 import llm
+from deps import current_user
 
 router = APIRouter()
 
@@ -114,8 +115,8 @@ class ReplyBody(BaseModel):
 
 
 @router.post("/books/{book_id}/phase1/north-star/reply")
-def north_star_reply(book_id: str, body: ReplyBody):
-    return llm.stream_chat("story_architect", body.messages, STORY_ARCHITECT_SYSTEM)
+def north_star_reply(book_id: str, body: ReplyBody, user: str = Depends(current_user)):
+    return llm.stream_chat("story_architect", body.messages, STORY_ARCHITECT_SYSTEM, user)
 
 
 class LockBody(BaseModel):
@@ -123,9 +124,9 @@ class LockBody(BaseModel):
 
 
 @router.post("/books/{book_id}/phase1/north-star/lock")
-async def north_star_lock(book_id: str, body: LockBody):
+async def north_star_lock(book_id: str, body: LockBody, user: str = Depends(current_user)):
     messages = body.messages + [{"role": "user", "content": SYNTHESIS_PROMPT}]
-    document = await llm.call_llm("story_architect", messages, STORY_ARCHITECT_SYSTEM)
+    document = await llm.call_llm("story_architect", messages, STORY_ARCHITECT_SYSTEM, user)
 
     book_dir = db.ensure_data_dir(book_id)
     path = os.path.join(book_dir, "north_star.md")
@@ -151,7 +152,7 @@ class RunTierBody(BaseModel):
 
 
 @router.post("/books/{book_id}/phase1/bible/run-tier")
-def run_tier(book_id: str, body: RunTierBody):
+def run_tier(book_id: str, body: RunTierBody, user: str = Depends(current_user)):
     idx = body.tier - 1
     book_dir = db.data_dir(book_id)
 
@@ -170,7 +171,7 @@ def run_tier(book_id: str, body: RunTierBody):
         context += f"\n\n## Author Directives\n\n{open(directives_path).read()}"
 
     messages = [{"role": "user", "content": f"{context}\n\n---\n\n{TIER_INSTRUCTIONS[idx]}"}]
-    return llm.stream_chat("bible_agent", messages, BIBLE_AGENT_SYSTEM)
+    return llm.stream_chat("bible_agent", messages, BIBLE_AGENT_SYSTEM, user)
 
 
 class ApproveTierBody(BaseModel):
