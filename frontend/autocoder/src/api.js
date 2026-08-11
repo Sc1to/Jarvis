@@ -13,6 +13,8 @@ export const getProjectSessions = (id) => api.get(`/projects/${id}/sessions`)
 export const getProjectCommits = (id) => api.get(`/projects/${id}/commits`)
 export const getCommitDiff = (projectId, hash) => api.get(`/projects/${projectId}/commits/${hash}/diff`)
 export const createProject = (name, description) => api.post('/projects', { name, description })
+export const updateProject = (id, name, description) => api.patch(`/projects/${id}`, { name, description })
+export const deleteProject = (id) => api.delete(`/projects/${id}`)
 export const exportProject = (projectId, destPath) =>
   api.post(`/projects/${projectId}/export`, { dest_path: destPath })
 

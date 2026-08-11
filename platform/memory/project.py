@@ -73,6 +73,21 @@ class ProjectMemory:
             ).fetchall()
         return [Project(**{k: r[k] for k in r.keys()}) for r in rows]
 
+    def update_project(self, project_id: int, name: str, description: str = "") -> bool:
+        with connect(self._db) as conn:
+            cur = conn.execute(
+                "UPDATE autocoder_projects SET name=?, description=? WHERE id=?",
+                (name, description, project_id),
+            )
+            return cur.rowcount > 0
+
+    def delete_project(self, project_id: int) -> bool:
+        with connect(self._db) as conn:
+            cur = conn.execute(
+                "DELETE FROM autocoder_projects WHERE id=?", (project_id,)
+            )
+            return cur.rowcount > 0
+
     # ── Decisions ─────────────────────────────────────────────────────────────
 
     def save_decision(

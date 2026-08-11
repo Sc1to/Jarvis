@@ -152,6 +152,25 @@ def get_project(project_id: int):
     }
 
 
+@app.patch("/projects/{project_id}")
+def update_project(project_id: int, body: dict):
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    description = (body.get("description") or "").strip()
+    if not project_mem.update_project(project_id, name, description):
+        raise HTTPException(status_code=404, detail="Project not found")
+    p = project_mem.get_project(project_id)
+    return {"data": _project_dict(p), "status": "ok"}
+
+
+@app.delete("/projects/{project_id}")
+def delete_project(project_id: int):
+    if not project_mem.delete_project(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"status": "ok"}
+
+
 @app.get("/projects/{project_id}/sessions")
 def get_project_sessions(project_id: int):
     sessions = session_mem.list_sessions(project_id=project_id, limit=20)

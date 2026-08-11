@@ -1,15 +1,26 @@
 import { useEffect, useState } from 'react'
-import { getProjects, getProjectSessions, exportProject } from '../api'
+import { getProjects, getProjectSessions, exportProject, updateProject, deleteProject } from '../api'
 
 export default function ProjectHistory({ onViewReview }) {
   const [projects, setProjects] = useState([])
   const [selected, setSelected] = useState(null)
   const [sessions, setSessions] = useState([])
 
-  // Export state
+  // Export
   const [exportPath, setExportPath] = useState('')
   const [exporting, setExporting] = useState(false)
   const [exportMsg, setExportMsg] = useState('')
+
+  // Edit
+  const [editing, setEditing] = useState(false)
+  const [editName, setEditName] = useState('')
+  const [editDesc, setEditDesc] = useState('')
+  const [editError, setEditError] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  // Delete
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   useEffect(() => {
     getProjects().then((r) => {
@@ -22,24 +33,54 @@ export default function ProjectHistory({ onViewReview }) {
   useEffect(() => {
     if (!selected) return
     setExportMsg('')
+    setEditing(false)
+    setConfirmDelete(false)
+    const p = projects.find((x) => x.id === selected)
+    if (p) { setEditName(p.name); setEditDesc(p.description || '') }
     getProjectSessions(selected)
       .then((r) => setSessions(r.data.data))
       .catch(() => {})
   }, [selected])
 
+  const selectedProject = projects.find((p) => p.id === selected)
+
   const handleExport = async () => {
     if (!exportPath.trim()) return
-    setExporting(true)
-    setExportMsg('')
+    setExporting(true); setExportMsg('')
     try {
       await exportProject(selected, exportPath.trim())
       setExportMsg(`Copied to ${exportPath.trim()}`)
       setExportPath('')
     } catch (e) {
       setExportMsg(e.response?.data?.detail || 'Export failed')
-    } finally {
-      setExporting(false)
-    }
+    } finally { setExporting(false) }
+  }
+
+  const handleSave = async () => {
+    if (!editName.trim()) { setEditError('Name is required'); return }
+    setSaving(true); setEditError('')
+    try {
+      const r = await updateProject(selected, editName.trim(), editDesc.trim())
+      const updated = r.data.data
+      setProjects((prev) => prev.map((p) => p.id === selected ? updated : p))
+      setEditing(false)
+    } catch (e) {
+      setEditError(e.response?.data?.detail || 'Save failed')
+    } finally { setSaving(false) }
+  }
+
+  const handleDelete = async () => {
+    setDeleting(true)
+    try {
+      await deleteProject(selected)
+      const remaining = projects.filter((p) => p.id !== selected)
+      setProjects(remaining)
+      setSelected(remaining.length > 0 ? remaining[0].id : null)
+      setSessions([])
+      setConfirmDelete(false)
+    } catch (e) {
+      setConfirmDelete(false)
+    } finally { setDeleting(false) }
   }
 
   const OUTCOME_CLS = {
@@ -61,14 +102,86 @@ export default function ProjectHistory({ onViewReview }) {
             <option key={p.id} value={p.id}>{p.name}</option>
           ))}
         </select>
+        {selected && !editing && (
+          <>
+            <button
+              className="text-xs text-blue-400 hover:text-blue-300 px-1"
+              onClick={() => { setEditing(true); setConfirmDelete(false) }}
+            >
+              Edit
+            </button>
+            <button
+              className="text-xs text-red-500 hover:text-red-400 px-1"
+              onClick={() => { setConfirmDelete(true); setEditing(false) }}
+            >
+              Delete
+            </button>
+          </>
+        )}
       </div>
 
       {projects.length === 0 && (
         <p className="text-gray-600 text-sm">No projects yet.</p>
       )}
 
+      {/* Edit form */}
+      {editing && selectedProject && (
+        <div className="mb-4 space-y-2 p-3 bg-gray-800/60 rounded-lg border border-gray-700">
+          <input
+            className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm text-gray-200"
+            placeholder="Project name"
+            value={editName}
+            onChange={(e) => setEditName(e.target.value)}
+          />
+          <input
+            className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm text-gray-200"
+            placeholder="Description (optional)"
+            value={editDesc}
+            onChange={(e) => setEditDesc(e.target.value)}
+          />
+          {editError && <p className="text-red-400 text-xs">{editError}</p>}
+          <div className="flex gap-2">
+            <button
+              className="bg-blue-700 hover:bg-blue-600 disabled:opacity-50 text-white text-xs font-medium px-4 py-1.5 rounded"
+              onClick={handleSave}
+              disabled={saving}
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+            <button
+              className="text-gray-400 hover:text-gray-200 text-xs px-2"
+              onClick={() => setEditing(false)}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Delete confirmation */}
+      {confirmDelete && selectedProject && (
+        <div className="mb-4 p-3 bg-gray-800/60 rounded-lg border border-red-800 flex items-center gap-3">
+          <span className="text-sm text-gray-300 flex-1">
+            Delete <span className="font-medium text-white">{selectedProject.name}</span>? This cannot be undone.
+          </span>
+          <button
+            className="bg-red-700 hover:bg-red-600 disabled:opacity-50 text-white text-xs font-medium px-3 py-1.5 rounded"
+            onClick={handleDelete}
+            disabled={deleting}
+          >
+            {deleting ? 'Deleting…' : 'Delete'}
+          </button>
+          <button
+            className="text-gray-400 hover:text-gray-200 text-xs px-1"
+            onClick={() => setConfirmDelete(false)}
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
       {/* Export */}
-      {selected && (
+      {selected && !editing && !confirmDelete && (
         <div className="mb-4 flex gap-2 items-center">
           <input
             className="flex-1 bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm text-gray-200 font-mono"
