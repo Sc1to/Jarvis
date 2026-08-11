@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
-import { getUpdates, applyUpdates } from '../api.js'
+import { getUpdates, applyUpdates, gitPull, restartService } from '../api.js'
+
+const SERVICES = ['admin', 'chat', 'writer', 'coding', 'trading', 'autocoder']
 
 function fmtChecked(iso) {
   if (!iso) return null
@@ -16,6 +18,10 @@ export default function Updates() {
   const [data, setData] = useState(null)
   const [applying, setApplying] = useState(false)
   const [checking, setChecking] = useState(false)
+  const [pulling, setPulling] = useState(false)
+  const [pullResult, setPullResult] = useState(null)
+  const [restarting, setRestarting] = useState(null)
+  const [restartMsg, setRestartMsg] = useState(null)
   const [msg, setMsg] = useState(null)
   const [error, setError] = useState(null)
 
@@ -48,6 +54,33 @@ export default function Updates() {
     }
   }
 
+  async function pull() {
+    setPulling(true)
+    setPullResult(null)
+    setError(null)
+    try {
+      const r = await gitPull()
+      setPullResult({ ok: true, text: r.data.output || 'Already up to date.' })
+    } catch (e) {
+      setPullResult({ ok: false, text: e.response?.data?.detail ?? e.message })
+    } finally {
+      setPulling(false)
+    }
+  }
+
+  async function restart(app) {
+    setRestarting(app)
+    setRestartMsg(null)
+    try {
+      await restartService(app)
+      setRestartMsg(`${app === 'all' ? 'All services' : app} restarting…`)
+    } catch (e) {
+      setRestartMsg(`Error: ${e.response?.data?.detail ?? e.message}`)
+    } finally {
+      setRestarting(null)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -61,10 +94,61 @@ export default function Updates() {
       {msg && <p className="text-green-400 text-sm">{msg}</p>}
       {data?.error && <p className="text-yellow-400 text-sm">Check failed: {data.error}</p>}
 
+      {/* Git pull */}
+      <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 space-y-3">
+        <div className="flex items-center justify-between">
+          <p className="text-sm font-medium">Code</p>
+          <button
+            onClick={pull}
+            disabled={pulling}
+            className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs px-3 py-1.5 rounded"
+          >
+            {pulling ? 'Pulling…' : 'git pull'}
+          </button>
+        </div>
+        {pullResult && (
+          <pre className={`text-xs font-mono whitespace-pre-wrap ${pullResult.ok ? 'text-green-400' : 'text-red-400'}`}>
+            {pullResult.text}
+          </pre>
+        )}
+      </div>
+
+      {/* Service restarts */}
+      <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 space-y-3">
+        <div className="flex items-center justify-between">
+          <p className="text-sm font-medium">Services</p>
+          <button
+            onClick={() => restart('all')}
+            disabled={!!restarting}
+            className="bg-red-700 hover:bg-red-600 disabled:opacity-50 text-white text-xs px-3 py-1.5 rounded"
+          >
+            {restarting === 'all' ? 'Restarting…' : 'Restart all'}
+          </button>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {SERVICES.map(svc => (
+            <button
+              key={svc}
+              onClick={() => restart(svc)}
+              disabled={!!restarting}
+              className="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-white text-xs px-3 py-1.5 rounded"
+            >
+              {restarting === svc ? 'Restarting…' : svc}
+            </button>
+          ))}
+        </div>
+        {restartMsg && (
+          <p className={`text-xs ${restartMsg.startsWith('Error') ? 'text-red-400' : 'text-green-400'}`}>
+            {restartMsg}
+          </p>
+        )}
+      </div>
+
+      {/* Apt updates */}
       <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 space-y-3">
         <div className="flex items-center justify-between">
           <p className="text-sm">
-            <span className="text-gray-400">Pending updates: </span>
+            <span className="text-gray-400">Pending packages: </span>
             <span className={data?.count > 0 ? 'text-yellow-400 font-medium' : 'text-green-400'}>
               {data?.count ?? '—'}
             </span>
@@ -97,7 +181,7 @@ export default function Updates() {
       </div>
 
       <p className="text-xs text-gray-500">
-        Updates are blocked while an autocoder session is active. The check runs in the background — refresh to see results.
+        Updates are blocked while an autocoder session is active. Package check runs in the background — refresh to see results.
       </p>
     </div>
   )

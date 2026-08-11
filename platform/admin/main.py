@@ -353,6 +353,60 @@ def _table_exists(db, name: str) -> bool:
     ).fetchone() is not None
 
 
+# ── Git & service control ─────────────────────────────────────────────────────
+
+REPO_PATH = os.environ.get("REPO_PATH", "/opt/platform")
+
+_SERVICE_UNITS: dict[str, list[str]] = {
+    "admin":     ["platform-admin"],
+    "chat":      ["platform-chat"],
+    "writer":    ["platform-writer"],
+    "coding":    ["platform-coding"],
+    "trading":   ["platform-trading", "platform-trading-auditor"],
+    "autocoder": [
+        "platform-autocoder-conductor",
+        "platform-autocoder-re-agent",
+        "platform-autocoder-dashboard",
+        "platform-autocoder-specialist-backend",
+        "platform-autocoder-specialist-frontend",
+        "platform-autocoder-specialist-db",
+        "platform-autocoder-specialist-tester",
+        "platform-autocoder-specialist-refactorer",
+    ],
+}
+
+
+@app.post("/git/pull")
+def git_pull():
+    try:
+        r = subprocess.run(
+            ["git", "-C", REPO_PATH, "pull"],
+            capture_output=True, text=True, timeout=60,
+        )
+        if r.returncode != 0:
+            raise HTTPException(500, r.stderr.strip() or "git pull failed")
+        return {"status": "ok", "output": r.stdout.strip()}
+    except subprocess.TimeoutExpired:
+        raise HTTPException(504, "git pull timed out")
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.post("/services/{app}/restart")
+def restart_service(app: str):
+    if app == "all":
+        units = [u for units in _SERVICE_UNITS.values() for u in units]
+    else:
+        units = _SERVICE_UNITS.get(app)
+        if units is None:
+            raise HTTPException(404, f"Unknown app: {app}")
+    try:
+        subprocess.Popen(["sudo", "systemctl", "restart"] + units)
+        return {"status": "ok", "message": f"Restarting {app}"}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 # ── App prompts ───────────────────────────────────────────────────────────────
 
 _APP_PORTS = {
