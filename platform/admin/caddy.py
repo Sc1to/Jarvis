@@ -15,6 +15,10 @@ def _write(content: str):
     proc = subprocess.run(["sudo", "tee", CADDYFILE], input=content, text=True, capture_output=True)
     if proc.returncode != 0:
         raise RuntimeError(f"Failed to write Caddyfile: {proc.stderr}")
+    # Normalize formatting so caddy validate never warns about inconsistencies
+    fmt = subprocess.run(["sudo", "caddy", "fmt", "--overwrite", CADDYFILE], capture_output=True, text=True)
+    if fmt.returncode != 0:
+        raise RuntimeError(f"caddy fmt failed: {fmt.stderr}")
 
 
 def _reload():
