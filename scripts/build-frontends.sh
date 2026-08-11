@@ -79,6 +79,7 @@ http://${TAILSCALE_IP} {
     handle /admin* {
         uri strip_prefix /admin
         root * ${FRONTEND}/admin/dist
+        header /index.html Cache-Control "no-cache, no-store, must-revalidate"
         try_files {path} /index.html
         file_server
     }
@@ -90,6 +91,7 @@ http://${TAILSCALE_IP} {
     handle /autocoder* {
         uri strip_prefix /autocoder
         root * ${FRONTEND}/autocoder/dist
+        header /index.html Cache-Control "no-cache, no-store, must-revalidate"
         try_files {path} /index.html
         file_server
     }
@@ -101,6 +103,7 @@ http://${TAILSCALE_IP} {
     handle /chat* {
         uri strip_prefix /chat
         root * ${FRONTEND}/chat/dist
+        header /index.html Cache-Control "no-cache, no-store, must-revalidate"
         try_files {path} /index.html
         file_server
     }
@@ -112,6 +115,7 @@ http://${TAILSCALE_IP} {
     handle /writer* {
         uri strip_prefix /writer
         root * ${FRONTEND}/writer/dist
+        header /index.html Cache-Control "no-cache, no-store, must-revalidate"
         try_files {path} /index.html
         file_server
     }
@@ -123,6 +127,7 @@ http://${TAILSCALE_IP} {
     handle /coding* {
         uri strip_prefix /coding
         root * ${FRONTEND}/coding/dist
+        header /index.html Cache-Control "no-cache, no-store, must-revalidate"
         try_files {path} /index.html
         file_server
     }
@@ -138,6 +143,7 @@ http://${TAILSCALE_IP} {
     handle /trading* {
         uri strip_prefix /trading
         root * ${FRONTEND}/trading/dist
+        header /index.html Cache-Control "no-cache, no-store, must-revalidate"
         try_files {path} /index.html
         file_server
     }
