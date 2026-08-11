@@ -85,7 +85,7 @@ CADDY_HOST="${TS_HOSTNAME:-${TS_IP:-localhost}}"
 sudo tee /etc/caddy/Caddyfile > /dev/null <<EOF
 # Managed by admin panel — do not edit manually
 
-${CADDY_HOST} {
+http://${CADDY_HOST} {
     handle /admin* {
         reverse_proxy localhost:8000
     }
