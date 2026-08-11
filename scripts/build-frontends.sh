@@ -44,7 +44,12 @@ for app in "${TARGETS[@]}"; do
     fi
 
     info "Building ${app}..."
-    if npm --prefix "${dir}" install --silent; then
+    if [ ! -f "${dir}/package-lock.json" ]; then
+        warn "${app} — package-lock.json missing; run 'git pull' to restore it"
+        warn "${app} — generating package-lock.json with npm install (commit it afterwards)"
+        npm --prefix "${dir}" install --silent 2>/dev/null || true
+    fi
+    if npm --prefix "${dir}" ci --silent; then
         if npm --prefix "${dir}" run build --silent; then
             ok "${app} — dist ready at frontend/${app}/dist/"
             PASSED=$((PASSED+1))
@@ -53,7 +58,7 @@ for app in "${TARGETS[@]}"; do
             FAILED=$((FAILED+1))
         fi
     else
-        fail "${app} — npm install failed"
+        fail "${app} — npm ci failed"
         FAILED=$((FAILED+1))
     fi
 done
