@@ -353,6 +353,66 @@ def _table_exists(db, name: str) -> bool:
     ).fetchone() is not None
 
 
+# ── App prompts ───────────────────────────────────────────────────────────────
+
+_APP_PORTS = {
+    "chat":      8010,
+    "writer":    8011,
+    "coding":    8012,
+    "conductor": 8001,
+    "backend":   8003,
+    "frontend":  8004,
+    "db":        8005,
+    "tester":    8006,
+    "refactorer":8007,
+}
+
+
+@app.get("/app-prompts")
+async def get_app_prompts(db=Depends(get_db)):
+    """Fetch current prompts from each running app, merged with saved overrides."""
+    saved = {
+        (r["app"], r["agent_key"]): r["system_prompt"]
+        for r in db.execute("SELECT app, agent_key, system_prompt FROM app_prompt_overrides").fetchall()
+    }
+    result: dict[str, dict] = {}
+    async with httpx.AsyncClient(timeout=3) as client:
+        for app_name, port in _APP_PORTS.items():
+            try:
+                r = await client.get(f"http://localhost:{port}/prompts")
+                live = r.json() if r.status_code == 200 else {}
+            except Exception:
+                live = {}
+            # Merge: saved overrides win over live defaults
+            merged = {**live}
+            for (a, key), val in saved.items():
+                if a == app_name:
+                    merged[key] = val
+            result[app_name] = merged
+    return result
+
+
+@app.patch("/app-prompts/{app_name}/{agent_key}")
+async def update_app_prompt(app_name: str, agent_key: str, body: dict, db=Depends(get_db)):
+    """Save a prompt override to DB and push to the running app."""
+    system_prompt = body.get("system_prompt", "")
+    db.execute(
+        """INSERT INTO app_prompt_overrides (app, agent_key, system_prompt, updated_at)
+           VALUES (?,?,?,datetime('now'))
+           ON CONFLICT(app, agent_key) DO UPDATE SET system_prompt=excluded.system_prompt, updated_at=excluded.updated_at""",
+        (app_name, agent_key, system_prompt),
+    )
+    port = _APP_PORTS.get(app_name)
+    if port:
+        try:
+            async with httpx.AsyncClient(timeout=3) as client:
+                await client.patch(f"http://localhost:{port}/prompts/{agent_key}",
+                                   json={"system_prompt": system_prompt})
+        except Exception as e:
+            log.warning("Could not push prompt to %s: %s", app_name, e)
+    return {"status": "ok"}
+
+
 # ── Agents ────────────────────────────────────────────────────────────────────
 
 @app.get("/agents")

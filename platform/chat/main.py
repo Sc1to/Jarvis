@@ -21,6 +21,9 @@ DEFAULT_MODEL = "qwen2.5:14b"
 VERSION = "0.1.0"
 _start = time.time()
 
+_CHAT_DEFAULT = ""  # chat has no system prompt by default
+_overrides: dict[str, str] = {}
+
 app = FastAPI(title="Chat")
 
 app.add_middleware(
@@ -35,6 +38,17 @@ class ChatRequest(BaseModel):
     message: str
     model: str = DEFAULT_MODEL
     history: list[dict] = []
+
+
+@app.get("/prompts")
+def get_prompts():
+    return {"chat_assistant": _overrides.get("chat_assistant", _CHAT_DEFAULT)}
+
+
+@app.patch("/prompts/{key}")
+def set_prompt(key: str, body: dict):
+    _overrides[key] = body["system_prompt"]
+    return {"status": "ok"}
 
 
 @app.get("/health")
@@ -56,7 +70,8 @@ async def models():
 
 @app.post("/chat")
 async def chat(req: ChatRequest):
-    messages = req.history + [{"role": "user", "content": req.message}]
+    system = _overrides.get("chat_assistant", _CHAT_DEFAULT)
+    messages = ([{"role": "system", "content": system}] if system else []) + req.history + [{"role": "user", "content": req.message}]
 
     async def stream():
         try:

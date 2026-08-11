@@ -26,6 +26,8 @@ SYSTEM_PROMPT = (
     "Ask clarifying questions before starting if requirements are ambiguous."
 )
 
+_overrides: dict[str, str] = {}
+
 TOOL_DEFS = [
     {"type": "function", "function": {
         "name": "read_file",
@@ -146,7 +148,7 @@ async def run_agent(
     model: str = MODEL,
 ) -> AsyncGenerator[str, None]:
     """Yield SSE-formatted strings for each agent step."""
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    messages = [{"role": "system", "content": _overrides.get("coding_assistant", SYSTEM_PROMPT)}]
     messages.extend(history)
     messages.append({"role": "user", "content": message})
 

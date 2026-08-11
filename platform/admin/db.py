@@ -51,6 +51,14 @@ CREATE TABLE IF NOT EXISTS platform_events (
     metadata TEXT DEFAULT '{}',
     timestamp TEXT DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS app_prompt_overrides (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    app TEXT NOT NULL,
+    agent_key TEXT NOT NULL,
+    system_prompt TEXT NOT NULL,
+    updated_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(app, agent_key)
+);
 """
 
 

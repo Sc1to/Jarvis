@@ -35,6 +35,10 @@ export const deleteAgent = (id) => api.delete(`/agents/${id}`)
 export const deployAgent = (id) => api.post(`/agents/${id}/deploy`)
 export const stopAgent = (id) => api.post(`/agents/${id}/stop`)
 
+// App prompts
+export const getAppPrompts = () => api.get('/app-prompts')
+export const updateAppPrompt = (app, key, system_prompt) => api.patch(`/app-prompts/${app}/${key}`, { system_prompt })
+
 // Platform events
 export const getPlatformEvents = (limit = 20) => api.get(`/platform-events?limit=${limit}`)
 

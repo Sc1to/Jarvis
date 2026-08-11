@@ -3,6 +3,7 @@ const NAV = [
   { id: 'apps',      label: 'Apps' },
   { id: 'models',    label: 'Models' },
   { id: 'agents',    label: 'Agents' },
+  { id: 'prompts',   label: 'Prompts' },
   { id: 'network',   label: 'Network' },
   { id: 'updates',   label: 'Updates' },
 ]

@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 import db
 import llm
+import prompt_store
 from deps import current_user
 
 router = APIRouter()
@@ -116,7 +117,7 @@ class ReplyBody(BaseModel):
 
 @router.post("/books/{book_id}/phase1/north-star/reply")
 def north_star_reply(book_id: str, body: ReplyBody, user: str = Depends(current_user)):
-    return llm.stream_chat("story_architect", body.messages, STORY_ARCHITECT_SYSTEM, user)
+    return llm.stream_chat("story_architect", body.messages, prompt_store.get("story_architect", STORY_ARCHITECT_SYSTEM), user)
 
 
 class LockBody(BaseModel):
@@ -125,8 +126,8 @@ class LockBody(BaseModel):
 
 @router.post("/books/{book_id}/phase1/north-star/lock")
 async def north_star_lock(book_id: str, body: LockBody, user: str = Depends(current_user)):
-    messages = body.messages + [{"role": "user", "content": SYNTHESIS_PROMPT}]
-    document = await llm.call_llm("story_architect", messages, STORY_ARCHITECT_SYSTEM, user)
+    messages = body.messages + [{"role": "user", "content": prompt_store.get("synthesis", SYNTHESIS_PROMPT)}]
+    document = await llm.call_llm("story_architect", messages, prompt_store.get("story_architect", STORY_ARCHITECT_SYSTEM), user)
 
     book_dir = db.ensure_data_dir(book_id)
     path = os.path.join(book_dir, "north_star.md")
@@ -170,8 +171,9 @@ def run_tier(book_id: str, body: RunTierBody, user: str = Depends(current_user))
     if os.path.exists(directives_path):
         context += f"\n\n## Author Directives\n\n{open(directives_path).read()}"
 
-    messages = [{"role": "user", "content": f"{context}\n\n---\n\n{TIER_INSTRUCTIONS[idx]}"}]
-    return llm.stream_chat("bible_agent", messages, BIBLE_AGENT_SYSTEM, user)
+    tier_key = f"tier_{TIER_LABELS[idx].lower()}"
+    messages = [{"role": "user", "content": f"{context}\n\n---\n\n{prompt_store.get(tier_key, TIER_INSTRUCTIONS[idx])}"}]
+    return llm.stream_chat("bible_agent", messages, prompt_store.get("bible_agent", BIBLE_AGENT_SYSTEM), user)
 
 
 class ApproveTierBody(BaseModel):

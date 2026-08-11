@@ -10,6 +10,7 @@ from pydantic import BaseModel
 import db
 from deps import current_user
 import llm
+import prompt_store
 
 router = APIRouter()
 
@@ -198,7 +199,7 @@ def write_chapter(book_id: str, body: WriteChapterBody, user: str = Depends(curr
             plan_text = await _call(
                 planner_provider, planner_model,
                 [{"role": "user", "content": f"Chapter number: {chapter}\n\nTier 4 (Scenes bible):\n\n{tier4_content}"}],
-                SCENE_PLANNER_SYSTEM,
+                prompt_store.get("scene_planner", SCENE_PLANNER_SYSTEM),
                 user,
             )
             scene_plan = _extract_json_list(plan_text)
@@ -261,7 +262,7 @@ def write_chapter(book_id: str, body: WriteChapterBody, user: str = Depends(curr
                     async for token in llm.provider_tokens(
                         writer_provider, writer_model,
                         [{"role": "user", "content": writer_user}],
-                        WRITER_SYSTEM,
+                        prompt_store.get("writer", WRITER_SYSTEM),
                         user,
                     ):
                         scene_text += token
@@ -281,7 +282,7 @@ def write_chapter(book_id: str, body: WriteChapterBody, user: str = Depends(curr
                     f"## Scene to review\n\n{scene_text}"
                 )
                 try:
-                    qa_text = await _call(qa_provider, qa_model, [{"role": "user", "content": qa_user}], QA_SYSTEM, user)
+                    qa_text = await _call(qa_provider, qa_model, [{"role": "user", "content": qa_user}], prompt_store.get("qa", prompt_store.get("qa", QA_SYSTEM)), user)
                     qa_result = _extract_json(qa_text)
                 except Exception as e:
                     qa_result = {"pass": True, "issues": [{"type": "system", "description": str(e), "severity": "warning"}], "notes": "QA skipped"}
@@ -381,7 +382,7 @@ def approve_chapter(book_id: str, chapter: int, user: str = Depends(current_user
 
         full_text = ""
         try:
-            async for token in llm.provider_tokens(bu_provider, bu_model, [{"role": "user", "content": bu_user}], BIBLE_UPDATER_SYSTEM, user):
+            async for token in llm.provider_tokens(bu_provider, bu_model, [{"role": "user", "content": bu_user}], prompt_store.get("bible_updater", BIBLE_UPDATER_SYSTEM), user):
                 full_text += token
                 yield _sse({"type": "token", "content": token})
         except Exception as e:
@@ -472,7 +473,7 @@ def rewrite_scene(book_id: str, chapter: int, scene: int, body: RewriteBody, use
             async for token in llm.provider_tokens(
                 writer_provider, writer_model,
                 [{"role": "user", "content": writer_user}],
-                WRITER_SYSTEM,
+                prompt_store.get("writer", WRITER_SYSTEM),
                 user,
             ):
                 scene_text += token
@@ -491,7 +492,7 @@ def rewrite_scene(book_id: str, chapter: int, scene: int, body: RewriteBody, use
             f"## Scene to review\n\n{scene_text}"
         )
         try:
-            qa_result = _extract_json(await _call(qa_provider, qa_model, [{"role": "user", "content": qa_user}], QA_SYSTEM))
+            qa_result = _extract_json(await _call(qa_provider, qa_model, [{"role": "user", "content": qa_user}], prompt_store.get("qa", QA_SYSTEM)))
         except Exception as e:
             qa_result = {"pass": True, "issues": [], "notes": f"QA error: {e}"}
 

@@ -13,7 +13,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from agent import run_agent
+from agent import run_agent, SYSTEM_PROMPT as _CODING_DEFAULT, _overrides as _coding_overrides
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from health import health_payload
@@ -70,6 +70,17 @@ def get_db():
 
 
 # ── Health ────────────────────────────────────────────────────────────────────
+
+@app.get("/prompts")
+def get_prompts():
+    return {"coding_assistant": _coding_overrides.get("coding_assistant", _CODING_DEFAULT)}
+
+
+@app.patch("/prompts/{key}")
+def set_prompt(key: str, body: dict):
+    _coding_overrides[key] = body["system_prompt"]
+    return {"status": "ok"}
+
 
 @app.get("/health")
 def health():

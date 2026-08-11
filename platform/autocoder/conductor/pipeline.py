@@ -22,6 +22,25 @@ SPECIALIST_URLS = {
     "refactorer": "http://localhost:8007",
 }
 
+PLAN_PROMPT_TEMPLATE = (
+    "You are an autocoder orchestrator. Given these requirements, decide which specialist "
+    "agents are needed and in what order.\n\n"
+    "Requirements:\n{requirements}\n\n"
+    "Available specialists: backend, frontend, db, tester, refactorer\n\n"
+    'Return ONLY valid JSON:\n'
+    '{{"agents": ["agent1", ...], "rationale": "...", "tasks": {{"agent1": "specific task", ...}}}}'
+)
+
+REVIEW_PROMPT_TEMPLATE = (
+    "You are reviewing the output of the {agent} specialist agent.\n\n"
+    "Requirements:\n{requirements}\n\n"
+    "Agent output:\n{output}\n\n"
+    "Does this output adequately fulfill the {agent} stage?\n"
+    'Respond with ONLY valid JSON: {{"accept": true/false, "reason": "..."}}'
+)
+
+_overrides: dict[str, str] = {}
+
 # session_id sets for flow control
 _paused: set[str] = set()
 
@@ -72,14 +91,8 @@ def validate_requirements(requirements: str) -> tuple[bool, str]:
 
 
 async def plan_pipeline(requirements: str, model: str | None = None) -> dict:
-    prompt = (
-        "You are an autocoder orchestrator. Given these requirements, decide which specialist "
-        "agents are needed and in what order.\n\n"
-        f"Requirements:\n{requirements}\n\n"
-        "Available specialists: backend, frontend, db, tester, refactorer\n\n"
-        'Return ONLY valid JSON:\n'
-        '{"agents": ["agent1", ...], "rationale": "...", "tasks": {"agent1": "specific task", ...}}'
-    )
+    template = _overrides.get("conductor_plan", PLAN_PROMPT_TEMPLATE)
+    prompt = template.format(requirements=requirements)
     try:
         response = await _llm(prompt, model=model)
         return _parse_json(response)
@@ -129,12 +142,11 @@ async def review_output(agent: str, output: dict, requirements: str,
                          model: str | None = None) -> tuple[bool, str]:
     if output.get("error"):
         return False, output["error"]
-    prompt = (
-        f"You are reviewing the output of the {agent} specialist agent.\n\n"
-        f"Requirements:\n{requirements}\n\n"
-        f"Agent output:\n{json.dumps(output, indent=2)[:3000]}\n\n"
-        f"Does this output adequately fulfill the {agent} stage?\n"
-        'Respond with ONLY valid JSON: {"accept": true/false, "reason": "..."}'
+    template = _overrides.get("conductor_review", REVIEW_PROMPT_TEMPLATE)
+    prompt = template.format(
+        agent=agent,
+        requirements=requirements,
+        output=json.dumps(output, indent=2)[:3000],
     )
     try:
         response = await _llm(prompt, model=model)

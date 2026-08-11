@@ -334,6 +334,7 @@ def make_specialist_app(
 
     _start = _time.time()
     _tasks: dict[str, dict] = {}
+    _prompt = [system_prompt]  # mutable so PATCH /prompts can update it
 
     @asynccontextmanager
     async def lifespan(app):
@@ -345,6 +346,15 @@ def make_specialist_app(
     @app.get("/health")
     def health():
         return health_payload(_start, "1.0.0", agent=specialist_name)
+
+    @app.get("/prompts")
+    def get_prompts():
+        return {specialist_name: _prompt[0]}
+
+    @app.patch("/prompts/{key}")
+    def set_prompt(key: str, body: dict):
+        _prompt[0] = body["system_prompt"]
+        return {"status": "ok"}
 
     @app.post("/task")
     async def post_task(body: dict):
@@ -358,7 +368,7 @@ def make_specialist_app(
             instructions=body.get("instructions", ""),
             context=body.get("context", {}),
             tool_names=tool_names,
-            system_prompt=system_prompt,
+            system_prompt=_prompt[0],
             model=body.get("model") or model,
             task_store=_tasks,
         ))

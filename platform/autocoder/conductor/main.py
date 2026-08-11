@@ -14,7 +14,8 @@ from memory.session import SessionMemory
 from memory.project import ProjectMemory
 from memory.db import DB_PATH as _DEFAULT_DB_PATH
 from health import health_payload
-from pipeline import start_pipeline, pause_pipeline, resume_pipeline
+from pipeline import (start_pipeline, pause_pipeline, resume_pipeline,
+                       PLAN_PROMPT_TEMPLATE, REVIEW_PROMPT_TEMPLATE, _overrides as _pipeline_overrides)
 
 START_TIME = time.time()
 logger = logging.getLogger(__name__)
@@ -48,6 +49,25 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+
+_CONDUCTOR_DEFAULTS = {
+    "conductor_plan": PLAN_PROMPT_TEMPLATE,
+    "conductor_review": REVIEW_PROMPT_TEMPLATE,
+}
+
+
+@app.get("/prompts")
+def get_prompts():
+    return {k: _pipeline_overrides.get(k, v) for k, v in _CONDUCTOR_DEFAULTS.items()}
+
+
+@app.patch("/prompts/{key}")
+def set_prompt(key: str, body: dict):
+    if key not in _CONDUCTOR_DEFAULTS:
+        raise HTTPException(status_code=404, detail=f"Unknown prompt key: {key}")
+    _pipeline_overrides[key] = body["system_prompt"]
+    return {"status": "ok"}
 
 
 @app.get("/health")
