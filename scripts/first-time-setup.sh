@@ -78,7 +78,7 @@ for svc in "\${SERVICES[@]}"; do
         info "\${svc} venv exists — updating dependencies..."
     else
         info "Creating venv for \${svc}..."
-        python3.12 -m venv "\${dir}/venv"
+        python3 -m venv "\${dir}/venv"
     fi
     "\${dir}/venv/bin/pip" install --quiet -r "\${dir}/requirements.txt"
     ok "\${svc}"

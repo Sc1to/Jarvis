@@ -28,7 +28,7 @@ sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.ta
 step "System packages"
 sudo apt-get install -y -q \
     git curl \
-    python3.12 python3.12-venv python3-pip \
+    python3 python3-venv python3-pip \
     build-essential \
     apt-transport-https debian-keyring debian-archive-keyring \
     software-properties-common \
