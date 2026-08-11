@@ -36,7 +36,7 @@ def resume_pipeline(session_id: str):
 
 # ── LLM helpers ───────────────────────────────────────────────────────────────
 
-async def _llm(prompt: str, system: str = "") -> str:
+async def _llm(prompt: str, system: str = "", model: str | None = None) -> str:
     messages = []
     if system:
         messages.append({"role": "system", "content": system})
@@ -45,7 +45,7 @@ async def _llm(prompt: str, system: str = "") -> str:
         async with httpx.AsyncClient(timeout=300.0) as client:
             resp = await client.post(
                 f"{OLLAMA_URL}/api/chat",
-                json={"model": MODEL_ORCHESTRATOR, "messages": messages, "stream": False},
+                json={"model": model or MODEL_ORCHESTRATOR, "messages": messages, "stream": False},
             )
             return resp.json().get("message", {}).get("content", "")
     except Exception as e:
@@ -71,7 +71,7 @@ def validate_requirements(requirements: str) -> tuple[bool, str]:
     return True, ""
 
 
-async def plan_pipeline(requirements: str) -> dict:
+async def plan_pipeline(requirements: str, model: str | None = None) -> dict:
     prompt = (
         "You are an autocoder orchestrator. Given these requirements, decide which specialist "
         "agents are needed and in what order.\n\n"
@@ -81,7 +81,7 @@ async def plan_pipeline(requirements: str) -> dict:
         '{"agents": ["agent1", ...], "rationale": "...", "tasks": {"agent1": "specific task", ...}}'
     )
     try:
-        response = await _llm(prompt)
+        response = await _llm(prompt, model=model)
         return _parse_json(response)
     except Exception:
         return {
@@ -94,18 +94,22 @@ async def plan_pipeline(requirements: str) -> dict:
         }
 
 
-async def execute_specialist(agent: str, task: str, session_id: str, project_path: str) -> dict:
+async def execute_specialist(agent: str, task: str, session_id: str, project_path: str,
+                             model: str | None = None) -> dict:
     url = SPECIALIST_URLS.get(agent)
     if not url:
         return {"success": False, "error": f"Unknown agent: {agent}"}
     try:
+        body: dict = {
+            "session_id": session_id,
+            "project_path": project_path,
+            "instructions": task,
+            "context": {},
+        }
+        if model:
+            body["model"] = model
         async with httpx.AsyncClient(timeout=1800.0) as client:
-            resp = await client.post(f"{url}/task", json={
-                "session_id": session_id,
-                "project_path": project_path,
-                "instructions": task,
-                "context": {},
-            })
+            resp = await client.post(f"{url}/task", json=body)
             task_id = resp.json().get("task_id")
             # Poll for completion (max 30 min)
             for _ in range(360):
@@ -121,7 +125,8 @@ async def execute_specialist(agent: str, task: str, session_id: str, project_pat
         return {"success": False, "error": str(e)}
 
 
-async def review_output(agent: str, output: dict, requirements: str) -> tuple[bool, str]:
+async def review_output(agent: str, output: dict, requirements: str,
+                         model: str | None = None) -> tuple[bool, str]:
     if output.get("error"):
         return False, output["error"]
     prompt = (
@@ -132,7 +137,7 @@ async def review_output(agent: str, output: dict, requirements: str) -> tuple[bo
         'Respond with ONLY valid JSON: {"accept": true/false, "reason": "..."}'
     )
     try:
-        response = await _llm(prompt)
+        response = await _llm(prompt, model=model)
         result = _parse_json(response)
         return result.get("accept", False), result.get("reason", "")
     except Exception:
@@ -201,9 +206,11 @@ async def log_event(session_mem, dashboard_url: str, session_id: str,
 
 async def start_pipeline(session_id: str, project_id: int | None,
                          requirements: str, session_mem, project_mem,
-                         dashboard_url: str):
-    project_path = ""
-    if project_id:
+                         dashboard_url: str, models: dict | None = None,
+                         work_path: str | None = None):
+    models = models or {}
+    project_path = work_path or ""
+    if not project_path and project_id:
         project = project_mem.get_project(project_id)
         if project:
             project_path = os.path.join(PROJECTS_PATH, project.name)
@@ -213,6 +220,8 @@ async def start_pipeline(session_id: str, project_id: int | None,
         await log_event(session_mem, dashboard_url, session_id, "conductor", "task_start",
                         content="Validating requirements", status="active",
                         current_task="validate_requirements")
+
+        conductor_model = models.get("conductor") or None
 
         valid, reason = validate_requirements(requirements)
         if not valid:
@@ -225,7 +234,7 @@ async def start_pipeline(session_id: str, project_id: int | None,
         await log_event(session_mem, dashboard_url, session_id, "conductor", "task_start",
                         content="Planning pipeline", status="active", current_task="plan_pipeline")
 
-        plan = await plan_pipeline(requirements)
+        plan = await plan_pipeline(requirements, model=conductor_model)
         await log_event(session_mem, dashboard_url, session_id, "conductor", "task_complete",
                         content=f"Pipeline planned: {plan.get('rationale', '')}",
                         metadata={"plan": plan})
@@ -247,8 +256,10 @@ async def start_pipeline(session_id: str, project_id: int | None,
                             content=f"Starting {agent} stage", status="active",
                             current_task=task[:80])
 
-            output = await execute_specialist(agent, task, session_id, project_path)
-            accepted, rev_reason = await review_output(agent, output, requirements)
+            output = await execute_specialist(agent, task, session_id, project_path,
+                                              model=models.get(agent))
+            accepted, rev_reason = await review_output(agent, output, requirements,
+                                                        model=conductor_model)
 
             if accepted:
                 await log_event(session_mem, dashboard_url, session_id, agent, "task_complete",
@@ -275,7 +286,8 @@ async def start_pipeline(session_id: str, project_id: int | None,
                 if failure_type == "architectural":
                     await log_event(session_mem, dashboard_url, session_id, "conductor", "replan",
                                     content="Architectural issue — replanning from scratch")
-                    plan = await plan_pipeline(requirements + f"\n\nPrevious attempt failed: {rev_reason}")
+                    plan = await plan_pipeline(requirements + f"\n\nPrevious attempt failed: {rev_reason}",
+                                               model=conductor_model)
                     agents = plan.get("agents", [])
                     tasks = plan.get("tasks", {})
                     retry_counts = {}

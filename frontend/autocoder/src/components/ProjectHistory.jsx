@@ -1,10 +1,15 @@
 import { useEffect, useState } from 'react'
-import { getProjects, getProjectSessions } from '../api'
+import { getProjects, getProjectSessions, exportProject } from '../api'
 
 export default function ProjectHistory({ onViewReview }) {
   const [projects, setProjects] = useState([])
   const [selected, setSelected] = useState(null)
   const [sessions, setSessions] = useState([])
+
+  // Export state
+  const [exportPath, setExportPath] = useState('')
+  const [exporting, setExporting] = useState(false)
+  const [exportMsg, setExportMsg] = useState('')
 
   useEffect(() => {
     getProjects().then((r) => {
@@ -16,10 +21,26 @@ export default function ProjectHistory({ onViewReview }) {
 
   useEffect(() => {
     if (!selected) return
+    setExportMsg('')
     getProjectSessions(selected)
       .then((r) => setSessions(r.data.data))
       .catch(() => {})
   }, [selected])
+
+  const handleExport = async () => {
+    if (!exportPath.trim()) return
+    setExporting(true)
+    setExportMsg('')
+    try {
+      await exportProject(selected, exportPath.trim())
+      setExportMsg(`Copied to ${exportPath.trim()}`)
+      setExportPath('')
+    } catch (e) {
+      setExportMsg(e.response?.data?.detail || 'Export failed')
+    } finally {
+      setExporting(false)
+    }
+  }
 
   const OUTCOME_CLS = {
     success: 'text-green-400',
@@ -44,6 +65,31 @@ export default function ProjectHistory({ onViewReview }) {
 
       {projects.length === 0 && (
         <p className="text-gray-600 text-sm">No projects yet.</p>
+      )}
+
+      {/* Export */}
+      {selected && (
+        <div className="mb-4 flex gap-2 items-center">
+          <input
+            className="flex-1 bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm text-gray-200 font-mono"
+            placeholder="Export code to path…"
+            value={exportPath}
+            onChange={(e) => { setExportPath(e.target.value); setExportMsg('') }}
+            onKeyDown={(e) => e.key === 'Enter' && handleExport()}
+          />
+          <button
+            className="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-200 text-sm px-3 py-1.5 rounded whitespace-nowrap"
+            onClick={handleExport}
+            disabled={exporting || !exportPath.trim()}
+          >
+            {exporting ? 'Copying…' : 'Export'}
+          </button>
+        </div>
+      )}
+      {exportMsg && (
+        <p className={`text-xs mb-3 ${exportMsg.startsWith('Copied') ? 'text-green-400' : 'text-red-400'}`}>
+          {exportMsg}
+        </p>
       )}
 
       <div className="space-y-2">

@@ -75,6 +75,8 @@ async def start_session(body: dict):
         session_mem=session_mem,
         project_mem=project_mem,
         dashboard_url=DASHBOARD_URL,
+        models=body.get("models") or {},
+        work_path=body.get("work_path") or None,
     ))
 
     logger.info(f"Started session {session_id}")

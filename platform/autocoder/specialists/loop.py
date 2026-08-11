@@ -359,7 +359,7 @@ def make_specialist_app(
             context=body.get("context", {}),
             tool_names=tool_names,
             system_prompt=system_prompt,
-            model=model,
+            model=body.get("model") or model,
             task_store=_tasks,
         ))
 

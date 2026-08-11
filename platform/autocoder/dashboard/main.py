@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -99,12 +100,39 @@ def get_internet_entry(session_id: str, entry_id: int):
     return {"data": dict(row), "status": "ok"}
 
 
+# ── Ollama models ─────────────────────────────────────────────────────────────
+
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+
+@app.get("/ollama/models")
+async def list_ollama_models():
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"{OLLAMA_URL}/api/tags")
+            data = resp.json()
+            names = [m["name"] for m in data.get("models", [])]
+            return {"data": names, "status": "ok"}
+    except Exception as e:
+        return {"data": [], "status": "error", "detail": str(e)}
+
+
 # ── Projects ──────────────────────────────────────────────────────────────────
 
 @app.get("/projects")
 def list_projects():
     projects = project_mem.list_projects()
     return {"data": [_project_dict(p) for p in projects], "status": "ok"}
+
+
+@app.post("/projects")
+def create_project(body: dict):
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    description = (body.get("description") or "").strip()
+    project_id = project_mem.create_project(name, description)
+    p = project_mem.get_project(project_id)
+    return {"data": _project_dict(p), "status": "ok"}
 
 
 @app.get("/projects/{project_id}")
@@ -128,6 +156,26 @@ def get_project(project_id: int):
 def get_project_sessions(project_id: int):
     sessions = session_mem.list_sessions(project_id=project_id, limit=20)
     return {"data": [_session_dict(s) for s in sessions], "status": "ok"}
+
+
+@app.post("/projects/{project_id}/export")
+def export_project(project_id: int, body: dict):
+    dest = (body.get("dest_path") or "").strip()
+    if not dest:
+        raise HTTPException(status_code=400, detail="dest_path is required")
+    p = project_mem.get_project(project_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="Project not found")
+    src = os.path.join(PROJECTS_PATH, p.name)
+    if not os.path.isdir(src):
+        raise HTTPException(status_code=404, detail="Project directory not found on disk")
+    try:
+        shutil.copytree(src, dest)
+        return {"data": {"dest_path": dest}, "status": "ok"}
+    except FileExistsError:
+        raise HTTPException(status_code=409, detail=f"Destination already exists: {dest}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ── Agent status ──────────────────────────────────────────────────────────────
