@@ -141,11 +141,19 @@ def _temperatures() -> dict | None:
 
 
 def _gpu_stats() -> dict | None:
-    try:
-        r = subprocess.run(["rocm-smi", "--json"], capture_output=True, text=True, timeout=5)
-        return json.loads(r.stdout) if r.returncode == 0 else None
-    except Exception:
-        return None
+    import glob as _glob
+    for path in _glob.glob("/sys/class/drm/card*/device/mem_info_vram_total"):
+        try:
+            total = int(open(path).read().strip())
+            used_path = path.replace("vram_total", "vram_used")
+            used = int(open(used_path).read().strip()) if os.path.exists(used_path) else 0
+            return {
+                "vram_total_gb": round(total / 1073741824, 1),
+                "vram_used_gb": round(used / 1073741824, 1),
+            }
+        except Exception:
+            continue
+    return None
 
 
 # ── Service health check ──────────────────────────────────────────────────────

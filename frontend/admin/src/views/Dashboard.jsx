@@ -78,7 +78,11 @@ export default function Dashboard() {
           sub={stats ? `${stats.memory_used_gb} / ${stats.memory_total_gb} GB` : null}
         />
         {stats?.gpu && (
-          <StatCard label="GPU" value="active" sub="rocm-smi" />
+          <StatCard
+            label="GPU VRAM"
+            value={`${stats.gpu.vram_used_gb} / ${stats.gpu.vram_total_gb} GB`}
+            sub="used / total"
+          />
         )}
         {stats?.temperature_c && Object.entries(stats.temperature_c).slice(0, 1).map(([k, entries]) => (
           <StatCard key={k} label="Temp" value={`${entries[0]?.current ?? '?'}°C`} sub={k} />
