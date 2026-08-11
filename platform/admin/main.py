@@ -414,15 +414,15 @@ def git_pull():
 def restart_service(app: str):
     if app == "all":
         units = [u for units in _SERVICE_UNITS.values() for u in units]
+        frontend_dirs = list(_FRONTEND_DIRS.values())
     else:
         units = _SERVICE_UNITS.get(app)
         if units is None:
             raise HTTPException(404, f"Unknown app: {app}")
-    try:
-        subprocess.Popen(["sudo", "systemctl", "restart"] + units)
-        return {"status": "ok", "message": f"Restarting {app}"}
-    except Exception as e:
-        raise HTTPException(500, str(e))
+        frontend_dirs = [_FRONTEND_DIRS[app]] if app in _FRONTEND_DIRS else []
+
+    threading.Thread(target=_run_deploy, args=(REPO_PATH, frontend_dirs, units, app), daemon=True).start()
+    return {"status": "ok", "message": f"Rebuilding and restarting {app}…"}
 
 
 def _run_deploy(repo: str, frontend_dirs: list[str], units: list[str], app_name: str):
