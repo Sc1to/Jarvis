@@ -25,6 +25,9 @@ async function saveSettings(data: Record<string, string>) {
   })
 }
 
+// ponytail: stable empty object so useEffect([saved]) doesn't loop while query loads
+const EMPTY_SETTINGS: Record<string, string> = {}
+
 type Provider = 'gemini' | 'openrouter' | 'anthropic' | 'openai' | 'ollama' | ''
 
 interface AgentAssignment { provider: Provider; model: string }
@@ -65,7 +68,7 @@ function NativeSelect({ value, onChange, disabled, className, children }: {
 
 export default function SettingsPage() {
   const qc = useQueryClient()
-  const { data: saved = {} } = useQuery({ queryKey: ['settings'], queryFn: fetchSettings })
+  const { data: saved = EMPTY_SETTINGS } = useQuery({ queryKey: ['settings'], queryFn: fetchSettings })
   const mutation = useMutation({
     mutationFn: saveSettings,
     onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
