@@ -1,0 +1,13 @@
+[Unit]
+Description=Platform ChromaDB Vector Store
+After=network.target
+
+[Service]
+Type=simple
+User=jarvis
+ExecStart=/home/jarvis/Jarvis/platform/chromadb/venv/bin/chroma run --host localhost --port 8020 --path /opt/platform/data/chromadb
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
