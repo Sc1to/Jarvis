@@ -5,9 +5,9 @@ After=network.target
 [Service]
 Type=simple
 User=jarvis
-WorkingDirectory=/opt/platform/platform/coding
-Environment=PYTHONPATH=/opt/platform
-ExecStart=/opt/platform/platform/coding/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8012
+WorkingDirectory=/home/jarvis/Jarvis/platform/coding
+Environment=PYTHONPATH=/home/jarvis/Jarvis
+ExecStart=/home/jarvis/Jarvis/platform/coding/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8012
 Restart=always
 RestartSec=5
 

@@ -5,11 +5,11 @@ After=network.target
 [Service]
 Type=simple
 User=jarvis
-WorkingDirectory=/opt/platform/platform/autocoder/conductor
-ExecStart=/opt/platform/platform/autocoder/conductor/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8001
+WorkingDirectory=/home/jarvis/Jarvis/platform/autocoder/conductor
+ExecStart=/home/jarvis/Jarvis/platform/autocoder/conductor/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8001
 Restart=always
 RestartSec=5
-Environment=PYTHONPATH=/opt/platform
+Environment=PYTHONPATH=/home/jarvis/Jarvis
 
 [Install]
 WantedBy=multi-user.target

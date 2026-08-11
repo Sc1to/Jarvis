@@ -5,11 +5,11 @@ After=network.target platform-trading.service
 [Service]
 Type=simple
 User=jarvis
-WorkingDirectory=/opt/platform/platform/trading
-ExecStart=/opt/platform/platform/trading/venv/bin/uvicorn auditor.main:app --host 0.0.0.0 --port 8031
+WorkingDirectory=/home/jarvis/Jarvis/platform/trading
+ExecStart=/home/jarvis/Jarvis/platform/trading/venv/bin/uvicorn auditor.main:app --host 0.0.0.0 --port 8031
 Restart=always
 RestartSec=5
-Environment=PYTHONPATH=/opt/platform/trading
+Environment=PYTHONPATH=/home/jarvis/Jarvis/platform/trading
 
 [Install]
 WantedBy=multi-user.target

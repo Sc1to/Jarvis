@@ -5,9 +5,9 @@ After=network.target
 [Service]
 Type=simple
 User=jarvis
-WorkingDirectory=/opt/platform/platform/writer
+WorkingDirectory=/home/jarvis/Jarvis/platform/writer
 Environment=WRITER_DATA_DIR=/opt/platform/data/writer
-ExecStart=/opt/platform/platform/writer/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8011
+ExecStart=/home/jarvis/Jarvis/platform/writer/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8011
 Restart=always
 RestartSec=5
 
