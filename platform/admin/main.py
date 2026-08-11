@@ -60,7 +60,7 @@ async def health():
     async with httpx.AsyncClient(timeout=2) as client:
         for name, url in [
             ("ollama", f"{OLLAMA}/api/tags"),
-            ("chromadb", "http://localhost:8020/api/v1/collections"),
+            ("chromadb", "http://localhost:8020/api/v2/collections"),
         ]:
             try:
                 await client.get(url)
