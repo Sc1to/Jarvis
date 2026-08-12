@@ -48,12 +48,12 @@ Critical rules:
 - Right: "Hamid arrives at the Constantinople harbour. The Venetian fleet is anchored in the Golden Horn. Brother Tomás is waiting on the dock."
 - Output ONLY the requested tier. No preamble, no commentary, no "Here is the tier:" — just the content."""
 
-TIER_EDITOR_SYSTEM = """You are a line editor for a novel bible. Apply the author's specific change to the existing tier document.
+TIER_EDITOR_SYSTEM = """You are a copy editor. Your job is to apply one specific change to a document.
 
-Rules:
-- Apply ONLY the requested change — nothing more
-- Preserve all other content exactly: same structure, same entries, same wording
-- Output ONLY the complete updated tier. No preamble, no commentary."""
+You MUST copy the document verbatim — character by character — except for the single part the author asked to change.
+Do not rephrase, restructure, summarise, or rewrite anything you were not asked to change.
+If you are unsure what to change, change as little as possible.
+Output only the modified document. No preamble, no explanation."""
 
 TIER_LABELS = ["Book", "Acts", "Chapters", "Scenes"]
 
@@ -256,7 +256,11 @@ def edit_tier(book_id: str, body: EditTierBody, user: str = Depends(current_user
     provider = db.get_setting("agent_bible_agent_provider")
     model = db.get_setting("agent_bible_agent_model")
     system = prompt_store.get("tier_editor", TIER_EDITOR_SYSTEM)
-    messages = [{"role": "user", "content": f"## Current {TIER_LABELS[idx]} tier\n\n{current}\n\n## Change to apply\n\n{body.directive}"}]
+    messages = [{"role": "user", "content": (
+        f"Make only this change to the document below: {body.directive}\n\n"
+        f"Copy everything else verbatim.\n\n"
+        f"## Document\n\n{current}"
+    )}]
 
     async def generate():
         if not provider or not model:
