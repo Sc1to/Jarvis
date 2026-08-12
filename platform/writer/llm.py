@@ -145,7 +145,7 @@ async def _ollama_tokens(model: str, messages: list[dict], system: str | None, u
     msgs = ([{"role": "system", "content": system}] if system else []) + messages
     body = {"model": model, "stream": True, "messages": msgs}
 
-    async with httpx.AsyncClient(timeout=120) as client:
+    async with httpx.AsyncClient(timeout=600) as client:
         async with client.stream("POST", f"{host}/api/chat", json=body) as r:
             r.raise_for_status()
             async for line in r.aiter_lines():
@@ -187,8 +187,9 @@ def stream_chat(agent_key: str, messages: list[dict], system: str | None = None,
                 yield f'data: {json.dumps({"type": "token", "content": token})}\n\n'
             yield f'data: {json.dumps({"type": "done"})}\n\n'
         except Exception as e:
-            logger.error("LLM stream error: %s", e)
-            yield f'data: {json.dumps({"type": "error", "message": str(e)})}\n\n'
+            msg = str(e) or f"{type(e).__name__}"
+            logger.error("LLM stream error: %s", msg)
+            yield f'data: {json.dumps({"type": "error", "message": msg})}\n\n'
 
     return StreamingResponse(
         generate(),
