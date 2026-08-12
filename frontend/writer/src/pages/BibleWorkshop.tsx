@@ -8,7 +8,7 @@ import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 import { readSSE } from '@/lib/sse'
 import { API } from '@/lib/api'
-import { ChevronRight, Play, CheckCircle, Lock, Loader2, BookOpen, MapPin, Users } from 'lucide-react'
+import { ChevronRight, Play, CheckCircle, Lock, Loader2, BookOpen, MapPin, Users, X } from 'lucide-react'
 
 const TIERS = [
   { id: 1, label: 'Book',     question: 'What happens in this book?' },
@@ -34,6 +34,61 @@ const TYPE_ICON: Record<string, typeof BookOpen> = {
   location: MapPin,
   faction: Users,
   object: BookOpen,
+}
+
+interface LedgerBodyProps {
+  sortedTypes: string[]
+  byType: Record<string, [string, BibleEntity][]>
+  entityCount: number
+}
+
+function LedgerBody({ sortedTypes, byType, entityCount }: LedgerBodyProps) {
+  return (
+    <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+      {sortedTypes.length === 0 ? (
+        ['Characters', 'Locations', 'Factions'].map(type => (
+          <div key={type}>
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider py-1">{type}</p>
+            <Card className="bg-muted/30">
+              <CardContent className="px-3 py-2">
+                <p className="text-xs text-muted-foreground italic">Populated in Phase 2</p>
+              </CardContent>
+            </Card>
+          </div>
+        ))
+      ) : (
+        sortedTypes.map(type => {
+          const Icon = TYPE_ICON[type] ?? BookOpen
+          const entities = byType[type]
+          return (
+            <div key={type}>
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider py-1">
+                {type}s ({entities.length})
+              </p>
+              <div className="space-y-1">
+                {entities.map(([id, entity]) => (
+                  <div key={id} className="flex items-start gap-2 px-2 py-1.5 rounded-md hover:bg-muted/50 transition-colors">
+                    <Icon size={12} className="mt-0.5 shrink-0 text-muted-foreground" />
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium truncate">{entity.name}</p>
+                      {entity.aliases && entity.aliases.length > 0 && (
+                        <p className="text-[10px] text-muted-foreground truncate">
+                          {entity.aliases.slice(0, 2).join(', ')}
+                        </p>
+                      )}
+                    </div>
+                    <span className="text-[9px] text-muted-foreground/60 ml-auto shrink-0">{id}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )
+        })
+      )}
+      {/* spacer so last entity isn't flush against bottom */}
+      <div className="h-2" />
+    </div>
+  )
 }
 
 export default function BibleWorkshopPage() {
@@ -62,6 +117,7 @@ export default function BibleWorkshopPage() {
   const [activeTier, setActiveTier] = useState(0)
   const [streaming, setStreaming] = useState(false)
   const [directive, setDirective] = useState('')
+  const [ledgerOpen, setLedgerOpen] = useState(false)
 
   // Phase 2 state
   const [p2Step, setP2Step] = useState<P2Step>('idle')
@@ -235,16 +291,18 @@ export default function BibleWorkshopPage() {
   const bibleExists = phase2Status?.bible_exists
   const entityCount = phase2Status?.entity_count ?? 0
 
+  const ledgerProps = { sortedTypes, byType, entityCount }
+
   return (
     <div className="flex h-full">
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         {/* Tier stepper */}
-        <div className="flex items-center gap-2 px-6 py-4 border-b border-border">
+        <div className="flex items-center gap-2 px-4 md:px-6 py-3 md:py-4 border-b border-border overflow-x-auto shrink-0">
           {TIERS.map((tier, i) => (
-            <div key={tier.id} className="flex items-center gap-2">
+            <div key={tier.id} className="flex items-center gap-1 md:gap-2 shrink-0">
               <button
                 className={cn(
-                  'flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-md transition-colors',
+                  'flex items-center gap-1.5 text-sm px-2 md:px-3 py-1.5 rounded-md transition-colors whitespace-nowrap',
                   statuses[i] === 'approved' ? 'text-emerald-500'
                     : i === activeTier ? 'bg-accent text-accent-foreground font-medium'
                     : statuses[i] === 'locked' ? 'text-muted-foreground/40 cursor-not-allowed'
@@ -256,19 +314,28 @@ export default function BibleWorkshopPage() {
                 {statuses[i] === 'approved' && <CheckCircle size={13} />}
                 {tier.label}
               </button>
-              {i < TIERS.length - 1 && <ChevronRight size={14} className="text-muted-foreground/40" />}
+              {i < TIERS.length - 1 && <ChevronRight size={14} className="text-muted-foreground/40 shrink-0" />}
             </div>
           ))}
+
+          {/* Mobile ledger toggle — hidden on desktop */}
+          <button
+            className="md:hidden ml-auto shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-border text-muted-foreground hover:text-foreground transition-colors"
+            onClick={() => setLedgerOpen(true)}
+          >
+            <BookOpen size={14} />
+            <span className="text-xs">{entityCount > 0 ? entityCount : 'Ledger'}</span>
+          </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-6 py-6 space-y-4">
+        <div className="flex-1 overflow-y-auto px-4 md:px-6 py-6 space-y-4">
           {/* ── Phase 1: Active tier ── */}
-          <div className="flex items-start justify-between">
-            <div>
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
               <h2 className="font-semibold">Tier {TIERS[activeTier].id} — {TIERS[activeTier].label}</h2>
               <p className="text-sm text-muted-foreground">{TIERS[activeTier].question}</p>
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 shrink-0 flex-wrap justify-end">
               {statuses[activeTier] === 'active' && (
                 <Button size="sm" onClick={() => runTier(activeTier)} className="gap-2" disabled={streaming}>
                   <Play size={13} />Run agent
@@ -314,21 +381,23 @@ export default function BibleWorkshopPage() {
               <p className="text-xs text-muted-foreground pt-2">
                 Inject a directive — saved to directives.md, agent re-runs incorporating it.
               </p>
-              <div className="flex gap-2">
+              <div className="flex gap-2 flex-wrap">
                 <textarea
                   value={directive}
                   onChange={e => setDirective(e.target.value)}
                   placeholder='e.g. "Add a merchant who joins in Acre and dies in Constantinople…"'
                   rows={2}
                   disabled={streaming}
-                  className="flex-1 resize-none rounded-md border border-input bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  className="flex-1 min-w-0 resize-none rounded-md border border-input bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                 />
-                <Button variant="outline" size="sm" onClick={() => editTier(activeTier)} disabled={!directive.trim() || streaming}>
-                  Edit current
-                </Button>
-                <Button variant="outline" size="sm" onClick={injectAndRerun} disabled={!directive.trim() || streaming}>
-                  Inject &amp; re-run
-                </Button>
+                <div className="flex gap-2 w-full sm:w-auto">
+                  <Button variant="outline" size="sm" className="flex-1 sm:flex-none" onClick={() => editTier(activeTier)} disabled={!directive.trim() || streaming}>
+                    Edit current
+                  </Button>
+                  <Button variant="outline" size="sm" className="flex-1 sm:flex-none" onClick={injectAndRerun} disabled={!directive.trim() || streaming}>
+                    Inject &amp; re-run
+                  </Button>
+                </div>
               </div>
             </div>
           )}
@@ -347,14 +416,14 @@ export default function BibleWorkshopPage() {
 
                 {/* Step 1: Consolidate */}
                 <div className="space-y-2">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <span className={cn(
-                        'flex items-center justify-center w-5 h-5 rounded-full text-xs font-bold',
+                        'flex items-center justify-center w-5 h-5 rounded-full text-xs font-bold shrink-0',
                         bibleExists ? 'bg-emerald-500/20 text-emerald-500' : 'bg-muted text-muted-foreground'
                       )}>1</span>
                       <span className="text-sm font-medium">Consolidate entity ledger</span>
-                      {bibleExists && <CheckCircle size={13} className="text-emerald-500" />}
+                      {bibleExists && <CheckCircle size={13} className="text-emerald-500 shrink-0" />}
                     </div>
                     {!p2Approved && (
                       <Button
@@ -374,17 +443,17 @@ export default function BibleWorkshopPage() {
 
                 {/* Step 2: Research */}
                 <div className="space-y-2">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <span className={cn(
-                        'flex items-center justify-center w-5 h-5 rounded-full text-xs font-bold',
+                        'flex items-center justify-center w-5 h-5 rounded-full text-xs font-bold shrink-0',
                         (p2Status === 'researched' || p2Status === 'approved') ? 'bg-emerald-500/20 text-emerald-500'
                           : bibleExists ? 'bg-muted text-foreground' : 'bg-muted text-muted-foreground/40'
                       )}>2</span>
                       <span className={cn('text-sm font-medium', !bibleExists && 'text-muted-foreground/40')}>
                         Research &amp; complete entities
                       </span>
-                      {(p2Status === 'researched' || p2Status === 'approved') && <CheckCircle size={13} className="text-emerald-500" />}
+                      {(p2Status === 'researched' || p2Status === 'approved') && <CheckCircle size={13} className="text-emerald-500 shrink-0" />}
                     </div>
                     {!p2Approved && bibleExists && (
                       <Button
@@ -402,17 +471,17 @@ export default function BibleWorkshopPage() {
                 </div>
 
                 {/* Step 3: Approve */}
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <span className={cn(
-                      'flex items-center justify-center w-5 h-5 rounded-full text-xs font-bold',
+                      'flex items-center justify-center w-5 h-5 rounded-full text-xs font-bold shrink-0',
                       p2Approved ? 'bg-emerald-500/20 text-emerald-500'
                         : (p2Status === 'researched') ? 'bg-muted text-foreground' : 'bg-muted text-muted-foreground/40'
                     )}>3</span>
                     <span className={cn('text-sm font-medium', !bibleExists && 'text-muted-foreground/40')}>
                       Approve &amp; unlock Writing Loop
                     </span>
-                    {p2Approved && <CheckCircle size={13} className="text-emerald-500" />}
+                    {p2Approved && <CheckCircle size={13} className="text-emerald-500 shrink-0" />}
                   </div>
                   {!p2Approved && p2Status === 'researched' && (
                     <Button size="sm" onClick={approveP2} className="gap-2">
@@ -441,56 +510,42 @@ export default function BibleWorkshopPage() {
         </div>
       </div>
 
-      {/* Entity ledger sidebar */}
-      <div className="w-72 border-l border-border flex flex-col">
-        <div className="px-4 py-4 border-b border-border">
+      {/* ── Mobile ledger overlay ── */}
+      {ledgerOpen && (
+        <>
+          <div
+            className="md:hidden fixed inset-0 z-20 bg-black/50"
+            onClick={() => setLedgerOpen(false)}
+          />
+          <aside className="md:hidden fixed inset-y-0 right-0 z-30 w-72 bg-background border-l border-border flex flex-col">
+            <div className="px-4 py-4 border-b border-border flex items-center justify-between shrink-0">
+              <div>
+                <h3 className="text-sm font-medium">Entity Ledger</h3>
+                <p className="text-xs text-muted-foreground">
+                  {entityCount > 0 ? `${entityCount} entities` : 'Populated in Phase 2'}
+                </p>
+              </div>
+              <button
+                onClick={() => setLedgerOpen(false)}
+                className="p-1 text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <LedgerBody {...ledgerProps} />
+          </aside>
+        </>
+      )}
+
+      {/* ── Desktop entity ledger sidebar ── */}
+      <div className="hidden md:flex md:flex-col md:w-72 md:shrink-0 border-l border-border">
+        <div className="px-4 py-4 border-b border-border shrink-0">
           <h3 className="text-sm font-medium">Entity Ledger</h3>
           <p className="text-xs text-muted-foreground">
             {entityCount > 0 ? `${entityCount} entities` : 'Populated in Phase 2'}
           </p>
         </div>
-        <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
-          {sortedTypes.length === 0 ? (
-            ['Characters', 'Locations', 'Factions'].map(type => (
-              <div key={type}>
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider py-1">{type}</p>
-                <Card className="bg-muted/30">
-                  <CardContent className="px-3 py-2">
-                    <p className="text-xs text-muted-foreground italic">Populated in Phase 2</p>
-                  </CardContent>
-                </Card>
-              </div>
-            ))
-          ) : (
-            sortedTypes.map(type => {
-              const Icon = TYPE_ICON[type] ?? BookOpen
-              const entities = byType[type]
-              return (
-                <div key={type}>
-                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider py-1">
-                    {type}s ({entities.length})
-                  </p>
-                  <div className="space-y-1">
-                    {entities.map(([id, entity]) => (
-                      <div key={id} className="flex items-start gap-2 px-2 py-1.5 rounded-md hover:bg-muted/50 transition-colors">
-                        <Icon size={12} className="mt-0.5 shrink-0 text-muted-foreground" />
-                        <div className="min-w-0">
-                          <p className="text-xs font-medium truncate">{entity.name}</p>
-                          {entity.aliases && entity.aliases.length > 0 && (
-                            <p className="text-[10px] text-muted-foreground truncate">
-                              {entity.aliases.slice(0, 2).join(', ')}
-                            </p>
-                          )}
-                        </div>
-                        <span className="text-[9px] text-muted-foreground/60 ml-auto shrink-0">{id}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )
-            })
-          )}
-        </div>
+        <LedgerBody {...ledgerProps} />
       </div>
     </div>
   )
