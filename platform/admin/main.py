@@ -410,6 +410,22 @@ def git_pull():
         raise HTTPException(500, str(e))
 
 
+@app.post("/debug/build")
+def debug_build(app_name: str = "admin"):
+    """Run build-frontends.sh synchronously and return full output for diagnosis."""
+    script = os.path.join(REPO_PATH, "scripts", "build-frontends.sh")
+    targets = [] if app_name == "all" else [app_name]
+    r = subprocess.run(["bash", "-l", script] + targets, capture_output=True, text=True, timeout=300)
+    return {"returncode": r.returncode, "stdout": r.stdout[-8000:], "stderr": r.stderr[-8000:], "repo_path": REPO_PATH, "script": script}
+
+
+@app.post("/debug/restart-backend")
+def restart_backend_only():
+    """Restart the admin Python backend without rebuilding the frontend."""
+    threading.Thread(target=lambda: subprocess.run(["sudo", "systemctl", "restart", "platform-admin"], timeout=15), daemon=True).start()
+    return {"status": "ok"}
+
+
 @app.post("/services/{app}/restart")
 def restart_service(app: str):
     if app == "all":
