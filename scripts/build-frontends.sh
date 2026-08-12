@@ -46,6 +46,17 @@ FRONTEND="${REPO}/frontend"
 
 APPS=(admin chat writer coding autocoder trading)
 
+# ── Self-restart admin (before any slow operation) ───────────────────────────
+# Kill admin uvicorn NOW — before node install or npm builds — so systemd
+# restarts it immediately with new Python code. After this, the bash subprocess
+# becomes orphaned (Python parent dies when uvicorn exits), eliminating the
+# 300-second subprocess timeout. npm builds then run freely.
+_ADMIN_PID=$(pgrep -f "platform/admin/venv/bin/uvicorn" 2>/dev/null || true)
+if [ -n "$_ADMIN_PID" ]; then
+    kill -TERM "$_ADMIN_PID" 2>/dev/null || true
+    ok "Admin uvicorn (PID ${_ADMIN_PID}) — SIGTERM sent, systemd will restart with new code"
+fi
+
 # ── Node check ────────────────────────────────────────────────────────────────
 if ! command -v node &>/dev/null; then
     warn "Node.js not found — installing via nvm..."
@@ -58,17 +69,6 @@ if ! command -v node &>/dev/null; then
     ok "Node $(node --version) installed"
 else
     ok "Node $(node --version) found"
-fi
-
-# ── Self-restart admin (no sudo needed) ──────────────────────────────────────
-# Kill admin uvicorn NOW — before npm builds — so systemd restarts it immediately
-# with new code. Doing this early means the bash subprocess becomes orphaned
-# (parent Python process dies when uvicorn exits), so npm runs without the
-# 300-second Python subprocess timeout constraint.
-_ADMIN_PID=$(pgrep -f "platform/admin/venv/bin/uvicorn" 2>/dev/null || true)
-if [ -n "$_ADMIN_PID" ]; then
-    kill -TERM "$_ADMIN_PID" 2>/dev/null || true
-    ok "Admin uvicorn (PID ${_ADMIN_PID}) — SIGTERM sent, systemd will restart with new code"
 fi
 
 # ── Build ─────────────────────────────────────────────────────────────────────
