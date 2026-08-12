@@ -12,6 +12,16 @@ fail() { echo -e "${RED}[FAIL]${NC} $*"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 info() { echo -e "       $*"; }
 
+# ── Self-restart admin IMMEDIATELY (no sudo needed) ───────────────────────────
+# Do this as the very first thing so it fires before any slow path bootstrap or
+# npm operation. The bash subprocess becomes orphaned (Python parent dies when
+# uvicorn exits), eliminating the 300-second subprocess.run timeout constraint.
+_ADMIN_PID=$(pgrep -f "platform/admin/venv/bin/uvicorn" 2>/dev/null || true)
+if [ -n "$_ADMIN_PID" ]; then
+    kill -TERM "$_ADMIN_PID" 2>/dev/null || true
+    echo "[OK]   Admin uvicorn (PID ${_ADMIN_PID}) — SIGTERM sent, systemd will restart with new code"
+fi
+
 # ── Node path bootstrap ───────────────────────────────────────────────────────
 # When invoked from a systemd service subprocess, nvm is not on PATH.
 # Strategy 1: find node binary directly inside nvm version directories.
@@ -45,17 +55,6 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 FRONTEND="${REPO}/frontend"
 
 APPS=(admin chat writer coding autocoder trading)
-
-# ── Self-restart admin (before any slow operation) ───────────────────────────
-# Kill admin uvicorn NOW — before node install or npm builds — so systemd
-# restarts it immediately with new Python code. After this, the bash subprocess
-# becomes orphaned (Python parent dies when uvicorn exits), eliminating the
-# 300-second subprocess timeout. npm builds then run freely.
-_ADMIN_PID=$(pgrep -f "platform/admin/venv/bin/uvicorn" 2>/dev/null || true)
-if [ -n "$_ADMIN_PID" ]; then
-    kill -TERM "$_ADMIN_PID" 2>/dev/null || true
-    ok "Admin uvicorn (PID ${_ADMIN_PID}) — SIGTERM sent, systemd will restart with new code"
-fi
 
 # ── Node check ────────────────────────────────────────────────────────────────
 if ! command -v node &>/dev/null; then
