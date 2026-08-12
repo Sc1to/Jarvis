@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getUpdates, applyUpdates, gitPull, restartService } from '../api.js'
+import { getUpdates, applyUpdates, gitPull, restartService, deployService } from '../api.js'
 
 const SERVICES = ['admin', 'chat', 'writer', 'coding', 'trading', 'autocoder']
 
@@ -22,6 +22,8 @@ export default function Updates() {
   const [pullResult, setPullResult] = useState(null)
   const [restarting, setRestarting] = useState(null)
   const [restartMsg, setRestartMsg] = useState(null)
+  const [deploying, setDeploying] = useState(false)
+  const [deployMsg, setDeployMsg] = useState(null)
   const [msg, setMsg] = useState(null)
   const [error, setError] = useState(null)
 
@@ -65,6 +67,19 @@ export default function Updates() {
       setPullResult({ ok: false, text: e.response?.data?.detail ?? e.message })
     } finally {
       setPulling(false)
+    }
+  }
+
+  async function deploy() {
+    setDeploying(true)
+    setDeployMsg(null)
+    try {
+      const r = await deployService('all')
+      setDeployMsg(r.data.message ?? 'Deploying…')
+    } catch (e) {
+      setDeployMsg(`Error: ${e.response?.data?.detail ?? e.message}`)
+    } finally {
+      setDeploying(false)
     }
   }
 
@@ -117,14 +132,28 @@ export default function Updates() {
       <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 space-y-3">
         <div className="flex items-center justify-between">
           <p className="text-sm font-medium">Services</p>
-          <button
-            onClick={() => restart('all')}
-            disabled={!!restarting}
-            className="bg-red-700 hover:bg-red-600 disabled:opacity-50 text-white text-xs px-3 py-1.5 rounded"
-          >
-            {restarting === 'all' ? 'Restarting…' : 'Restart all'}
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={deploy}
+              disabled={deploying || !!restarting}
+              className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs px-3 py-1.5 rounded"
+            >
+              {deploying ? 'Deploying…' : 'Deploy all'}
+            </button>
+            <button
+              onClick={() => restart('all')}
+              disabled={deploying || !!restarting}
+              className="bg-red-700 hover:bg-red-600 disabled:opacity-50 text-white text-xs px-3 py-1.5 rounded"
+            >
+              {restarting === 'all' ? 'Restarting…' : 'Restart all'}
+            </button>
+          </div>
         </div>
+        {deployMsg && (
+          <p className={`text-xs ${deployMsg.startsWith('Error') ? 'text-red-400' : 'text-green-400'}`}>
+            {deployMsg}
+          </p>
+        )}
         <div className="flex flex-wrap gap-2">
           {SERVICES.map(svc => (
             <button
