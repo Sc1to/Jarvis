@@ -188,4 +188,15 @@ echo ""
 echo "────────────────────────────────────────"
 echo "Built: ${PASSED} ok, ${FAILED} failed"
 [ $FAILED -eq 0 ] && ok "All frontends built" || fail "Some builds failed — services will still restart"
+
+# ── Self-restart admin backend (no sudo needed) ───────────────────────────────
+# Kill the admin uvicorn process — systemd Restart=always brings it back with
+# new code. We own the process (same user), so no sudo required. This is the
+# only reliable way to reload Python code from a subprocess of the admin service.
+_ADMIN_PID=$(pgrep -f "platform/admin/venv/bin/uvicorn" 2>/dev/null || true)
+if [ -n "$_ADMIN_PID" ]; then
+    kill -TERM "$_ADMIN_PID" 2>/dev/null || true
+    ok "Admin uvicorn (PID ${_ADMIN_PID}) — SIGTERM sent, systemd will restart with new code"
+fi
+
 exit 0
