@@ -13,12 +13,21 @@ warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 info() { echo -e "       $*"; }
 
 # ── Self-restart admin IMMEDIATELY (no sudo needed) ───────────────────────────
-# Do this as the very first thing so it fires before any slow path bootstrap or
-# npm operation. The bash subprocess becomes orphaned (Python parent dies when
-# uvicorn exits), eliminating the 300-second subprocess.run timeout constraint.
-# Use pkill (not pgrep+kill) so multiple worker PIDs are handled correctly.
-pkill -TERM -f "platform/admin/venv/bin/uvicorn" 2>/dev/null || true
-echo "[OK]   Admin uvicorn — SIGTERM sent via pkill, systemd will restart with new code"
+# Use python3 (guaranteed in PATH since it runs our service) to scan /proc and
+# send SIGTERM to the admin uvicorn process. pkill may not be in PATH here.
+python3 -c "
+import os, signal
+for p in os.listdir('/proc'):
+    if not p.isdigit():
+        continue
+    try:
+        cmd = open('/proc/'+p+'/cmdline','rb').read().replace(b'\x00',b' ').decode()
+        if 'uvicorn' in cmd and 'main:app' in cmd:
+            os.kill(int(p), signal.SIGTERM)
+            print('[OK]   Admin uvicorn PID '+p+' — SIGTERM sent')
+    except:
+        pass
+" 2>/dev/null || true
 
 # ── Node path bootstrap ───────────────────────────────────────────────────────
 # When invoked from a systemd service subprocess, nvm is not on PATH.
