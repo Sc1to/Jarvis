@@ -60,6 +60,17 @@ else
     ok "Node $(node --version) found"
 fi
 
+# ── Self-restart admin (no sudo needed) ──────────────────────────────────────
+# Kill admin uvicorn NOW — before npm builds — so systemd restarts it immediately
+# with new code. Doing this early means the bash subprocess becomes orphaned
+# (parent Python process dies when uvicorn exits), so npm runs without the
+# 300-second Python subprocess timeout constraint.
+_ADMIN_PID=$(pgrep -f "platform/admin/venv/bin/uvicorn" 2>/dev/null || true)
+if [ -n "$_ADMIN_PID" ]; then
+    kill -TERM "$_ADMIN_PID" 2>/dev/null || true
+    ok "Admin uvicorn (PID ${_ADMIN_PID}) — SIGTERM sent, systemd will restart with new code"
+fi
+
 # ── Build ─────────────────────────────────────────────────────────────────────
 TARGETS=("$@")
 [ ${#TARGETS[@]} -eq 0 ] && TARGETS=("${APPS[@]}")
@@ -188,15 +199,4 @@ echo ""
 echo "────────────────────────────────────────"
 echo "Built: ${PASSED} ok, ${FAILED} failed"
 [ $FAILED -eq 0 ] && ok "All frontends built" || fail "Some builds failed — services will still restart"
-
-# ── Self-restart admin backend (no sudo needed) ───────────────────────────────
-# Kill the admin uvicorn process — systemd Restart=always brings it back with
-# new code. We own the process (same user), so no sudo required. This is the
-# only reliable way to reload Python code from a subprocess of the admin service.
-_ADMIN_PID=$(pgrep -f "platform/admin/venv/bin/uvicorn" 2>/dev/null || true)
-if [ -n "$_ADMIN_PID" ]; then
-    kill -TERM "$_ADMIN_PID" 2>/dev/null || true
-    ok "Admin uvicorn (PID ${_ADMIN_PID}) — SIGTERM sent, systemd will restart with new code"
-fi
-
 exit 0
