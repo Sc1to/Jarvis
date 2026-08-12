@@ -20,7 +20,7 @@ const TIERS = [
 type TierStatus = 'locked' | 'active' | 'running' | 'review' | 'approved'
 type P2Step = 'idle' | 'consolidating' | 'researching' | 'done'
 
-interface TierEntry { content: string | null; approved: boolean }
+interface TierEntry { content: string | null; approved: boolean; draft?: string | null }
 interface BibleEntity {
   type: string; name: string; aliases?: string[]
   coreFacts?: Record<string, string>
@@ -79,11 +79,12 @@ export default function BibleWorkshopPage() {
         next[i] = 'approved'
       } else {
         firstUnapproved = firstUnapproved === -1 ? i : firstUnapproved
-        if (i > 0 && next[i - 1] === 'approved') next[i] = 'active'
+        const unlocked = i === 0 || next[i - 1] === 'approved'
+        if (unlocked) next[i] = savedTiers[i]?.draft ? 'review' : 'active'
       }
     }
     setStatuses(next)
-    setContents(savedTiers.map(t => t.content))
+    setContents(savedTiers.map(t => t.content ?? t.draft ?? null))
     const active = firstUnapproved !== -1 ? firstUnapproved : 3
     setActiveTier(active)
   }, [savedTiers])
