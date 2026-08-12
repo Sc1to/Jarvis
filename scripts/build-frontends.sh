@@ -12,6 +12,20 @@ fail() { echo -e "${RED}[FAIL]${NC} $*"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 info() { echo -e "       $*"; }
 
+# ── Node path bootstrap ───────────────────────────────────────────────────────
+# When invoked from a systemd service, login-shell profile may not source nvm.
+# Explicitly load nvm and add common fixed-install paths so node is always found.
+export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+[ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh" --no-use
+# Activate the default/lts alias if nvm loaded but node still not in PATH
+if ! command -v node &>/dev/null && command -v nvm &>/dev/null; then
+    nvm use default 2>/dev/null || nvm use --lts 2>/dev/null || true
+fi
+# Fallback: common system-wide install locations
+for _p in /usr/local/bin /usr/bin; do
+    [[ ":$PATH:" != *":$_p:"* ]] && export PATH="$_p:$PATH"
+done
+
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 FRONTEND="${REPO}/frontend"
 
