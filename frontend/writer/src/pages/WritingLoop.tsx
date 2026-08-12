@@ -243,8 +243,8 @@ export default function WritingLoopPage() {
 
   return (
     <div className="flex h-full">
-      {/* Left: chapter list */}
-      <div className="w-44 border-r border-border flex flex-col shrink-0">
+      {/* Left: chapter list — hidden on mobile */}
+      <div className="hidden md:flex md:flex-col md:w-44 md:shrink-0 border-r border-border">
         <div className="px-3 py-4 border-b border-border">
           <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Chapters</h3>
         </div>
@@ -292,6 +292,21 @@ export default function WritingLoopPage() {
       <div className="flex-1 flex flex-col min-w-0">
         {/* Top bar */}
         <div className="flex items-center gap-3 px-5 py-3 border-b border-border shrink-0">
+          {/* Mobile chapter picker */}
+          {!isLocked && (
+            <select
+              className="md:hidden text-xs bg-transparent border border-border rounded px-2 py-1 text-foreground disabled:opacity-50 shrink-0"
+              value={activeChapter ?? ''}
+              onChange={e => setActiveChapter(e.target.value ? Number(e.target.value) : null)}
+              disabled={busy}
+            >
+              {!activeChapter && <option value="">Chapter…</option>}
+              {chapters.map(ch => (
+                <option key={ch.chapter} value={ch.chapter}>Ch.{ch.chapter}{ch.approved ? ' ✓' : ''}</option>
+              ))}
+              {nextChapter && <option value={nextChapter}>+ Ch.{nextChapter}</option>}
+            </select>
+          )}
           <div className="flex-1 min-w-0">
             <h2 className="font-semibold text-sm truncate">
               {activeChapter ? `Chapter ${activeChapter}` : 'Writing Loop'}
@@ -389,8 +404,8 @@ export default function WritingLoopPage() {
         )}
       </div>
 
-      {/* Right sidebar: scenes + QA */}
-      <div className="w-72 border-l border-border flex flex-col shrink-0">
+      {/* Right sidebar: scenes + QA — hidden on mobile */}
+      <div className="hidden md:flex md:flex-col md:w-72 md:shrink-0 border-l border-border">
         <div className="px-4 py-4 border-b border-border">
           <h3 className="text-sm font-medium">Scenes</h3>
           <p className="text-xs text-muted-foreground">

@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
-import { GitCommit } from 'lucide-react'
+import { ChevronLeft, GitCommit } from 'lucide-react'
 
 interface Commit { hash: string; message: string; date: string; author_name: string }
 
@@ -27,7 +27,8 @@ export default function HistoryPage() {
 
   return (
     <div className="flex h-full">
-      <div className="w-80 border-r border-border flex flex-col">
+      {/* Commit list: full-width on mobile (master), fixed sidebar on desktop */}
+      <div className={cn('flex flex-col border-r border-border shrink-0 md:w-80', selected ? 'hidden md:flex' : 'w-full')}>
         <div className="px-4 py-4 border-b border-border">
           <h2 className="font-semibold text-sm">History</h2>
           <p className="text-xs text-muted-foreground">{log.length} commits</p>
@@ -50,7 +51,16 @@ export default function HistoryPage() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-6">
+      {/* Detail: hidden on mobile until a commit is selected */}
+      <div className={cn('overflow-y-auto p-6', selected ? 'flex-1' : 'hidden md:block md:flex-1')}>
+        {selected && (
+          <button
+            onClick={() => setSelected(null)}
+            className="md:hidden flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground mb-4"
+          >
+            <ChevronLeft size={13} />Back to commits
+          </button>
+        )}
         {!selected ? (
           <div className="text-center py-20"><p className="text-sm text-muted-foreground">Select a commit to view the scene and bible changes.</p></div>
         ) : (
