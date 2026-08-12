@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Lock, Send, Loader2 } from 'lucide-react'
+import { Lock, Send, Loader2, FileText, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { readSSE } from '@/lib/sse'
 import { API } from '@/lib/api'
@@ -123,24 +123,44 @@ export default function NorthStarPage() {
 
   const userTurns = messages.filter(m => m.role === 'user').length
   const canLock = userTurns >= 2 && !streaming && !locking
+  const [docOpen, setDocOpen] = useState(false)
+
+  const docContent = (
+    <div className="flex-1 overflow-y-auto px-5 py-4">
+      {northStarDoc
+        ? <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-mono leading-relaxed">{northStarDoc}</pre>
+        : <p className="text-xs text-muted-foreground italic">Synthesized from the conversation on lock. Keep talking until the Story Architect has everything it needs.</p>
+      }
+    </div>
+  )
 
   return (
     <div className="flex h-full">
       {/* Chat panel */}
-      <div className="flex-1 flex flex-col border-r border-border">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-border">
-          <div>
+      <div className="flex-1 flex flex-col border-r border-border min-w-0">
+        <div className="flex items-center justify-between px-4 md:px-6 py-4 border-b border-border gap-3">
+          <div className="min-w-0">
             <h2 className="font-semibold">North Star</h2>
             <p className="text-xs text-muted-foreground">Phase 1A — create and lock the anchor document</p>
           </div>
-          {!locked ? (
-            <Button variant="outline" size="sm" onClick={handleLock} className="gap-2" disabled={!canLock}>
-              {locking ? <Loader2 size={13} className="animate-spin" /> : <Lock size={13} />}
-              {locking ? 'Synthesizing…' : 'Lock North Star'}
-            </Button>
-          ) : (
-            <Badge variant="success">Locked</Badge>
-          )}
+          <div className="flex items-center gap-2 shrink-0">
+            {/* Mobile doc preview toggle */}
+            <button
+              className="md:hidden flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-border text-muted-foreground hover:text-foreground transition-colors"
+              onClick={() => setDocOpen(true)}
+            >
+              <FileText size={14} />
+              <span className="text-xs">Doc</span>
+            </button>
+            {!locked ? (
+              <Button variant="outline" size="sm" onClick={handleLock} className="gap-2" disabled={!canLock}>
+                {locking ? <Loader2 size={13} className="animate-spin" /> : <Lock size={13} />}
+                {locking ? 'Synthesizing…' : 'Lock North Star'}
+              </Button>
+            ) : (
+              <Badge variant="success">Locked</Badge>
+            )}
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
@@ -184,18 +204,38 @@ export default function NorthStarPage() {
         )}
       </div>
 
-      {/* Document preview */}
-      <div className="w-80 flex flex-col">
-        <div className="px-5 py-4 border-b border-border">
+      {/* Mobile doc preview overlay */}
+      {docOpen && (
+        <>
+          <div
+            className="md:hidden fixed inset-0 z-20 bg-black/50"
+            onClick={() => setDocOpen(false)}
+          />
+          <aside className="md:hidden fixed inset-y-0 right-0 z-30 w-80 bg-background border-l border-border flex flex-col">
+            <div className="px-5 py-4 border-b border-border flex items-center justify-between shrink-0">
+              <div>
+                <h3 className="text-sm font-medium">north_star.md</h3>
+                <p className="text-xs text-muted-foreground">{locked ? 'Append-only · read-only' : 'Preview'}</p>
+              </div>
+              <button
+                onClick={() => setDocOpen(false)}
+                className="p-1 text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            {docContent}
+          </aside>
+        </>
+      )}
+
+      {/* Desktop document preview sidebar */}
+      <div className="hidden md:flex md:flex-col md:w-80 md:shrink-0">
+        <div className="px-5 py-4 border-b border-border shrink-0">
           <h3 className="text-sm font-medium">north_star.md</h3>
           <p className="text-xs text-muted-foreground">{locked ? 'Append-only · read-only' : 'Preview'}</p>
         </div>
-        <div className="flex-1 overflow-y-auto px-5 py-4">
-          {northStarDoc
-            ? <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-mono leading-relaxed">{northStarDoc}</pre>
-            : <p className="text-xs text-muted-foreground italic">Synthesized from the conversation on lock. Keep talking until the Story Architect has everything it needs.</p>
-          }
-        </div>
+        {docContent}
       </div>
     </div>
   )
