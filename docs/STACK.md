@@ -162,8 +162,9 @@ curl -fsSL https://ollama.com/install.sh | sh
 **Service:** Runs automatically as systemd service on port 11434
 
 **GPU memory configuration:**
-- Set in BIOS — maximize iGPU memory allocation
-- Verify GPU is being used: `ollama run llama3 "test"` then check `rocm-smi` or `radeontop`
+- Set UMA Frame Buffer Size to **Auto** in BIOS. Do NOT use a fixed value — a fixed partition hides memory from the ROCm allocator, limiting model loading to ~27 GB regardless of physical RAM. Auto leaves the full pool CPU-visible, which is what ROCm needs on this iGPU (NO_VMM=1 architecture).
+- Disable the display manager: `sudo systemctl disable gdm3` — the GNOME compositor claims GPU memory through the KMS/DRM stack, blocking ROCm from using it.
+- Verify GPU is being used: `ollama run qwen2.5:72b-instruct-q4_K_M "test"` then check `ollama ps` — should show 100% GPU
 
 **Environment variables (add to systemd service or ~/.bashrc):**
 ```bash
