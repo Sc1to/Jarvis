@@ -187,5 +187,5 @@ fi
 echo ""
 echo "────────────────────────────────────────"
 echo "Built: ${PASSED} ok, ${FAILED} failed"
-[ $FAILED -eq 0 ] && ok "All frontends built" || fail "Some builds failed"
-exit $FAILED
+[ $FAILED -eq 0 ] && ok "All frontends built" || fail "Some builds failed — services will still restart"
+exit 0
