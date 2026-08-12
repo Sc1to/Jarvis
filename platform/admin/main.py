@@ -449,7 +449,10 @@ def _run_deploy(repo: str, units: list[str], app_name: str):
         )
         if r.returncode != 0:
             log.error("build-frontends.sh failed for %s: %s", app_name, r.stderr or r.stdout)
-            return
+        else:
+            log.info("build-frontends.sh succeeded for %s", app_name)
+        # Always restart Python backends regardless of frontend build outcome —
+        # backend code (main.py) is independent of the npm build.
         if units:
             subprocess.run(["sudo", "systemctl", "restart"] + units, timeout=30)
         log.info("Deploy complete: %s", app_name)
