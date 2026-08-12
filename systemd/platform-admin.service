@@ -6,6 +6,7 @@ After=network.target
 Type=simple
 User=jarvis
 WorkingDirectory=/home/jarvis/Jarvis/platform/admin
+Environment=REPO_PATH=/home/jarvis/Jarvis
 ExecStart=/home/jarvis/Jarvis/platform/admin/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
 Restart=always
 RestartSec=5

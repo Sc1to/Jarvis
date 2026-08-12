@@ -6,7 +6,6 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "postbuild": "python3 kill_admin.py 2>/dev/null; true",
     "preview": "vite preview"
   },
   "dependencies": {
