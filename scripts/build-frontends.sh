@@ -13,16 +13,31 @@ warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 info() { echo -e "       $*"; }
 
 # ── Node path bootstrap ───────────────────────────────────────────────────────
-# When invoked from a systemd service, login-shell profile may not source nvm.
-# Explicitly load nvm and add common fixed-install paths so node is always found.
-export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
-[ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh" --no-use
-# Activate the default/lts alias if nvm loaded but node still not in PATH
-if ! command -v node &>/dev/null && command -v nvm &>/dev/null; then
-    nvm use default 2>/dev/null || nvm use --lts 2>/dev/null || true
+# When invoked from a systemd service subprocess, nvm is not on PATH.
+# Strategy 1: find node binary directly inside nvm version directories.
+if ! command -v node &>/dev/null; then
+    _NVM_ROOT="${HOME:-/home/jarvis}/.nvm/versions/node"
+    if [ -d "$_NVM_ROOT" ]; then
+        # Pick the highest version's bin dir
+        _NODE_BIN=$(find "$_NVM_ROOT" -maxdepth 2 -name "node" -type f 2>/dev/null | sort -V | tail -1)
+        if [ -n "$_NODE_BIN" ]; then
+            export PATH="$(dirname "$_NODE_BIN"):$PATH"
+        fi
+    fi
 fi
-# Fallback: common system-wide install locations
-for _p in /usr/local/bin /usr/bin; do
+# Strategy 2: source nvm.sh with strict mode disabled to avoid early exit
+if ! command -v node &>/dev/null; then
+    _NVM_SH="${HOME:-/home/jarvis}/.nvm/nvm.sh"
+    if [ -s "$_NVM_SH" ]; then
+        set +euo
+        # shellcheck source=/dev/null
+        source "$_NVM_SH"
+        set -euo pipefail
+        nvm use default 2>/dev/null || nvm use --lts 2>/dev/null || true
+    fi
+fi
+# Strategy 3: common system-wide install locations
+for _p in /usr/local/bin /usr/bin /snap/bin; do
     [[ ":$PATH:" != *":$_p:"* ]] && export PATH="$_p:$PATH"
 done
 
