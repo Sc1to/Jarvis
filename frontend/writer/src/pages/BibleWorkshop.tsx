@@ -156,6 +156,38 @@ export default function BibleWorkshopPage() {
     runTier(activeTier)
   }
 
+  async function editTier(idx: number) {
+    if (!directive.trim()) return
+    const d = directive
+    setDirective('')
+    setStatuses(prev => { const n = [...prev]; n[idx] = 'running'; return n })
+    setContents(prev => { const n = [...prev]; n[idx] = ''; return n })
+    setStreaming(true)
+    try {
+      const resp = await fetch(`${API}/books/${bookId}/phase1/bible/edit-tier`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tier: idx + 1, directive: d }),
+      })
+      let text = ''
+      for await (const event of readSSE(resp)) {
+        if (event.type === 'token' && event.content) {
+          text += event.content
+          setContents(prev => { const n = [...prev]; n[idx] = text; return n })
+        } else if (event.type === 'error') {
+          setContents(prev => { const n = [...prev]; n[idx] = `⚠ ${event.message}`; return n })
+          break
+        }
+      }
+      setStatuses(prev => { const n = [...prev]; n[idx] = 'review'; return n })
+    } catch {
+      setContents(prev => { const n = [...prev]; n[idx] = '⚠ Connection error — is the server running?'; return n })
+      setStatuses(prev => { const n = [...prev]; n[idx] = 'review'; return n })
+    } finally {
+      setStreaming(false)
+    }
+  }
+
   async function runP2(endpoint: string, _label: string, nextStep: P2Step) {
     setP2Step(nextStep)
     setP2Log('')
@@ -291,6 +323,9 @@ export default function BibleWorkshopPage() {
                   disabled={streaming}
                   className="flex-1 resize-none rounded-md border border-input bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                 />
+                <Button variant="outline" size="sm" onClick={() => editTier(activeTier)} disabled={!directive.trim() || streaming}>
+                  Edit current
+                </Button>
                 <Button variant="outline" size="sm" onClick={injectAndRerun} disabled={!directive.trim() || streaming}>
                   Inject &amp; re-run
                 </Button>

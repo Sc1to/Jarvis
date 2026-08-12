@@ -12,7 +12,7 @@ from health import health_payload
 import db
 import prompt_store
 from routes.phase1 import (STORY_ARCHITECT_SYSTEM, SYNTHESIS_PROMPT, BIBLE_AGENT_SYSTEM,
-                             TIER_INSTRUCTIONS, TIER_LABELS)
+                             TIER_INSTRUCTIONS, TIER_LABELS, TIER_EDITOR_SYSTEM)
 from routes.phase2 import CONSOLIDATOR_SYSTEM, RESEARCH_SYSTEM
 from routes.phase3 import SCENE_PLANNER_SYSTEM, WRITER_SYSTEM, QA_SYSTEM, BIBLE_UPDATER_SYSTEM
 from routes.settings import router as settings_router
@@ -48,6 +48,7 @@ _WRITER_DEFAULTS = {
     "synthesis": SYNTHESIS_PROMPT,
     "bible_agent": BIBLE_AGENT_SYSTEM,
     **{f"tier_{label.lower()}": TIER_INSTRUCTIONS[i] for i, label in enumerate(TIER_LABELS)},
+    "tier_editor": TIER_EDITOR_SYSTEM,
     "consolidator": CONSOLIDATOR_SYSTEM,
     "research": RESEARCH_SYSTEM,
     "scene_planner": SCENE_PLANNER_SYSTEM,

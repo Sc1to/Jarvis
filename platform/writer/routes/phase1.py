@@ -48,6 +48,13 @@ Critical rules:
 - Right: "Hamid arrives at the Constantinople harbour. The Venetian fleet is anchored in the Golden Horn. Brother Tomás is waiting on the dock."
 - Output ONLY the requested tier. No preamble, no commentary, no "Here is the tier:" — just the content."""
 
+TIER_EDITOR_SYSTEM = """You are a line editor for a novel bible. Apply the author's specific change to the existing tier document.
+
+Rules:
+- Apply ONLY the requested change — nothing more
+- Preserve all other content exactly: same structure, same entries, same wording
+- Output ONLY the complete updated tier. No preamble, no commentary."""
+
 TIER_LABELS = ["Book", "Acts", "Chapters", "Scenes"]
 
 TIER_INSTRUCTIONS = [
@@ -230,6 +237,46 @@ def approve_tier(book_id: str, body: ApproveTierBody):
     repo.index.commit(f"Approve Bible Tier {body.tier} — {TIER_LABELS[body.tier - 1]}")
 
     return {"ok": True}
+
+
+class EditTierBody(BaseModel):
+    tier: int
+    directive: str
+
+
+@router.post("/books/{book_id}/phase1/bible/edit-tier")
+def edit_tier(book_id: str, body: EditTierBody, user: str = Depends(current_user)):
+    idx = body.tier - 1
+    tiers = _read_tiers(book_id)
+    current = tiers[idx].get("content") or tiers[idx].get("draft") or ""
+    if not current:
+        from fastapi import HTTPException
+        raise HTTPException(400, "No tier content to edit — run the agent first")
+
+    provider = db.get_setting("agent_bible_agent_provider")
+    model = db.get_setting("agent_bible_agent_model")
+    system = prompt_store.get("tier_editor", TIER_EDITOR_SYSTEM)
+    messages = [{"role": "user", "content": f"## Current {TIER_LABELS[idx]} tier\n\n{current}\n\n## Change to apply\n\n{body.directive}"}]
+
+    async def generate():
+        if not provider or not model:
+            yield f'data: {json.dumps({"type": "error", "message": "Bible Agent has no model assigned — go to Settings."})}\n\n'
+            return
+        full_text = ""
+        try:
+            async for token in llm.provider_tokens(provider, model, messages, system, user):
+                full_text += token
+                yield f'data: {json.dumps({"type": "token", "content": token})}\n\n'
+        except Exception as e:
+            msg = str(e) or type(e).__name__
+            yield f'data: {json.dumps({"type": "error", "message": msg})}\n\n'
+            return
+        with open(_draft_path(book_id, body.tier), "w") as f:
+            f.write(full_text)
+        yield f'data: {json.dumps({"type": "done"})}\n\n'
+
+    return StreamingResponse(generate(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 class DirectiveBody(BaseModel):
