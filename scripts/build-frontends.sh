@@ -16,11 +16,9 @@ info() { echo -e "       $*"; }
 # Do this as the very first thing so it fires before any slow path bootstrap or
 # npm operation. The bash subprocess becomes orphaned (Python parent dies when
 # uvicorn exits), eliminating the 300-second subprocess.run timeout constraint.
-_ADMIN_PID=$(pgrep -f "platform/admin/venv/bin/uvicorn" 2>/dev/null || true)
-if [ -n "$_ADMIN_PID" ]; then
-    kill -TERM "$_ADMIN_PID" 2>/dev/null || true
-    echo "[OK]   Admin uvicorn (PID ${_ADMIN_PID}) — SIGTERM sent, systemd will restart with new code"
-fi
+# Use pkill (not pgrep+kill) so multiple worker PIDs are handled correctly.
+pkill -TERM -f "platform/admin/venv/bin/uvicorn" 2>/dev/null || true
+echo "[OK]   Admin uvicorn — SIGTERM sent via pkill, systemd will restart with new code"
 
 # ── Node path bootstrap ───────────────────────────────────────────────────────
 # When invoked from a systemd service subprocess, nvm is not on PATH.
