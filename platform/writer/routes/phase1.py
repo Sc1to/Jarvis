@@ -3,6 +3,7 @@ import os
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
 from git import Repo
 from pydantic import BaseModel
 
@@ -77,12 +78,18 @@ Format:
 ]
 
 
+def _draft_path(book_id: str, tier: int) -> str:
+    return os.path.join(db.data_dir(book_id), f"tier_{tier}_draft.md")
+
+
 def _read_tiers(book_id: str) -> list[dict]:
     path = os.path.join(db.data_dir(book_id), "tiers.json")
-    if not os.path.exists(path):
-        return [{"content": None, "approved": False} for _ in range(4)]
-    with open(path) as f:
-        return json.load(f)
+    tiers = json.load(open(path)) if os.path.exists(path) else [{"content": None, "approved": False} for _ in range(4)]
+    for i, tier in enumerate(tiers):
+        if not tier.get("approved"):
+            dp = _draft_path(book_id, i + 1)
+            tier["draft"] = open(dp).read() if os.path.exists(dp) else None
+    return tiers
 
 
 # ── North Star ─────────────────────────────────────────────────────────────────
@@ -173,7 +180,30 @@ def run_tier(book_id: str, body: RunTierBody, user: str = Depends(current_user))
 
     tier_key = f"tier_{TIER_LABELS[idx].lower()}"
     messages = [{"role": "user", "content": f"{context}\n\n---\n\n{prompt_store.get(tier_key, TIER_INSTRUCTIONS[idx])}"}]
-    return llm.stream_chat("bible_agent", messages, prompt_store.get("bible_agent", BIBLE_AGENT_SYSTEM), user)
+
+    provider = db.get_setting("agent_bible_agent_provider")
+    model = db.get_setting("agent_bible_agent_model")
+    system = prompt_store.get("bible_agent", BIBLE_AGENT_SYSTEM)
+
+    async def generate():
+        if not provider or not model:
+            yield f'data: {json.dumps({"type": "error", "message": "Bible Agent has no model assigned — go to Settings."})}\n\n'
+            return
+        full_text = ""
+        try:
+            async for token in llm.provider_tokens(provider, model, messages, system, user):
+                full_text += token
+                yield f'data: {json.dumps({"type": "token", "content": token})}\n\n'
+        except Exception as e:
+            msg = str(e) or type(e).__name__
+            yield f'data: {json.dumps({"type": "error", "message": msg})}\n\n'
+            return
+        with open(_draft_path(book_id, body.tier), "w") as f:
+            f.write(full_text)
+        yield f'data: {json.dumps({"type": "done"})}\n\n'
+
+    return StreamingResponse(generate(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 class ApproveTierBody(BaseModel):
@@ -190,6 +220,10 @@ def approve_tier(book_id: str, body: ApproveTierBody):
     path = os.path.join(book_dir, "tiers.json")
     with open(path, "w") as f:
         json.dump(tiers, f, indent=2)
+
+    dp = _draft_path(book_id, body.tier)
+    if os.path.exists(dp):
+        os.remove(dp)
 
     repo = Repo(book_dir)
     repo.index.add(["tiers.json"])
