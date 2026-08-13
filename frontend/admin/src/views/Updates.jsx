@@ -72,12 +72,12 @@ export default function Updates() {
     }
   }
 
-  // Poll /services/{app}/health until the service reports ok, or 2min elapses.
-  async function pollHealth(appName, setPolling, setMsg) {
+  // Poll /services/{app}/health until the service reports ok, or deadline elapses.
+  async function pollHealth(appName, setPolling, setMsg, timeoutMs = 30_000) {
     setPolling(true)
     await new Promise(r => setTimeout(r, 2000))
 
-    const deadline = Date.now() + 120_000
+    const deadline = Date.now() + timeoutMs
     const label = appName === 'all' ? 'All services' : appName
 
     while (Date.now() < deadline) {
@@ -96,7 +96,7 @@ export default function Updates() {
       await new Promise(r => setTimeout(r, 3000))
     }
 
-    setMsg({ ok: false, text: `${label} didn't respond within 2 minutes — check the dashboard` })
+    setMsg({ ok: false, text: `${label} didn't respond within ${timeoutMs / 1000}s — check the dashboard` })
     setPolling(false)
   }
 
@@ -106,7 +106,7 @@ export default function Updates() {
     setDeployPolling(false)
     try {
       await deployService('all')
-      pollHealth('all', setDeployPolling, setDeployMsg)
+      pollHealth('all', setDeployPolling, setDeployMsg, 180_000)
     } catch (e) {
       setDeployMsg({ ok: false, text: `Error: ${e.response?.data?.detail ?? e.message}` })
     } finally {

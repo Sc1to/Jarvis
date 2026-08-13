@@ -435,8 +435,15 @@ def restart_service(app: str):
         if units is None:
             raise HTTPException(404, f"Unknown app: {app}")
 
-    threading.Thread(target=_run_deploy, args=(REPO_PATH, units, app), daemon=True).start()
-    return {"status": "ok", "message": f"Rebuilding and restarting {app}…"}
+    def _do_restart(units: list[str]):
+        try:
+            subprocess.run(["sudo", "systemctl", "restart"] + units, timeout=60)
+            log.info("Restart complete: %s", units)
+        except Exception as e:
+            log.error("Restart failed for %s: %s", units, e)
+
+    threading.Thread(target=_do_restart, args=(units,), daemon=True).start()
+    return {"status": "ok", "message": f"Restarting {app}…"}
 
 
 def _run_deploy(repo: str, units: list[str], app_name: str):
