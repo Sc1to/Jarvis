@@ -53,7 +53,7 @@ def set_prompt(key: str, body: dict):
 
 @app.get("/health")
 async def health():
-    return health_payload(_start, VERSION)
+    return health_payload(_start, VERSION, model=DEFAULT_MODEL)
 
 
 @app.get("/models")

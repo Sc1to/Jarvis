@@ -467,6 +467,89 @@ def _run_deploy(repo: str, units: list[str], app_name: str):
         log.error("Deploy failed for %s: %s", app_name, e)
 
 
+def _get_memory_mb(unit: str) -> float | None:
+    try:
+        r = subprocess.run(
+            ["systemctl", "show", unit, "--property=MainPID"],
+            capture_output=True, text=True, timeout=3,
+        )
+        pid = int(r.stdout.strip().split("=")[-1])
+        if pid == 0:
+            return None
+        return round(psutil.Process(pid).memory_info().rss / 1_048_576, 1)
+    except Exception:
+        return None
+
+
+@app.get("/services/status")
+async def services_status():
+    _svc_ports = {
+        "chat":      8010,
+        "writer":    8011,
+        "coding":    8012,
+        "trading":   8030,
+        "autocoder": 8001,
+    }
+    _primary_units = {
+        "admin":     "platform-admin",
+        "chat":      "platform-chat",
+        "writer":    "platform-writer",
+        "coding":    "platform-coding",
+        "trading":   "platform-trading",
+        "autocoder": "platform-autocoder-conductor",
+    }
+
+    loaded_models: set[str] = set()
+    try:
+        async with httpx.AsyncClient(timeout=3) as client:
+            r = await client.get(f"{OLLAMA}/api/ps")
+            for m in r.json().get("models", []):
+                name = m.get("name", "")
+                loaded_models.add(name)
+                loaded_models.add(name.split(":")[0])
+    except Exception:
+        pass
+
+    result: dict[str, dict] = {
+        "admin": {
+            "backend": "ok",
+            "frontend_built": os.path.exists(os.path.join(REPO_PATH, "frontend/admin/dist/index.html")),
+            "memory_mb": _get_memory_mb("platform-admin"),
+            "model": None,
+            "model_loaded": False,
+        }
+    }
+
+    async with httpx.AsyncClient(timeout=3) as client:
+        for svc, port in _svc_ports.items():
+            model = None
+            try:
+                r = await client.get(f"http://localhost:{port}/health")
+                h = r.json()
+                backend = h.get("status", "unknown")
+                model = h.get("model")
+            except Exception:
+                backend = "down"
+
+            fe_dir = _FRONTEND_DIRS.get(svc, "")
+            frontend_built = bool(fe_dir) and os.path.exists(
+                os.path.join(REPO_PATH, fe_dir, "dist", "index.html")
+            )
+            memory_mb = _get_memory_mb(_primary_units.get(svc, ""))
+            model_loaded = bool(model and (model in loaded_models or model.split(":")[0] in loaded_models))
+
+            result[svc] = {
+                "backend": backend,
+                "frontend_built": frontend_built,
+                "memory_mb": memory_mb,
+                "model": model,
+                "model_loaded": model_loaded,
+            }
+
+    return result
+
+
+
 @app.get("/services/{app}/health")
 async def get_service_health(app: str):
     """Ping a service's /health endpoint directly — no apps-table dependency."""
