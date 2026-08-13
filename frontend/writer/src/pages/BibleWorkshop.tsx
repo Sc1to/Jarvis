@@ -39,10 +39,9 @@ const TYPE_ICON: Record<string, typeof BookOpen> = {
 interface LedgerBodyProps {
   sortedTypes: string[]
   byType: Record<string, [string, BibleEntity][]>
-  entityCount: number
 }
 
-function LedgerBody({ sortedTypes, byType, entityCount }: LedgerBodyProps) {
+function LedgerBody({ sortedTypes, byType }: LedgerBodyProps) {
   return (
     <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
       {sortedTypes.length === 0 ? (
@@ -291,7 +290,7 @@ export default function BibleWorkshopPage() {
   const bibleExists = phase2Status?.bible_exists
   const entityCount = phase2Status?.entity_count ?? 0
 
-  const ledgerProps = { sortedTypes, byType, entityCount }
+  const ledgerProps = { sortedTypes, byType }
 
   return (
     <div className="flex h-full">
