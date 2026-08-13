@@ -1148,11 +1148,21 @@ export default function BibleWorkshopPage() {
                                   <div key={scInfo.number} className="border border-border/60 rounded-md overflow-hidden">
                                     <button
                                       className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-muted/20 transition-colors text-left"
-                                      onClick={() => setExpandedScenes(prev => {
-                                        const next = new Set(prev)
+                                      onClick={async () => {
+                                        const next = new Set(expandedScenes)
                                         next.has(key) ? next.delete(key) : next.add(key)
-                                        return next
-                                      })}
+                                        setExpandedScenes(next)
+                                        if (!next.has(key)) return
+                                        if (scContent !== undefined) return
+                                        if (!scInfo.has_content) return
+                                        try {
+                                          const r = await fetch(`${API}/books/${bookId}/phase1/tier4/chapter/${chInfo.number}/scene/${scInfo.number}`)
+                                          if (r.ok) {
+                                            const d = await r.json()
+                                            setSceneContents(prev => ({ ...prev, [key]: d.content }))
+                                          }
+                                        } catch { /* leave empty, user can re-run */ }
+                                      }}
                                     >
                                       <div className="flex items-center gap-2">
                                         {scInfo.approved

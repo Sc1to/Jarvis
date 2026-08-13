@@ -907,6 +907,16 @@ def run_tier4_chapter(book_id: str, body: RunChapterBody, user: str = Depends(cu
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
+@router.get("/books/{book_id}/phase1/tier4/chapter/{chapter_num}/scene/{scene_num}")
+def get_tier4_scene(book_id: str, chapter_num: int, scene_num: int):
+    path = _tier4_scene_path(book_id, chapter_num, scene_num)
+    if not os.path.exists(path):
+        from fastapi import HTTPException
+        raise HTTPException(404, "No scene content on disk")
+    with open(path) as f:
+        return {"content": f.read()}
+
+
 @router.get("/books/{book_id}/phase1/tier4/chapter/{chapter_num}/plan")
 def get_tier4_chapter_plan(book_id: str, chapter_num: int):
     path = _tier4_chapter_path(book_id, chapter_num)
@@ -1043,7 +1053,7 @@ def run_scene(book_id: str, chapter_num: int, body: RunSceneBody, user: str = De
         context += f"\n\n## Previous Scene (ending)\n\n…{prev_scene_tail}"
     context += f"\n\n## Scene to Write\n\n{scene_plan_section or f'Scene {body.scene} of Chapter {chapter_num}'}"
 
-    messages = [{"role": "user", "content": context + "\n\nWrite the scene brief now."}]
+    messages = [{"role": "user", "content": context + "\n\nWrite the scene brief now. Use ONLY the 7 section headers from the instructions. Do NOT write prose sentences or paragraphs. Bullets and short phrases only."}]
     provider = db.get_setting("agent_bible_agent_provider")
     model = db.get_setting("agent_bible_agent_model")
 
