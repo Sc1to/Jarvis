@@ -12,23 +12,6 @@ fail() { echo -e "${RED}[FAIL]${NC} $*"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 info() { echo -e "       $*"; }
 
-# ── Self-restart admin IMMEDIATELY (no sudo needed) ───────────────────────────
-# Use python3 (guaranteed in PATH since it runs our service) to scan /proc and
-# send SIGTERM to the admin uvicorn process. pkill may not be in PATH here.
-python3 -c "
-import os, signal
-for p in os.listdir('/proc'):
-    if not p.isdigit():
-        continue
-    try:
-        cmd = open('/proc/'+p+'/cmdline','rb').read().replace(b'\x00',b' ').decode()
-        if 'uvicorn' in cmd and 'main:app' in cmd:
-            os.kill(int(p), signal.SIGTERM)
-            print('[OK]   Admin uvicorn PID '+p+' — SIGTERM sent')
-    except:
-        pass
-" 2>/dev/null || true
-
 # ── Node path bootstrap ───────────────────────────────────────────────────────
 # When invoked from a systemd service subprocess, nvm is not on PATH.
 # Strategy 1: find node binary directly inside nvm version directories.
