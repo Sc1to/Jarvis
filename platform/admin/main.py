@@ -460,6 +460,39 @@ def _run_deploy(repo: str, units: list[str], app_name: str):
         log.error("Deploy failed for %s: %s", app_name, e)
 
 
+@app.get("/services/{app}/health")
+async def get_service_health(app: str):
+    """Ping a service's /health endpoint directly — no apps-table dependency."""
+    _ports = {
+        "chat":      8010,
+        "writer":    8011,
+        "coding":    8012,
+        "trading":   8030,
+        "autocoder": 8001,
+    }
+    if app == "admin":
+        return {"status": "ok"}
+    if app == "all":
+        results: dict[str, str] = {"admin": "ok"}
+        async with httpx.AsyncClient(timeout=3) as client:
+            for name, port in _ports.items():
+                try:
+                    r = await client.get(f"http://localhost:{port}/health")
+                    results[name] = r.json().get("status", "unknown")
+                except Exception:
+                    results[name] = "down"
+        return {"services": results, "all_ok": all(v == "ok" for v in results.values())}
+    port = _ports.get(app)
+    if port is None:
+        raise HTTPException(404, f"Unknown service: {app}")
+    try:
+        async with httpx.AsyncClient(timeout=3) as client:
+            r = await client.get(f"http://localhost:{port}/health")
+            return r.json()
+    except Exception:
+        return {"status": "down"}
+
+
 @app.post("/services/{app}/deploy")
 def deploy_service(app: str):
     if app == "all":

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getUpdates, applyUpdates, gitPull, restartService, deployService, getHealthCheck } from '../api.js'
+import { getUpdates, applyUpdates, gitPull, restartService, deployService, getServiceHealth } from '../api.js'
 
 const SERVICES = ['admin', 'chat', 'writer', 'coding', 'trading', 'autocoder']
 
@@ -72,44 +72,31 @@ export default function Updates() {
     }
   }
 
-  // Poll /health-check until target service(s) report ok, or 60s elapses.
+  // Poll /services/{app}/health until the service reports ok, or 2min elapses.
   async function pollHealth(appName, setPolling, setMsg) {
     setPolling(true)
-    // Let the service begin shutting down before the first check.
     await new Promise(r => setTimeout(r, 2000))
 
-    const deadline = Date.now() + 60_000
+    const deadline = Date.now() + 120_000
     const label = appName === 'all' ? 'All services' : appName
 
     while (Date.now() < deadline) {
       try {
-        const r = await getHealthCheck()
-        const all = r.data  // [{name, health: {status}}, ...]
-
-        // admin is never in the apps table — the health-check responding at
-        // all means admin is up (it IS the server that handles this request).
-        if (appName === 'admin') {
-          setMsg({ ok: true, text: '✓ admin is up and running' })
-          setPolling(false)
-          return
-        }
-
-        const targets = appName === 'all'
-          ? all.filter(s => s.health !== null)
-          : all.filter(s => s.name === appName)
-
-        if (targets.length > 0 && targets.every(s => s.health?.status === 'ok')) {
+        const r = await getServiceHealth(appName)
+        const d = r.data
+        const ok = appName === 'all' ? d.all_ok : d.status === 'ok'
+        if (ok) {
           setMsg({ ok: true, text: `✓ ${label} ${appName === 'all' ? 'are' : 'is'} up and running` })
           setPolling(false)
           return
         }
       } catch {
-        // API down (admin restarting) — keep trying
+        // keep trying — admin may be momentarily restarting
       }
       await new Promise(r => setTimeout(r, 3000))
     }
 
-    setMsg({ ok: false, text: `${label} didn't respond within 60s — check the dashboard` })
+    setMsg({ ok: false, text: `${label} didn't respond within 2 minutes — check the dashboard` })
     setPolling(false)
   }
 
