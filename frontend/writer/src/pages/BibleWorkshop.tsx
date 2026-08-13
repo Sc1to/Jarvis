@@ -539,74 +539,6 @@ export default function BibleWorkshopPage() {
   const bibleExists = phase2Status?.bible_exists
   const entityCount = phase2Status?.entity_count ?? 0
 
-<<<<<<< HEAD
-  const ledgerProps = { sortedTypes, byType }
-
-  return (
-    <div className="flex h-full">
-      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-        {/* Tier stepper */}
-        <div className="flex items-center gap-2 px-4 md:px-6 py-3 md:py-4 border-b border-border overflow-x-auto shrink-0">
-          {TIERS.map((tier, i) => (
-            <div key={tier.id} className="flex items-center gap-1 md:gap-2 shrink-0">
-              <button
-                className={cn(
-                  'flex items-center gap-1.5 text-sm px-2 md:px-3 py-1.5 rounded-md transition-colors whitespace-nowrap',
-                  statuses[i] === 'approved' ? 'text-emerald-500'
-                    : i === activeTier ? 'bg-accent text-accent-foreground font-medium'
-                    : statuses[i] === 'locked' ? 'text-muted-foreground/40 cursor-not-allowed'
-                    : 'text-muted-foreground hover:text-foreground'
-                )}
-                onClick={() => statuses[i] !== 'locked' && !streaming && setActiveTier(i)}
-                disabled={statuses[i] === 'locked' || streaming}
-              >
-                {statuses[i] === 'approved' && <CheckCircle size={13} />}
-                {tier.label}
-              </button>
-              {i < TIERS.length - 1 && <ChevronRight size={14} className="text-muted-foreground/40 shrink-0" />}
-            </div>
-          ))}
-
-          {/* Mobile ledger toggle — hidden on desktop */}
-          <button
-            className="md:hidden ml-auto shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-border text-muted-foreground hover:text-foreground transition-colors"
-            onClick={() => setLedgerOpen(true)}
-          >
-            <BookOpen size={14} />
-            <span className="text-xs">{entityCount > 0 ? entityCount : 'Ledger'}</span>
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto px-4 md:px-6 py-6 space-y-4">
-          {/* ── Phase 1: Active tier ── */}
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <h2 className="font-semibold">Tier {TIERS[activeTier].id} — {TIERS[activeTier].label}</h2>
-              <p className="text-sm text-muted-foreground">{TIERS[activeTier].question}</p>
-            </div>
-            <div className="flex gap-2 shrink-0 flex-wrap justify-end">
-              {statuses[activeTier] === 'active' && (
-                <Button size="sm" onClick={() => runTier(activeTier)} className="gap-2" disabled={streaming}>
-                  <Play size={13} />Run agent
-                </Button>
-              )}
-              {statuses[activeTier] === 'running' && (
-                <Badge variant="secondary" className="gap-1.5">
-                  <Loader2 size={12} className="animate-spin" />Agent running…
-                </Badge>
-              )}
-              {statuses[activeTier] === 'review' && (
-                <>
-                  <Button size="sm" variant="outline" onClick={() => runTier(activeTier)} disabled={streaming}>Re-run</Button>
-                  <Button size="sm" onClick={() => approveTier(activeTier)} className="gap-2" disabled={streaming}>
-                    <Lock size={13} />Approve tier
-                  </Button>
-                </>
-              )}
-              {statuses[activeTier] === 'approved' && <Badge variant="success">Approved</Badge>}
-            </div>
-          </div>
-=======
   // ── Skeleton sidebar helpers ─────────────────────────────────────────────────
   const skeletonByType = ENTITY_TYPES.reduce<Record<string, SkeletonEntity[]>>((acc, t) => {
     acc[t] = (skeleton?.entities ?? []).filter(e => e.type === t)
@@ -716,7 +648,6 @@ export default function BibleWorkshopPage() {
                   {statuses[tierIdx] === 'approved' && <Badge variant="success">Approved</Badge>}
                 </div>
               </div>
->>>>>>> eff70c1 (Redesign Bible Workshop: 5-stage flow with per-act and per-chapter generation)
 
               <Card className="min-h-[300px]">
                 <CardContent className="p-5">
@@ -735,31 +666,6 @@ export default function BibleWorkshopPage() {
                 </CardContent>
               </Card>
 
-<<<<<<< HEAD
-          {statuses[activeTier] === 'review' && (
-            <div className="space-y-2">
-              <Separator />
-              <p className="text-xs text-muted-foreground pt-2">
-                Inject a directive — saved to directives.md, agent re-runs incorporating it.
-              </p>
-              <div className="flex gap-2 flex-wrap">
-                <textarea
-                  value={directive}
-                  onChange={e => setDirective(e.target.value)}
-                  placeholder='e.g. "Add a merchant who joins in Acre and dies in Constantinople…"'
-                  rows={2}
-                  disabled={streaming}
-                  className="flex-1 min-w-0 resize-none rounded-md border border-input bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                />
-                <div className="flex gap-2 w-full sm:w-auto">
-                  <Button variant="outline" size="sm" className="flex-1 sm:flex-none" onClick={() => editTier(activeTier)} disabled={!directive.trim() || streaming}>
-                    Edit current
-                  </Button>
-                  <Button variant="outline" size="sm" className="flex-1 sm:flex-none" onClick={injectAndRerun} disabled={!directive.trim() || streaming}>
-                    Inject &amp; re-run
-                  </Button>
-                </div>
-=======
               {statuses[tierIdx] === 'review' && (
                 <div className="space-y-2">
                   <Separator />
@@ -804,7 +710,6 @@ export default function BibleWorkshopPage() {
                     : <><Play size={13} />{skeletonExists ? 'Re-run' : 'Extract skeleton'}</>
                   }
                 </Button>
->>>>>>> eff70c1 (Redesign Bible Workshop: 5-stage flow with per-act and per-chapter generation)
               </div>
 
               {miniConsolError && (
@@ -1133,15 +1038,8 @@ export default function BibleWorkshopPage() {
                 <div className="space-y-2">
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
-<<<<<<< HEAD
-                      <span className={cn(
-                        'flex items-center justify-center w-5 h-5 rounded-full text-xs font-bold shrink-0',
-                        bibleExists ? 'bg-emerald-500/20 text-emerald-500' : 'bg-muted text-muted-foreground'
-                      )}>1</span>
-=======
                       <span className={cn('flex items-center justify-center w-5 h-5 rounded-full text-xs font-bold',
                         bibleExists ? 'bg-emerald-500/20 text-emerald-500' : 'bg-muted text-muted-foreground')}>1</span>
->>>>>>> eff70c1 (Redesign Bible Workshop: 5-stage flow with per-act and per-chapter generation)
                       <span className="text-sm font-medium">Consolidate entity ledger</span>
                       {bibleExists && <CheckCircle size={13} className="text-emerald-500 shrink-0" />}
                     </div>
@@ -1161,12 +1059,7 @@ export default function BibleWorkshopPage() {
                 <div className="space-y-2">
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
-<<<<<<< HEAD
-                      <span className={cn(
-                        'flex items-center justify-center w-5 h-5 rounded-full text-xs font-bold shrink-0',
-=======
                       <span className={cn('flex items-center justify-center w-5 h-5 rounded-full text-xs font-bold',
->>>>>>> eff70c1 (Redesign Bible Workshop: 5-stage flow with per-act and per-chapter generation)
                         (p2Status === 'researched' || p2Status === 'approved') ? 'bg-emerald-500/20 text-emerald-500'
                           : bibleExists ? 'bg-muted text-foreground' : 'bg-muted text-muted-foreground/40')}>2</span>
                       <span className={cn('text-sm font-medium', !bibleExists && 'text-muted-foreground/40')}>
@@ -1186,17 +1079,9 @@ export default function BibleWorkshopPage() {
                   </div>
                 </div>
 
-<<<<<<< HEAD
-                {/* Step 3: Approve */}
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <span className={cn(
-                      'flex items-center justify-center w-5 h-5 rounded-full text-xs font-bold shrink-0',
-=======
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <span className={cn('flex items-center justify-center w-5 h-5 rounded-full text-xs font-bold',
->>>>>>> eff70c1 (Redesign Bible Workshop: 5-stage flow with per-act and per-chapter generation)
                       p2Approved ? 'bg-emerald-500/20 text-emerald-500'
                         : (p2Status === 'researched') ? 'bg-muted text-foreground' : 'bg-muted text-muted-foreground/40')}>3</span>
                     <span className={cn('text-sm font-medium', !bibleExists && 'text-muted-foreground/40')}>
@@ -1228,45 +1113,6 @@ export default function BibleWorkshopPage() {
         </div>
       </div>
 
-<<<<<<< HEAD
-      {/* ── Mobile ledger overlay ── */}
-      {ledgerOpen && (
-        <>
-          <div
-            className="md:hidden fixed inset-0 z-20 bg-black/50"
-            onClick={() => setLedgerOpen(false)}
-          />
-          <aside className="md:hidden fixed inset-y-0 right-0 z-30 w-72 bg-background border-l border-border flex flex-col">
-            <div className="px-4 py-4 border-b border-border flex items-center justify-between shrink-0">
-              <div>
-                <h3 className="text-sm font-medium">Entity Ledger</h3>
-                <p className="text-xs text-muted-foreground">
-                  {entityCount > 0 ? `${entityCount} entities` : 'Populated in Phase 2'}
-                </p>
-              </div>
-              <button
-                onClick={() => setLedgerOpen(false)}
-                className="p-1 text-muted-foreground hover:text-foreground transition-colors"
-              >
-                <X size={18} />
-              </button>
-            </div>
-            <LedgerBody {...ledgerProps} />
-          </aside>
-        </>
-      )}
-
-      {/* ── Desktop entity ledger sidebar ── */}
-      <div className="hidden md:flex md:flex-col md:w-72 md:shrink-0 border-l border-border">
-        <div className="px-4 py-4 border-b border-border shrink-0">
-          <h3 className="text-sm font-medium">Entity Ledger</h3>
-          <p className="text-xs text-muted-foreground">
-            {entityCount > 0 ? `${entityCount} entities` : 'Populated in Phase 2'}
-          </p>
-        </div>
-        <LedgerBody {...ledgerProps} />
-      </div>
-=======
       {/* ── Sidebar ── */}
       {activeStage === 'scenes' ? (
         /* Skeleton entity sidebar (read-only reference) */
@@ -1428,7 +1274,6 @@ export default function BibleWorkshopPage() {
           </div>
         </div>
       )}
->>>>>>> eff70c1 (Redesign Bible Workshop: 5-stage flow with per-act and per-chapter generation)
     </div>
   )
 }
