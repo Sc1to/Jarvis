@@ -56,6 +56,30 @@ Do not rephrase, restructure, summarise, or rewrite anything you were not asked 
 If you are unsure what to change, change as little as possible.
 Output only the modified document. No preamble, no explanation."""
 
+SCENE_WRITER_SYSTEM = """You are a scene writer for a novel. Write the full prose for one specific scene.
+
+Rules:
+- Write ONLY this scene — no transitions, no section headers, no scene number
+- Use specific character names, locations, and facts from the story bible and North Star
+- Match the Entry and Exit states from the scene plan exactly — Exit is your QA contract
+- Third person past tense unless the North Star specifies otherwise
+- Output only the prose — no metadata, no preamble"""
+
+SCENE_BIBLE_SYNC_SYSTEM = """You are a story bible updater. Given an approved scene and the current entity skeleton, identify any NEW entities in the scene not yet in the skeleton.
+
+Output ONLY valid JSON:
+{
+  "new_entities": [
+    {"id": "CHAR_004", "name": "full name", "type": "character|location|faction|object", "aliases": [], "coreFacts": {}, "appearsInActs": []}
+  ]
+}
+
+Rules:
+- Only list entities NOT already in the skeleton (check by name and all aliases)
+- IDs continue from the highest existing ID of that type (e.g. if CHAR_003 exists, next is CHAR_004)
+- If no new entities, return {"new_entities": []}
+- Output ONLY the JSON — no preamble, no explanation, no markdown fences"""
+
 MINI_CONSOLIDATOR_SYSTEM = """You are a story bible extractor. Extract a structured entity skeleton from a novel's North Star document and act breakdown.
 
 Output ONLY valid JSON — no preamble, no fences, no commentary.
@@ -721,6 +745,10 @@ def _tier4_chapter_path(book_id: str, chapter: int) -> str:
     return os.path.join(_tier4_dir(book_id), f"chapter_{chapter:02d}.md")
 
 
+def _tier4_scene_path(book_id: str, chapter: int, scene: int) -> str:
+    return os.path.join(_tier4_dir(book_id), f"chapter_{chapter:02d}_scene_{scene:02d}.md")
+
+
 def _tier4_status_path(book_id: str) -> str:
     return os.path.join(_tier4_dir(book_id), "status.json")
 
@@ -772,6 +800,8 @@ def get_tier4_status(book_id: str):
     status = _read_tier4_status(book_id)
     for ch in status.get("chapters", []):
         ch["has_content"] = os.path.exists(_tier4_chapter_path(book_id, ch["number"]))
+        for s in ch.get("scenes", []):
+            s["has_content"] = os.path.exists(_tier4_scene_path(book_id, ch["number"], s["number"]))
     return status
 
 
@@ -848,10 +878,18 @@ def approve_tier4_chapter(book_id: str, body: ApproveChapterBody):
     with open(_tier4_chapter_path(book_id, body.chapter), "w") as f:
         f.write(body.content)
 
+    # Parse scene headings from the plan to create scene entries
+    scene_pattern = re.compile(r'^### Scene (\d+)\s*[—–-]\s*(.+)', re.MULTILINE)
+    scenes = [
+        {"number": int(m.group(1)), "title": m.group(2).strip(), "approved": False}
+        for m in scene_pattern.finditer(body.content)
+    ]
+
     status = _read_tier4_status(book_id)
     for ch in status.get("chapters", []):
         if ch["number"] == body.chapter:
-            ch["approved"] = True
+            ch["scenes"] = scenes
+            # ch["approved"] stays False — set True when all scenes approved
             break
 
     _save_tier4_status(book_id, status)
@@ -861,9 +899,9 @@ def approve_tier4_chapter(book_id: str, body: ApproveChapterBody):
     rel_chapter = os.path.relpath(_tier4_chapter_path(book_id, body.chapter), book_dir)
     rel_status = os.path.relpath(_tier4_status_path(book_id), book_dir)
     repo.index.add([rel_chapter, rel_status])
-    repo.index.commit(f"Approve Tier 4 Chapter {body.chapter} scenes")
+    repo.index.commit(f"Lock scene plan — Chapter {body.chapter} ({len(scenes)} scenes)")
 
-    return {"ok": True}
+    return {"ok": True, "scenes": len(scenes)}
 
 
 class EditChapterBody(BaseModel):
@@ -901,6 +939,200 @@ def edit_tier4_chapter(book_id: str, body: EditChapterBody, user: str = Depends(
             yield f'data: {json.dumps({"type": "error", "message": str(e) or type(e).__name__})}\n\n'
             return
         with open(chapter_path, "w") as f:
+            f.write(full_text)
+        yield f'data: {json.dumps({"type": "done"})}\n\n'
+
+    return StreamingResponse(generate(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+# ── Individual scene endpoints ─────────────────────────────────────────────────
+
+class RunSceneBody(BaseModel):
+    scene: int
+
+
+@router.post("/books/{book_id}/phase1/tier4/chapter/{chapter_num}/run-scene")
+def run_scene(book_id: str, chapter_num: int, body: RunSceneBody, user: str = Depends(current_user)):
+    book_dir = db.data_dir(book_id)
+    ns_path = os.path.join(book_dir, "north_star.md")
+    north_star = open(ns_path).read() if os.path.exists(ns_path) else ""
+    skeleton = _read_skeleton(book_id)
+    entity_summary = _format_skeleton_for_context(skeleton)
+    chapter_summary = _get_chapter_summary(book_id, chapter_num)
+
+    # Extract this scene's section from the plan
+    plan_path = _tier4_chapter_path(book_id, chapter_num)
+    scene_plan_section = ""
+    if os.path.exists(plan_path):
+        plan = open(plan_path).read()
+        m = re.search(
+            r'^(### Scene ' + str(body.scene) + r'\s*[—–-].*?)(?=^### Scene \d+|\Z)',
+            plan, re.MULTILINE | re.DOTALL
+        )
+        if m:
+            scene_plan_section = m.group(1).strip()
+
+    # Tail of previous scene for continuity
+    prev_scene_tail = ""
+    if body.scene > 1:
+        prev_path = _tier4_scene_path(book_id, chapter_num, body.scene - 1)
+        if os.path.exists(prev_path):
+            text = open(prev_path).read()
+            prev_scene_tail = text[-600:] if len(text) > 600 else text
+
+    context = f"## North Star\n\n{north_star}"
+    if entity_summary:
+        context += f"\n\n## Story Bible — Entities\n\n{entity_summary}"
+    if chapter_summary:
+        context += f"\n\n## Chapter Summary\n\n{chapter_summary}"
+    if prev_scene_tail:
+        context += f"\n\n## Previous Scene (ending)\n\n…{prev_scene_tail}"
+    context += f"\n\n## Scene to Write\n\n{scene_plan_section or f'Scene {body.scene} of Chapter {chapter_num}'}"
+
+    messages = [{"role": "user", "content": context + "\n\nWrite this scene in full prose now."}]
+    provider = db.get_setting("agent_bible_agent_provider")
+    model = db.get_setting("agent_bible_agent_model")
+
+    async def generate():
+        if not provider or not model:
+            yield f'data: {json.dumps({"type": "error", "message": "Bible Agent has no model assigned."})}\n\n'
+            return
+        full_text = ""
+        try:
+            async for token in llm.provider_tokens(provider, model, messages, SCENE_WRITER_SYSTEM, user):
+                full_text += token
+                yield f'data: {json.dumps({"type": "token", "content": token})}\n\n'
+        except Exception as e:
+            yield f'data: {json.dumps({"type": "error", "message": str(e) or type(e).__name__})}\n\n'
+            return
+        os.makedirs(_tier4_dir(book_id), exist_ok=True)
+        with open(_tier4_scene_path(book_id, chapter_num, body.scene), "w") as f:
+            f.write(full_text)
+        yield f'data: {json.dumps({"type": "done"})}\n\n'
+
+    return StreamingResponse(generate(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+class ApproveSceneBody(BaseModel):
+    content: str
+
+
+@router.post("/books/{book_id}/phase1/tier4/chapter/{chapter_num}/scene/{scene_num}/approve")
+def approve_scene(book_id: str, chapter_num: int, scene_num: int, body: ApproveSceneBody, user: str = Depends(current_user)):
+    async def generate():
+        os.makedirs(_tier4_dir(book_id), exist_ok=True)
+        with open(_tier4_scene_path(book_id, chapter_num, scene_num), "w") as f:
+            f.write(body.content)
+
+        status = _read_tier4_status(book_id)
+        chapter_complete = False
+        for ch in status.get("chapters", []):
+            if ch["number"] == chapter_num:
+                for s in ch.get("scenes", []):
+                    if s["number"] == scene_num:
+                        s["approved"] = True
+                        break
+                if all(s.get("approved") for s in ch.get("scenes", [])):
+                    ch["approved"] = True
+                    chapter_complete = True
+                break
+        _save_tier4_status(book_id, status)
+
+        book_dir = db.data_dir(book_id)
+        repo = Repo(book_dir)
+        rel_scene = os.path.relpath(_tier4_scene_path(book_id, chapter_num, scene_num), book_dir)
+        rel_status = os.path.relpath(_tier4_status_path(book_id), book_dir)
+        repo.index.add([rel_scene, rel_status])
+        repo.index.commit(f"Approve Chapter {chapter_num} Scene {scene_num}")
+
+        yield f'data: {json.dumps({"type": "saved", "chapter_complete": chapter_complete})}\n\n'
+
+        # Bible sync — extract new entities from this scene
+        yield f'data: {json.dumps({"type": "syncing_bible"})}\n\n'
+
+        provider = db.get_setting("agent_bible_agent_provider")
+        model = db.get_setting("agent_bible_agent_model")
+        if not provider or not model:
+            yield f'data: {json.dumps({"type": "bible_synced", "new_entities": 0})}\n\n'
+            return
+
+        skeleton = _read_skeleton(book_id)
+        tier3_status = _read_tier3_status(book_id)
+        act_num = next(
+            (a["act"] for a in tier3_status.get("acts", [])
+             for ch in a.get("chapters", []) if ch["number"] == chapter_num),
+            None
+        )
+
+        sync_messages = [{"role": "user", "content": (
+            f"## Current Entity Skeleton\n\n{json.dumps(skeleton.get('entities', []), indent=2)}\n\n"
+            f"## Approved Scene (Chapter {chapter_num}, Scene {scene_num})\n\n{body.content}\n\n"
+            "List any new entities in this scene not already in the skeleton."
+        )}]
+
+        full_sync = ""
+        try:
+            async for token in llm.provider_tokens(provider, model, sync_messages, SCENE_BIBLE_SYNC_SYSTEM, user):
+                full_sync += token
+        except Exception as e:
+            yield f'data: {json.dumps({"type": "bible_sync_error", "message": str(e)})}\n\n'
+            return
+
+        try:
+            result = _extract_json_skeleton(full_sync)
+            new_entities = result.get("new_entities", [])
+            if new_entities:
+                if act_num is not None:
+                    for e in new_entities:
+                        if act_num not in e.get("appearsInActs", []):
+                            e.setdefault("appearsInActs", []).append(act_num)
+                skeleton.setdefault("entities", []).extend(new_entities)
+                with open(_skeleton_path(book_id), "w") as f:
+                    json.dump(skeleton, f, indent=2)
+                rel_skel = os.path.relpath(_skeleton_path(book_id), book_dir)
+                repo.index.add([rel_skel])
+                repo.index.commit(f"Bible sync — Ch{chapter_num} Sc{scene_num} (+{len(new_entities)} entities)")
+            yield f'data: {json.dumps({"type": "bible_synced", "new_entities": len(new_entities)})}\n\n'
+        except Exception as e:
+            yield f'data: {json.dumps({"type": "bible_sync_error", "message": str(e)})}\n\n'
+
+    return StreamingResponse(generate(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+class EditSceneBody(BaseModel):
+    directive: str
+
+
+@router.post("/books/{book_id}/phase1/tier4/chapter/{chapter_num}/scene/{scene_num}/edit")
+def edit_scene(book_id: str, chapter_num: int, scene_num: int, body: EditSceneBody, user: str = Depends(current_user)):
+    scene_path = _tier4_scene_path(book_id, chapter_num, scene_num)
+    if not os.path.exists(scene_path):
+        from fastapi import HTTPException
+        raise HTTPException(400, "No scene content yet — run the agent first")
+    current = open(scene_path).read()
+    provider = db.get_setting("agent_bible_agent_provider")
+    model = db.get_setting("agent_bible_agent_model")
+    messages = [{"role": "user", "content": (
+        f"Make only this change to the scene below: {body.directive}\n\n"
+        f"Copy everything else verbatim.\n\n## Scene\n\n{current}"
+    )}]
+
+    async def generate():
+        if not provider or not model:
+            yield f'data: {json.dumps({"type": "error", "message": "No model assigned."})}\n\n'
+            return
+        full_text = ""
+        try:
+            async for token in llm.provider_tokens(provider, model, messages, TIER_EDITOR_SYSTEM, user):
+                full_text += token
+                yield f'data: {json.dumps({"type": "token", "content": token})}\n\n'
+        except Exception as e:
+            yield f'data: {json.dumps({"type": "error", "message": str(e) or type(e).__name__})}\n\n'
+            return
+        with open(scene_path, "w") as f:
             f.write(full_text)
         yield f'data: {json.dumps({"type": "done"})}\n\n'
 

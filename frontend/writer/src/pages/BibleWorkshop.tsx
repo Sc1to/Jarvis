@@ -41,7 +41,8 @@ interface Bible { ledger: Record<string, BibleEntity>; metadata?: Record<string,
 interface SkeletonEntity { id: string; name: string; type: string; aliases?: string[]; coreFacts?: Record<string, string>; appearsInActs?: number[] }
 interface Skeleton { acts: { number: number; title: string }[]; entities: SkeletonEntity[] }
 interface ActStatus { act: number; title: string; approved: boolean; chapters: { number: number; title: string }[]; has_content?: boolean }
-interface ChapterStatus { number: number; title: string; approved: boolean; has_content?: boolean }
+interface SceneEntry { number: number; title: string; approved: boolean; has_content?: boolean }
+interface ChapterStatus { number: number; title: string; approved: boolean; has_content?: boolean; scenes?: SceneEntry[] }
 
 const TYPE_ICON: Record<string, typeof BookOpen> = {
   character: Users, location: MapPin, faction: Users, object: BookOpen,
@@ -109,11 +110,18 @@ export default function BibleWorkshopPage() {
   const [actRunning, setActRunning] = useState<number | null>(null)
   const [actDirective, setActDirective] = useState('')
 
-  // ── Chapter management state (Tier 4) ───────────────────────────────────────
+  // ── Chapter management state (Tier 4 — scene planning) ─────────────────────
   const [activeChapterNum, setActiveChapterNum] = useState<number | null>(null)
   const [chapterContents, setChapterContents] = useState<Record<number, string>>({})
   const [chapterRunning, setChapterRunning] = useState<number | null>(null)
   const [chapterDirective, setChapterDirective] = useState('')
+
+  // ── Scene management state (individual scene generation) ─────────────────────
+  const [sceneContents, setSceneContents] = useState<Record<string, string>>({})
+  const [sceneRunning, setSceneRunning] = useState<string | null>(null)
+  const [sceneSyncing, setSceneSyncing] = useState<string | null>(null)
+  const [sceneDirective, setSceneDirective] = useState('')
+  const [expandedScenes, setExpandedScenes] = useState<Set<string>>(new Set())
 
   // ── Entity sidebar state ─────────────────────────────────────────────────────
   const [addingEntity, setAddingEntity] = useState(false)
@@ -489,6 +497,87 @@ export default function BibleWorkshopPage() {
       setChapterContents(prev => ({ ...prev, [chapterNum]: '⚠ Connection error' }))
     } finally {
       setChapterRunning(null)
+    }
+  }
+
+  // ── Scene actions ────────────────────────────────────────────────────────────
+  function sceneKey(chapterNum: number, sceneNum: number) { return `${chapterNum}_${sceneNum}` }
+
+  async function runScene(chapterNum: number, sceneNum: number) {
+    const key = sceneKey(chapterNum, sceneNum)
+    setSceneRunning(key)
+    setSceneContents(prev => ({ ...prev, [key]: '' }))
+    try {
+      const resp = await fetch(`${API}/books/${bookId}/phase1/tier4/chapter/${chapterNum}/run-scene`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scene: sceneNum }),
+      })
+      let text = ''
+      for await (const event of readSSE(resp)) {
+        if (event.type === 'token' && event.content) {
+          text += event.content
+          setSceneContents(prev => ({ ...prev, [key]: text }))
+        } else if (event.type === 'error') {
+          setSceneContents(prev => ({ ...prev, [key]: `⚠ ${event.message}` }))
+          break
+        }
+      }
+    } catch {
+      setSceneContents(prev => ({ ...prev, [key]: '⚠ Connection error' }))
+    } finally {
+      setSceneRunning(null)
+      refetchTier4()
+    }
+  }
+
+  async function approveScene(chapterNum: number, sceneNum: number) {
+    const key = sceneKey(chapterNum, sceneNum)
+    const content = sceneContents[key] ?? ''
+    setSceneSyncing(key)
+    try {
+      const resp = await fetch(
+        `${API}/books/${bookId}/phase1/tier4/chapter/${chapterNum}/scene/${sceneNum}/approve`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content }) }
+      )
+      for await (const event of readSSE(resp)) {
+        if (event.type === 'saved' || event.type === 'syncing_bible' || event.type === 'bible_synced' || event.type === 'bible_sync_error') {
+          // events consumed — UI shows syncing badge
+        }
+      }
+    } catch { /* ignore */ } finally {
+      setSceneSyncing(null)
+      await refetchTier4()
+      await refetchSkeleton()
+    }
+  }
+
+  async function editScene(chapterNum: number, sceneNum: number) {
+    if (!sceneDirective.trim()) return
+    const key = sceneKey(chapterNum, sceneNum)
+    const d = sceneDirective
+    setSceneDirective('')
+    setSceneRunning(key)
+    setSceneContents(prev => ({ ...prev, [key]: '' }))
+    try {
+      const resp = await fetch(
+        `${API}/books/${bookId}/phase1/tier4/chapter/${chapterNum}/scene/${sceneNum}/edit`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ directive: d }) }
+      )
+      let text = ''
+      for await (const event of readSSE(resp)) {
+        if (event.type === 'token' && event.content) {
+          text += event.content
+          setSceneContents(prev => ({ ...prev, [key]: text }))
+        } else if (event.type === 'error') {
+          setSceneContents(prev => ({ ...prev, [key]: `⚠ ${event.message}` }))
+          break
+        }
+      }
+    } catch {
+      setSceneContents(prev => ({ ...prev, [key]: '⚠ Connection error' }))
+    } finally {
+      setSceneRunning(null)
     }
   }
 
@@ -908,26 +997,24 @@ export default function BibleWorkshopPage() {
             </div>
           )}
 
-          {/* ── Scenes panel (Tier 4 — per chapter) ── */}
+          {/* ── Scenes panel (Tier 4) ── */}
           {activeStage === 'scenes' && (
             <div className="space-y-3">
               <div>
-                <h2 className="font-semibold">Scenes — per chapter</h2>
-                <p className="text-sm text-muted-foreground">Generate and approve scene lists chapter by chapter.</p>
+                <h2 className="font-semibold">Scenes — one scene at a time</h2>
+                <p className="text-sm text-muted-foreground">Plan scenes per chapter, then generate and approve each scene. Approving syncs the story bible.</p>
               </div>
 
               {!tier4Status?.chapters?.length ? (
-                <Card className="bg-muted/30">
-                  <CardContent className="p-4">
-                    <p className="text-sm text-muted-foreground italic">No chapters found — approve all acts first.</p>
-                  </CardContent>
-                </Card>
+                <Card className="bg-muted/30"><CardContent className="p-4">
+                  <p className="text-sm text-muted-foreground italic">No chapters found — approve all acts first.</p>
+                </CardContent></Card>
               ) : (
                 tier4Status.chapters.map(chInfo => {
                   const isExpanded = activeChapterNum === chInfo.number
-                  const content = chapterContents[chInfo.number]
-                  const isRunning = chapterRunning === chInfo.number
-                  const hasLocalContent = content !== undefined
+                  const planContent = chapterContents[chInfo.number]
+                  const isPlanRunning = chapterRunning === chInfo.number
+                  const hasScenes = !!(chInfo.scenes?.length)
 
                   return (
                     <div key={chInfo.number} className="border border-border rounded-lg overflow-hidden">
@@ -939,79 +1026,151 @@ export default function BibleWorkshopPage() {
                         <div className="flex items-center gap-2.5">
                           {chInfo.approved
                             ? <CheckCircle size={14} className="text-emerald-500 shrink-0" />
-                            : isRunning
+                            : isPlanRunning
                               ? <Loader2 size={14} className="animate-spin text-muted-foreground shrink-0" />
                               : <div className="w-3.5 h-3.5 rounded-full border border-muted-foreground/40 shrink-0" />
                           }
                           <span className="text-sm font-medium">Ch {chInfo.number} — {chInfo.title}</span>
+                          {hasScenes && (
+                            <span className="text-xs text-muted-foreground">
+                              ({chInfo.scenes!.filter(s => s.approved).length}/{chInfo.scenes!.length} scenes)
+                            </span>
+                          )}
                         </div>
                         <ChevronRight size={14} className={cn('text-muted-foreground/60 transition-transform duration-150', isExpanded && 'rotate-90')} />
                       </button>
 
-                      {/* Chapter detail */}
                       {isExpanded && (
                         <div className="border-t border-border px-4 py-4 space-y-3">
-                          {chInfo.approved ? (
-                            <div className="flex items-center justify-between">
-                              <Badge variant="success" className="gap-1"><CheckCircle size={11} />Approved</Badge>
-                              <Button size="sm" variant="outline" onClick={() => runChapter(chInfo.number)} disabled={isRunning} className="gap-2">
-                                <Play size={12} />Re-run
-                              </Button>
-                            </div>
-                          ) : (
+                          {/* ── Phase A: plan scenes ── */}
+                          {!hasScenes && (
                             <>
-                              <div className="flex items-center justify-end gap-2">
-                                {isRunning ? (
-                                  <Badge variant="secondary" className="gap-1.5">
-                                    <Loader2 size={12} className="animate-spin" />Agent running…
-                                  </Badge>
-                                ) : (
-                                  <Button size="sm" onClick={() => runChapter(chInfo.number)} className="gap-2">
-                                    <Play size={13} />{chInfo.has_content || hasLocalContent ? 'Re-run' : 'Run chapter'}
-                                  </Button>
-                                )}
-                                {hasLocalContent && !isRunning && (
-                                  <Button size="sm" onClick={() => approveChapter(chInfo.number)} className="gap-2">
-                                    <Lock size={13} />Approve
-                                  </Button>
-                                )}
-                              </div>
-
-                              <Card className="min-h-[180px]">
-                                <CardContent className="p-4">
-                                  {!hasLocalContent && !(chInfo as { has_content?: boolean }).has_content && (
-                                    <p className="text-sm text-muted-foreground italic">Run the agent to generate scenes for this chapter.</p>
-                                  )}
-                                  {!hasLocalContent && chInfo.has_content && (
-                                    <p className="text-sm text-muted-foreground italic">Content exists from a previous session. Re-run to reload.</p>
-                                  )}
-                                  {hasLocalContent && (
-                                    <pre className="text-sm whitespace-pre-wrap font-mono leading-relaxed text-foreground">
-                                      {content}
-                                      {isRunning && <span className="animate-pulse">▋</span>}
-                                    </pre>
-                                  )}
-                                </CardContent>
-                              </Card>
-
-                              {hasLocalContent && !isRunning && (
-                                <div className="space-y-2">
-                                  <Separator />
-                                  <div className="flex gap-2 pt-1">
-                                    <textarea
-                                      value={chapterDirective}
-                                      onChange={e => setChapterDirective(e.target.value)}
-                                      placeholder='e.g. "Add a moment where Marcus sees the fleet from the harbour wall…"'
-                                      rows={2}
-                                      className="flex-1 resize-none rounded-md border border-input bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                                    />
-                                    <Button variant="outline" size="sm" onClick={() => editChapter(chInfo.number)} disabled={!chapterDirective.trim()}>
-                                      Edit current
+                              <div className="flex items-center justify-between">
+                                <p className="text-xs text-muted-foreground">Step 1 — generate the scene list for this chapter.</p>
+                                <div className="flex gap-2">
+                                  {isPlanRunning ? (
+                                    <Badge variant="secondary" className="gap-1.5"><Loader2 size={12} className="animate-spin" />Planning…</Badge>
+                                  ) : (
+                                    <Button size="sm" onClick={() => runChapter(chInfo.number)} className="gap-2">
+                                      <Play size={13} />{chInfo.has_content || planContent !== undefined ? 'Re-plan' : 'Plan scenes'}
                                     </Button>
-                                  </div>
+                                  )}
+                                  {planContent !== undefined && !isPlanRunning && (
+                                    <Button size="sm" onClick={() => approveChapter(chInfo.number)} className="gap-2">
+                                      <Lock size={13} />Lock plan
+                                    </Button>
+                                  )}
                                 </div>
+                              </div>
+                              {planContent !== undefined && (
+                                <Card className="min-h-[140px]"><CardContent className="p-4">
+                                  <pre className="text-sm whitespace-pre-wrap font-mono leading-relaxed text-foreground">
+                                    {planContent}{isPlanRunning && <span className="animate-pulse">▋</span>}
+                                  </pre>
+                                </CardContent></Card>
+                              )}
+                              {planContent === undefined && chInfo.has_content && (
+                                <p className="text-xs text-muted-foreground italic">Plan exists from a previous session. Re-plan or reload to see it.</p>
                               )}
                             </>
+                          )}
+
+                          {/* ── Phase B: individual scenes ── */}
+                          {hasScenes && (
+                            <div className="space-y-2">
+                              {chInfo.scenes!.map(scInfo => {
+                                const key = sceneKey(chInfo.number, scInfo.number)
+                                const isScExpanded = expandedScenes.has(key)
+                                const scContent = sceneContents[key]
+                                const isScRunning = sceneRunning === key
+                                const isScSyncing = sceneSyncing === key
+                                const hasLocalSc = scContent !== undefined
+
+                                return (
+                                  <div key={scInfo.number} className="border border-border/60 rounded-md overflow-hidden">
+                                    <button
+                                      className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-muted/20 transition-colors text-left"
+                                      onClick={() => setExpandedScenes(prev => {
+                                        const next = new Set(prev)
+                                        next.has(key) ? next.delete(key) : next.add(key)
+                                        return next
+                                      })}
+                                    >
+                                      <div className="flex items-center gap-2">
+                                        {scInfo.approved
+                                          ? <CheckCircle size={12} className="text-emerald-500 shrink-0" />
+                                          : isScRunning || isScSyncing
+                                            ? <Loader2 size={12} className="animate-spin text-muted-foreground shrink-0" />
+                                            : <div className="w-3 h-3 rounded-full border border-muted-foreground/40 shrink-0" />
+                                        }
+                                        <span className="text-xs font-medium">Scene {scInfo.number} — {scInfo.title}</span>
+                                      </div>
+                                      <ChevronRight size={12} className={cn('text-muted-foreground/60 transition-transform duration-150', isScExpanded && 'rotate-90')} />
+                                    </button>
+
+                                    {isScExpanded && (
+                                      <div className="border-t border-border/60 px-3 py-3 space-y-2.5">
+                                        <div className="flex items-center justify-end gap-2 flex-wrap">
+                                          {isScSyncing && (
+                                            <Badge variant="secondary" className="gap-1.5"><Loader2 size={11} className="animate-spin" />Syncing bible…</Badge>
+                                          )}
+                                          {isScRunning && !isScSyncing && (
+                                            <Badge variant="secondary" className="gap-1.5"><Loader2 size={11} className="animate-spin" />Writing…</Badge>
+                                          )}
+                                          {!isScRunning && !isScSyncing && (
+                                            <>
+                                              <Button size="sm" variant="outline" onClick={() => runScene(chInfo.number, scInfo.number)} className="gap-1.5 h-7 text-xs">
+                                                <Play size={11} />{hasLocalSc || scInfo.has_content ? 'Re-run' : 'Write scene'}
+                                              </Button>
+                                              {hasLocalSc && !scInfo.approved && (
+                                                <Button size="sm" onClick={() => approveScene(chInfo.number, scInfo.number)} className="gap-1.5 h-7 text-xs">
+                                                  <Lock size={11} />Approve + sync
+                                                </Button>
+                                              )}
+                                              {scInfo.approved && (
+                                                <Badge variant="success" className="gap-1"><CheckCircle size={11} />Approved</Badge>
+                                              )}
+                                            </>
+                                          )}
+                                        </div>
+
+                                        {!hasLocalSc && !scInfo.has_content && (
+                                          <p className="text-xs text-muted-foreground italic">Run the agent to write this scene.</p>
+                                        )}
+                                        {!hasLocalSc && scInfo.has_content && (
+                                          <p className="text-xs text-muted-foreground italic">Content exists. Re-run to reload.</p>
+                                        )}
+                                        {hasLocalSc && (
+                                          <Card><CardContent className="p-3">
+                                            <pre className="text-sm whitespace-pre-wrap leading-relaxed text-foreground">
+                                              {scContent}{isScRunning && <span className="animate-pulse">▋</span>}
+                                            </pre>
+                                          </CardContent></Card>
+                                        )}
+
+                                        {hasLocalSc && !isScRunning && !isScSyncing && (
+                                          <>
+                                            <Separator />
+                                            <div className="flex gap-2">
+                                              <textarea
+                                                value={sceneDirective}
+                                                onChange={e => setSceneDirective(e.target.value)}
+                                                placeholder='e.g. "Lengthen the confrontation — more tension before the reveal"'
+                                                rows={2}
+                                                className="flex-1 resize-none rounded-md border border-input bg-transparent px-3 py-2 text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                              />
+                                              <Button variant="outline" size="sm" className="h-auto text-xs" onClick={() => editScene(chInfo.number, scInfo.number)} disabled={!sceneDirective.trim()}>
+                                                Edit
+                                              </Button>
+                                            </div>
+                                          </>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                )
+                              })}
+                            </div>
                           )}
                         </div>
                       )}
