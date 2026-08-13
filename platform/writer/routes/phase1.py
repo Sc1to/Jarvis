@@ -419,6 +419,8 @@ def mini_consolidate(book_id: str, user: str = Depends(current_user)):
         try:
             skeleton = _extract_json_skeleton(full_text)
         except Exception as e:
+            import logging
+            logging.getLogger(__name__).error("mini-consolidate parse fail:\n%s", full_text[:500])
             yield f'data: {json.dumps({"type": "error", "message": f"JSON parse error: {e}"})}\n\n'
             return
 
