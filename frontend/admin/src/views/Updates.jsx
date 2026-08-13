@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getUpdates, applyUpdates, gitPull, restartService, deployService, getServiceHealth } from '../api.js'
+import { getUpdates, applyUpdates, gitPull, restartService, deployService, getServiceHealth, getServicesStatus } from '../api.js'
 
 const SERVICES = ['admin', 'chat', 'writer', 'coding', 'trading', 'autocoder']
 
@@ -16,6 +16,7 @@ function fmtChecked(iso) {
 
 export default function Updates() {
   const [data, setData] = useState(null)
+  const [svcStatus, setSvcStatus] = useState(null)
   const [applying, setApplying] = useState(false)
   const [checking, setChecking] = useState(false)
   const [pulling, setPulling] = useState(false)
@@ -31,10 +32,12 @@ export default function Updates() {
 
   async function load() {
     setChecking(true)
+    setError(null)
     try {
-      const r = await getUpdates()
-      setData(r.data)
-      setError(null)
+      const [upd, status] = await Promise.allSettled([getUpdates(), getServicesStatus()])
+      if (upd.status === 'fulfilled') setData(upd.value.data)
+      else setError(upd.reason?.message ?? 'Failed to load updates')
+      if (status.status === 'fulfilled') setSvcStatus(status.value.data)
     } catch (e) {
       setError(e.message)
     } finally {
@@ -140,6 +143,58 @@ export default function Updates() {
       {error && <p className="text-red-400 text-sm">{error}</p>}
       {msg && <p className="text-green-400 text-sm">{msg}</p>}
       {data?.error && <p className="text-yellow-400 text-sm">Check failed: {data.error}</p>}
+
+      {/* Services status */}
+      <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 space-y-3">
+        <p className="text-sm font-medium">Service Status</p>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-gray-400 border-b border-gray-700">
+                <th className="text-left pb-2 pr-4">App</th>
+                <th className="text-left pb-2 pr-4">Backend</th>
+                <th className="text-left pb-2 pr-4">Frontend</th>
+                <th className="text-left pb-2 pr-4">Memory</th>
+                <th className="text-left pb-2">Model</th>
+              </tr>
+            </thead>
+            <tbody>
+              {svcStatus
+                ? ['admin', 'chat', 'writer', 'coding', 'trading', 'autocoder'].map(svc => {
+                    const s = svcStatus[svc]
+                    if (!s) return null
+                    return (
+                      <tr key={svc} className="border-b border-gray-700/50">
+                        <td className="py-1.5 pr-4 font-mono text-gray-300">{svc}</td>
+                        <td className="py-1.5 pr-4">
+                          <span className={s.backend === 'ok' ? 'text-green-400' : 'text-red-400'}>
+                            {s.backend === 'ok' ? '● up' : '● down'}
+                          </span>
+                        </td>
+                        <td className="py-1.5 pr-4">
+                          {s.frontend_built
+                            ? <span className="text-green-400">✓</span>
+                            : <span className="text-red-400">✗</span>}
+                        </td>
+                        <td className="py-1.5 pr-4 text-gray-300">
+                          {s.memory_mb != null ? `${s.memory_mb} MB` : <span className="text-gray-500">—</span>}
+                        </td>
+                        <td className="py-1.5">
+                          {s.model
+                            ? <span className={s.model_loaded ? 'text-green-400' : 'text-gray-400'}>
+                                {s.model}{s.model_loaded ? ' ●' : ''}
+                              </span>
+                            : <span className="text-gray-500">—</span>}
+                        </td>
+                      </tr>
+                    )
+                  })
+                : <tr><td colSpan={5} className="py-2 text-gray-500">Loading…</td></tr>}
+            </tbody>
+          </table>
+        </div>
+        <p className="text-xs text-gray-500">● in model column = loaded in Ollama VRAM</p>
+      </div>
 
       {/* Git pull */}
       <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 space-y-3">

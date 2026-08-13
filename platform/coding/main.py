@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from health import health_payload
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+DEFAULT_MODEL = "qwen2.5-coder:32b"
 
 START_TIME = time.time()
 DB_PATH = "/opt/platform/data/platform.db"
@@ -84,7 +85,7 @@ def set_prompt(key: str, body: dict):
 
 @app.get("/health")
 def health():
-    return health_payload(START_TIME, "0.1.0")
+    return health_payload(START_TIME, "0.1.0", model=DEFAULT_MODEL)
 
 
 # ── GitHub token ──────────────────────────────────────────────────────────────

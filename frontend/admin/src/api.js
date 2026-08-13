@@ -30,6 +30,7 @@ export const gitPull = () => api.post('/git/pull')
 export const restartService = (app) => api.post(`/services/${app}/restart`)
 export const deployService = (app) => api.post(`/services/${app}/deploy`)
 export const getServiceHealth = (app) => api.get(`/services/${app}/health`)
+export const getServicesStatus = () => api.get('/services/status')
 
 // Agents
 export const getAgents = () => api.get('/agents')
