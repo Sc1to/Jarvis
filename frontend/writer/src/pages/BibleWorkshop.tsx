@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
@@ -8,17 +8,27 @@ import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 import { readSSE } from '@/lib/sse'
 import { API } from '@/lib/api'
-import { ChevronRight, Play, CheckCircle, Lock, Loader2, BookOpen, MapPin, Users, X } from 'lucide-react'
+import { ChevronRight, Play, CheckCircle, Lock, Loader2, BookOpen, MapPin, Users, Plus, X } from 'lucide-react'
 
-const TIERS = [
-  { id: 1, label: 'Book',     question: 'What happens in this book?' },
-  { id: 2, label: 'Acts',     question: 'What happens in each act?' },
-  { id: 3, label: 'Chapters', question: 'What happens in each chapter?' },
-  { id: 4, label: 'Scenes',   question: 'What happens in each scene?' },
-]
-
+type Stage = 'book' | 'acts' | 'consolidate' | 'chapters' | 'scenes'
 type TierStatus = 'locked' | 'active' | 'running' | 'review' | 'approved'
 type P2Step = 'idle' | 'consolidating' | 'researching' | 'done'
+
+const STAGES: { id: Stage; label: string }[] = [
+  { id: 'book',        label: 'Book'        },
+  { id: 'acts',        label: 'Acts'        },
+  { id: 'consolidate', label: 'Consolidate' },
+  { id: 'chapters',    label: 'Chapters'    },
+  { id: 'scenes',      label: 'Scenes'      },
+]
+
+const STAGE_QUESTIONS: Record<Stage, string> = {
+  book:        'What happens in this book?',
+  acts:        'What happens in each act?',
+  consolidate: 'Extract the story bible skeleton.',
+  chapters:    'What happens in each chapter?',
+  scenes:      'What happens in each scene?',
+}
 
 interface TierEntry { content: string | null; approved: boolean; draft?: string | null }
 interface BibleEntity {
@@ -28,72 +38,25 @@ interface BibleEntity {
   lifecycle?: number[]
 }
 interface Bible { ledger: Record<string, BibleEntity>; metadata?: Record<string, unknown> }
+interface SkeletonEntity { id: string; name: string; type: string; aliases?: string[]; coreFacts?: Record<string, string>; appearsInActs?: number[] }
+interface Skeleton { acts: { number: number; title: string }[]; entities: SkeletonEntity[] }
+interface ActStatus { act: number; title: string; approved: boolean; chapters: { number: number; title: string }[]; has_content?: boolean }
+interface ChapterStatus { number: number; title: string; approved: boolean; has_content?: boolean }
 
 const TYPE_ICON: Record<string, typeof BookOpen> = {
-  character: Users,
-  location: MapPin,
-  faction: Users,
-  object: BookOpen,
+  character: Users, location: MapPin, faction: Users, object: BookOpen,
 }
 
-interface LedgerBodyProps {
-  sortedTypes: string[]
-  byType: Record<string, [string, BibleEntity][]>
-}
+const ENTITY_TYPES = ['character', 'location', 'faction', 'object'] as const
+type EntityType = typeof ENTITY_TYPES[number]
 
-function LedgerBody({ sortedTypes, byType }: LedgerBodyProps) {
-  return (
-    <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
-      {sortedTypes.length === 0 ? (
-        ['Characters', 'Locations', 'Factions'].map(type => (
-          <div key={type}>
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider py-1">{type}</p>
-            <Card className="bg-muted/30">
-              <CardContent className="px-3 py-2">
-                <p className="text-xs text-muted-foreground italic">Populated in Phase 2</p>
-              </CardContent>
-            </Card>
-          </div>
-        ))
-      ) : (
-        sortedTypes.map(type => {
-          const Icon = TYPE_ICON[type] ?? BookOpen
-          const entities = byType[type]
-          return (
-            <div key={type}>
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider py-1">
-                {type}s ({entities.length})
-              </p>
-              <div className="space-y-1">
-                {entities.map(([id, entity]) => (
-                  <div key={id} className="flex items-start gap-2 px-2 py-1.5 rounded-md hover:bg-muted/50 transition-colors">
-                    <Icon size={12} className="mt-0.5 shrink-0 text-muted-foreground" />
-                    <div className="min-w-0">
-                      <p className="text-xs font-medium truncate">{entity.name}</p>
-                      {entity.aliases && entity.aliases.length > 0 && (
-                        <p className="text-[10px] text-muted-foreground truncate">
-                          {entity.aliases.slice(0, 2).join(', ')}
-                        </p>
-                      )}
-                    </div>
-                    <span className="text-[9px] text-muted-foreground/60 ml-auto shrink-0">{id}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )
-        })
-      )}
-      {/* spacer so last entity isn't flush against bottom */}
-      <div className="h-2" />
-    </div>
-  )
-}
+const BLANK_DRAFT = { name: '', type: 'character' as EntityType, description: '', appearsInActs: '' }
 
 export default function BibleWorkshopPage() {
   const { bookId } = useParams<{ bookId: string }>()
   const qc = useQueryClient()
 
+  // ── Queries ──────────────────────────────────────────────────────────────────
   const { data: savedTiers } = useQuery<TierEntry[]>({
     queryKey: ['bible-tiers', bookId],
     queryFn: () => fetch(`${API}/books/${bookId}/phase1/bible/tiers`).then(r => r.json()),
@@ -111,47 +74,128 @@ export default function BibleWorkshopPage() {
     enabled: !!phase2Status?.bible_exists,
   })
 
-  const [contents, setContents] = useState<(string | null)[]>([null, null, null, null])
-  const [statuses, setStatuses] = useState<TierStatus[]>(['active', 'locked', 'locked', 'locked'])
-  const [activeTier, setActiveTier] = useState(0)
+  const { data: skeleton, refetch: refetchSkeleton } = useQuery<Skeleton | null>({
+    queryKey: ['bible-skeleton', bookId],
+    queryFn: () => fetch(`${API}/books/${bookId}/phase1/bible-skeleton`).then(r => r.json()),
+  })
+
+  const { data: tier3Status, refetch: refetchTier3 } = useQuery<{ acts: ActStatus[] } | null>({
+    queryKey: ['tier3-status', bookId],
+    queryFn: () => fetch(`${API}/books/${bookId}/phase1/tier3/status`).then(r => r.json()),
+  })
+
+  const { data: tier4Status, refetch: refetchTier4 } = useQuery<{ chapters: ChapterStatus[] } | null>({
+    queryKey: ['tier4-status', bookId],
+    queryFn: () => fetch(`${API}/books/${bookId}/phase1/tier4/status`).then(r => r.json()),
+  })
+
+  // ── Tier 1 & 2 local state ───────────────────────────────────────────────────
+  const [contents, setContents] = useState<(string | null)[]>([null, null])
+  const [statuses, setStatuses] = useState<TierStatus[]>(['active', 'locked'])
   const [streaming, setStreaming] = useState(false)
   const [directive, setDirective] = useState('')
   const [ledgerOpen, setLedgerOpen] = useState(false)
 
-  // Phase 2 state
+  // ── Stage state ──────────────────────────────────────────────────────────────
+  const [activeStage, setActiveStage] = useState<Stage>('book')
+  const hasSetInitial = useRef(false)
+
+  // ── Mini-consolidation state ─────────────────────────────────────────────────
+  const [miniConsolRunning, setMiniConsolRunning] = useState(false)
+  const [miniConsolError, setMiniConsolError] = useState<string | null>(null)
+
+  // ── Act management state (Tier 3) ────────────────────────────────────────────
+  const [activeActNum, setActiveActNum] = useState<number | null>(null)
+  const [actContents, setActContents] = useState<Record<number, string>>({})
+  const [actRunning, setActRunning] = useState<number | null>(null)
+  const [actDirective, setActDirective] = useState('')
+
+  // ── Chapter management state (Tier 4) ───────────────────────────────────────
+  const [activeChapterNum, setActiveChapterNum] = useState<number | null>(null)
+  const [chapterContents, setChapterContents] = useState<Record<number, string>>({})
+  const [chapterRunning, setChapterRunning] = useState<number | null>(null)
+  const [chapterDirective, setChapterDirective] = useState('')
+
+  // ── Entity sidebar state ─────────────────────────────────────────────────────
+  const [addingEntity, setAddingEntity] = useState(false)
+  const [editingEntityId, setEditingEntityId] = useState<string | null>(null)
+  const [entityDraft, setEntityDraft] = useState(BLANK_DRAFT)
+
+  // ── Phase 2 state ────────────────────────────────────────────────────────────
   const [p2Step, setP2Step] = useState<P2Step>('idle')
   const [p2Log, setP2Log] = useState('')
 
-  const allTiersApproved = statuses.every(s => s === 'approved')
+  // ── Derived stage completeness ───────────────────────────────────────────────
+  const tier1Approved = statuses[0] === 'approved'
+  const tier2Approved = statuses[1] === 'approved'
+  const skeletonExists = !!(skeleton?.entities?.length)
+  const allActsApproved = !!(tier3Status?.acts?.length && tier3Status.acts.every(a => a.approved))
+  const allChaptersApproved = !!(tier4Status?.chapters?.length && tier4Status.chapters.every(c => c.approved))
 
-  // Restore tiers from server
+  function stageComplete(s: Stage): boolean {
+    if (s === 'book') return tier1Approved
+    if (s === 'acts') return tier2Approved
+    if (s === 'consolidate') return skeletonExists
+    if (s === 'chapters') return allActsApproved
+    if (s === 'scenes') return allChaptersApproved
+    return false
+  }
+
+  function stageLocked(s: Stage): boolean {
+    if (s === 'book') return false
+    if (s === 'acts') return !tier1Approved
+    if (s === 'consolidate') return !tier2Approved
+    if (s === 'chapters') return !skeletonExists
+    if (s === 'scenes') return !allActsApproved
+    return true
+  }
+
+  // ── Restore tiers 1 & 2 from server ─────────────────────────────────────────
   useEffect(() => {
     if (!savedTiers) return
-    const next: TierStatus[] = ['active', 'locked', 'locked', 'locked']
-    let firstUnapproved = -1
-    for (let i = 0; i < 4; i++) {
+    const next: TierStatus[] = ['active', 'locked']
+    for (let i = 0; i < 2; i++) {
       if (savedTiers[i]?.approved) {
         next[i] = 'approved'
       } else {
-        firstUnapproved = firstUnapproved === -1 ? i : firstUnapproved
         const unlocked = i === 0 || next[i - 1] === 'approved'
         if (unlocked) next[i] = savedTiers[i]?.draft ? 'review' : 'active'
       }
     }
     setStatuses(next)
-    setContents(savedTiers.map(t => t.content ?? t.draft ?? null))
-    const active = firstUnapproved !== -1 ? firstUnapproved : 3
-    setActiveTier(active)
+    setContents([
+      savedTiers[0]?.content ?? savedTiers[0]?.draft ?? null,
+      savedTiers[1]?.content ?? savedTiers[1]?.draft ?? null,
+    ])
   }, [savedTiers])
+
+  // Set initial active stage once all data has loaded
+  useEffect(() => {
+    if (hasSetInitial.current || !savedTiers) return
+    const t1 = savedTiers[0]?.approved
+    const t2 = savedTiers[1]?.approved
+    if (!t1) { setActiveStage('book'); hasSetInitial.current = true; return }
+    if (!t2) { setActiveStage('acts'); hasSetInitial.current = true; return }
+    if (skeleton === undefined) return
+    if (!skeleton?.entities?.length) { setActiveStage('consolidate'); hasSetInitial.current = true; return }
+    if (tier3Status === undefined) return
+    if (!tier3Status?.acts?.length || !tier3Status.acts.every(a => a.approved)) {
+      setActiveStage('chapters'); hasSetInitial.current = true; return
+    }
+    if (tier4Status === undefined) return
+    setActiveStage('scenes')
+    hasSetInitial.current = true
+  }, [savedTiers, skeleton, tier3Status, tier4Status])
 
   // Sync p2Step from server state
   useEffect(() => {
     if (!phase2Status) return
     const s = phase2Status.phase2_status
-    if (s === 'approved') setP2Step('done')
-    else if (s === 'researched') setP2Step('done')
-    else if (s === 'consolidated') setP2Step('done')
+    if (s === 'approved' || s === 'researched' || s === 'consolidated') setP2Step('done')
   }, [phase2Status])
+
+  // ── Tier 1 & 2 actions ───────────────────────────────────────────────────────
+  const tierIdx = activeStage === 'book' ? 0 : activeStage === 'acts' ? 1 : -1
 
   async function runTier(idx: number) {
     setStatuses(prev => { const n = [...prev]; n[idx] = 'running'; return n })
@@ -192,23 +236,12 @@ export default function BibleWorkshopPage() {
     setStatuses(prev => {
       const n = [...prev]
       n[idx] = 'approved'
-      if (idx + 1 < 4) n[idx + 1] = 'active'
+      if (idx === 0) n[1] = 'active'
       return n
     })
-    setActiveTier(idx + 1 < 4 ? idx + 1 : idx)
+    setActiveStage(idx === 0 ? 'acts' : 'consolidate')
     qc.invalidateQueries({ queryKey: ['bible-tiers', bookId] })
     refetchP2Status()
-  }
-
-  async function injectAndRerun() {
-    if (!directive.trim()) return
-    await fetch(`${API}/books/${bookId}/phase1/bible/directive`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ directive }),
-    })
-    setDirective('')
-    runTier(activeTier)
   }
 
   async function editTier(idx: number) {
@@ -243,17 +276,233 @@ export default function BibleWorkshopPage() {
     }
   }
 
+  async function injectAndRerun(idx: number) {
+    if (!directive.trim()) return
+    await fetch(`${API}/books/${bookId}/phase1/bible/directive`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ directive }),
+    })
+    setDirective('')
+    runTier(idx)
+  }
+
+  // ── Mini-consolidation action ────────────────────────────────────────────────
+  async function runMiniConsol() {
+    setMiniConsolRunning(true)
+    setMiniConsolError(null)
+    try {
+      const resp = await fetch(`${API}/books/${bookId}/phase1/mini-consolidate`, { method: 'POST' })
+      for await (const event of readSSE(resp)) {
+        if (event.type === 'saved') {
+          await refetchSkeleton()
+          await refetchTier3()
+        } else if (event.type === 'error') {
+          setMiniConsolError(event.message ?? 'Unknown error')
+          break
+        }
+      }
+    } catch {
+      setMiniConsolError('Connection error — is the server running?')
+    } finally {
+      setMiniConsolRunning(false)
+    }
+  }
+
+  // ── Act actions (Tier 3) ─────────────────────────────────────────────────────
+  async function runAct(actNum: number) {
+    setActRunning(actNum)
+    setActContents(prev => ({ ...prev, [actNum]: '' }))
+    try {
+      const resp = await fetch(`${API}/books/${bookId}/phase1/tier3/run-act`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ act: actNum }),
+      })
+      let text = ''
+      for await (const event of readSSE(resp)) {
+        if (event.type === 'token' && event.content) {
+          text += event.content
+          setActContents(prev => ({ ...prev, [actNum]: text }))
+        } else if (event.type === 'error') {
+          setActContents(prev => ({ ...prev, [actNum]: `⚠ ${event.message}` }))
+          break
+        }
+      }
+    } catch {
+      setActContents(prev => ({ ...prev, [actNum]: '⚠ Connection error — is the server running?' }))
+    } finally {
+      setActRunning(null)
+      refetchTier3()
+    }
+  }
+
+  async function approveAct(actNum: number) {
+    const content = actContents[actNum] ?? ''
+    await fetch(`${API}/books/${bookId}/phase1/tier3/approve-act`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ act: actNum, content }),
+    })
+    await refetchTier3()
+    await refetchTier4()
+  }
+
+  async function editAct(actNum: number) {
+    if (!actDirective.trim()) return
+    const d = actDirective
+    setActDirective('')
+    setActRunning(actNum)
+    setActContents(prev => ({ ...prev, [actNum]: '' }))
+    try {
+      const resp = await fetch(`${API}/books/${bookId}/phase1/tier3/edit-act`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ act: actNum, directive: d }),
+      })
+      let text = ''
+      for await (const event of readSSE(resp)) {
+        if (event.type === 'token' && event.content) {
+          text += event.content
+          setActContents(prev => ({ ...prev, [actNum]: text }))
+        } else if (event.type === 'error') {
+          setActContents(prev => ({ ...prev, [actNum]: `⚠ ${event.message}` }))
+          break
+        }
+      }
+    } catch {
+      setActContents(prev => ({ ...prev, [actNum]: '⚠ Connection error' }))
+    } finally {
+      setActRunning(null)
+    }
+  }
+
+  // ── Entity actions ───────────────────────────────────────────────────────────
+  function parseActs(s: string): number[] {
+    return s.split(',').map(x => parseInt(x.trim())).filter(n => !isNaN(n))
+  }
+
+  async function addEntity() {
+    if (!entityDraft.name.trim()) return
+    await fetch(`${API}/books/${bookId}/phase1/skeleton/entity`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: entityDraft.name.trim(),
+        type: entityDraft.type,
+        purpose: entityDraft.description.trim(),
+        appearsInActs: parseActs(entityDraft.appearsInActs),
+      }),
+    })
+    await refetchSkeleton()
+    setAddingEntity(false)
+    setEntityDraft(BLANK_DRAFT)
+  }
+
+  function startEditEntity(e: SkeletonEntity) {
+    setEditingEntityId(e.id)
+    setAddingEntity(false)
+    setEntityDraft({
+      name: e.name,
+      type: (e.type as EntityType) ?? 'character',
+      description: e.coreFacts?.purpose ?? e.coreFacts?.description ?? '',
+      appearsInActs: (e.appearsInActs ?? []).join(', '),
+    })
+  }
+
+  async function saveEditEntity() {
+    if (!editingEntityId) return
+    await fetch(`${API}/books/${bookId}/phase1/skeleton/entity/${editingEntityId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: entityDraft.name.trim() || undefined,
+        coreFacts: entityDraft.description.trim() ? { purpose: entityDraft.description.trim() } : undefined,
+        appearsInActs: parseActs(entityDraft.appearsInActs),
+      }),
+    })
+    await refetchSkeleton()
+    setEditingEntityId(null)
+    setEntityDraft(BLANK_DRAFT)
+  }
+
+  // ── Chapter actions (Tier 4) ─────────────────────────────────────────────────
+  async function runChapter(chapterNum: number) {
+    setChapterRunning(chapterNum)
+    setChapterContents(prev => ({ ...prev, [chapterNum]: '' }))
+    try {
+      const resp = await fetch(`${API}/books/${bookId}/phase1/tier4/run-chapter`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chapter: chapterNum }),
+      })
+      let text = ''
+      for await (const event of readSSE(resp)) {
+        if (event.type === 'token' && event.content) {
+          text += event.content
+          setChapterContents(prev => ({ ...prev, [chapterNum]: text }))
+        } else if (event.type === 'error') {
+          setChapterContents(prev => ({ ...prev, [chapterNum]: `⚠ ${event.message}` }))
+          break
+        }
+      }
+    } catch {
+      setChapterContents(prev => ({ ...prev, [chapterNum]: '⚠ Connection error — is the server running?' }))
+    } finally {
+      setChapterRunning(null)
+      refetchTier4()
+    }
+  }
+
+  async function approveChapter(chapterNum: number) {
+    const content = chapterContents[chapterNum] ?? ''
+    await fetch(`${API}/books/${bookId}/phase1/tier4/approve-chapter`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chapter: chapterNum, content }),
+    })
+    await refetchTier4()
+  }
+
+  async function editChapter(chapterNum: number) {
+    if (!chapterDirective.trim()) return
+    const d = chapterDirective
+    setChapterDirective('')
+    setChapterRunning(chapterNum)
+    setChapterContents(prev => ({ ...prev, [chapterNum]: '' }))
+    try {
+      const resp = await fetch(`${API}/books/${bookId}/phase1/tier4/edit-chapter`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chapter: chapterNum, directive: d }),
+      })
+      let text = ''
+      for await (const event of readSSE(resp)) {
+        if (event.type === 'token' && event.content) {
+          text += event.content
+          setChapterContents(prev => ({ ...prev, [chapterNum]: text }))
+        } else if (event.type === 'error') {
+          setChapterContents(prev => ({ ...prev, [chapterNum]: `⚠ ${event.message}` }))
+          break
+        }
+      }
+    } catch {
+      setChapterContents(prev => ({ ...prev, [chapterNum]: '⚠ Connection error' }))
+    } finally {
+      setChapterRunning(null)
+    }
+  }
+
+  // ── Phase 2 actions ──────────────────────────────────────────────────────────
   async function runP2(endpoint: string, _label: string, nextStep: P2Step) {
     setP2Step(nextStep)
     setP2Log('')
     try {
       const resp = await fetch(`${API}/books/${bookId}/phase2/${endpoint}`, { method: 'POST' })
       for await (const event of readSSE(resp)) {
-        if (event.type === 'token') {
-          setP2Log(prev => prev + event.content)
-        } else if (event.type === 'status') {
-          setP2Log(prev => prev + `\n[${event.message}]\n`)
-        } else if (event.type === 'saved') {
+        if (event.type === 'token') setP2Log(prev => prev + event.content)
+        else if (event.type === 'status') setP2Log(prev => prev + `\n[${event.message}]\n`)
+        else if (event.type === 'saved') {
           setP2Log(prev => prev + `\n\n✓ Saved — ${event.entity_count} entities`)
           await refetchP2Status()
           await refetchBible()
@@ -275,7 +524,7 @@ export default function BibleWorkshopPage() {
     qc.invalidateQueries({ queryKey: ['bible', bookId] })
   }
 
-  // Group entities by type for sidebar
+  // ── Entity ledger (sidebar — Phase 2) ───────────────────────────────────────
   const ledger = bible?.ledger ?? {}
   const byType: Record<string, [string, BibleEntity][]> = {}
   for (const [id, entity] of Object.entries(ledger)) {
@@ -290,6 +539,7 @@ export default function BibleWorkshopPage() {
   const bibleExists = phase2Status?.bible_exists
   const entityCount = phase2Status?.entity_count ?? 0
 
+<<<<<<< HEAD
   const ledgerProps = { sortedTypes, byType }
 
   return (
@@ -356,24 +606,136 @@ export default function BibleWorkshopPage() {
               {statuses[activeTier] === 'approved' && <Badge variant="success">Approved</Badge>}
             </div>
           </div>
+=======
+  // ── Skeleton sidebar helpers ─────────────────────────────────────────────────
+  const skeletonByType = ENTITY_TYPES.reduce<Record<string, SkeletonEntity[]>>((acc, t) => {
+    acc[t] = (skeleton?.entities ?? []).filter(e => e.type === t)
+    return acc
+  }, {} as Record<string, SkeletonEntity[]>)
 
-          <Card className="min-h-[300px]">
-            <CardContent className="p-5">
-              {statuses[activeTier] === 'locked' && (
-                <p className="text-sm text-muted-foreground italic">Complete the tier above to unlock this one.</p>
-              )}
-              {statuses[activeTier] === 'active' && !contents[activeTier] && (
-                <p className="text-sm text-muted-foreground italic">Run the agent to generate this tier.</p>
-              )}
-              {contents[activeTier] && (
-                <pre className="text-sm text-foreground whitespace-pre-wrap font-mono leading-relaxed">
-                  {contents[activeTier]}
-                  {statuses[activeTier] === 'running' && <span className="animate-pulse">▋</span>}
-                </pre>
-              )}
-            </CardContent>
-          </Card>
+  // ── Entity form component (inline, reused for add + edit) ────────────────────
+  function EntityForm({ onSave, onCancel }: { onSave: () => void; onCancel: () => void }) {
+    return (
+      <div className="border border-border rounded-md p-3 space-y-2 bg-muted/20">
+        <input
+          value={entityDraft.name}
+          onChange={e => setEntityDraft(p => ({ ...p, name: e.target.value }))}
+          placeholder="Name"
+          className="w-full rounded border border-input bg-transparent px-2 py-1 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        />
+        <select
+          value={entityDraft.type}
+          onChange={e => setEntityDraft(p => ({ ...p, type: e.target.value as EntityType }))}
+          className="w-full rounded border border-input bg-transparent px-2 py-1 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        >
+          {ENTITY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+        </select>
+        <textarea
+          value={entityDraft.description}
+          onChange={e => setEntityDraft(p => ({ ...p, description: e.target.value }))}
+          placeholder="Role / description"
+          rows={2}
+          className="w-full resize-none rounded border border-input bg-transparent px-2 py-1 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        />
+        <input
+          value={entityDraft.appearsInActs}
+          onChange={e => setEntityDraft(p => ({ ...p, appearsInActs: e.target.value }))}
+          placeholder="Acts: 1, 2, 3"
+          className="w-full rounded border border-input bg-transparent px-2 py-1 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        />
+        <div className="flex gap-1.5">
+          <Button size="sm" className="h-6 text-xs px-2" onClick={onSave} disabled={!entityDraft.name.trim()}>Save</Button>
+          <Button size="sm" variant="ghost" className="h-6 text-xs px-2" onClick={onCancel}>Cancel</Button>
+        </div>
+      </div>
+    )
+  }
 
+  return (
+    <div className="flex h-full">
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {/* ── Stage stepper ── */}
+        <div className="flex items-center gap-2 px-6 py-4 border-b border-border">
+          {STAGES.map((stage, i) => {
+            const complete = stageComplete(stage.id)
+            const locked = stageLocked(stage.id)
+            const isActive = activeStage === stage.id
+            return (
+              <div key={stage.id} className="flex items-center gap-2">
+                <button
+                  className={cn(
+                    'flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-md transition-colors',
+                    complete
+                      ? 'text-emerald-500'
+                      : isActive
+                        ? 'bg-accent text-accent-foreground font-medium'
+                        : locked
+                          ? 'text-muted-foreground/40 cursor-not-allowed'
+                          : 'text-muted-foreground hover:text-foreground'
+                  )}
+                  onClick={() => !locked && !streaming && setActiveStage(stage.id)}
+                  disabled={locked || streaming}
+                >
+                  {complete && <CheckCircle size={13} />}
+                  {stage.label}
+                </button>
+                {i < STAGES.length - 1 && <ChevronRight size={14} className="text-muted-foreground/40" />}
+              </div>
+            )
+          })}
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-6 py-6 space-y-4">
+          {/* ── Tier 1 (Book) / Tier 2 (Acts) panel ── */}
+          {tierIdx >= 0 && (
+            <>
+              <div className="flex items-start justify-between">
+                <div>
+                  <h2 className="font-semibold">Tier {tierIdx + 1} — {activeStage === 'book' ? 'Book' : 'Acts'}</h2>
+                  <p className="text-sm text-muted-foreground">{STAGE_QUESTIONS[activeStage]}</p>
+                </div>
+                <div className="flex gap-2">
+                  {statuses[tierIdx] === 'active' && (
+                    <Button size="sm" onClick={() => runTier(tierIdx)} className="gap-2" disabled={streaming}>
+                      <Play size={13} />Run agent
+                    </Button>
+                  )}
+                  {statuses[tierIdx] === 'running' && (
+                    <Badge variant="secondary" className="gap-1.5">
+                      <Loader2 size={12} className="animate-spin" />Agent running…
+                    </Badge>
+                  )}
+                  {statuses[tierIdx] === 'review' && (
+                    <>
+                      <Button size="sm" variant="outline" onClick={() => runTier(tierIdx)} disabled={streaming}>Re-run</Button>
+                      <Button size="sm" onClick={() => approveTier(tierIdx)} className="gap-2" disabled={streaming}>
+                        <Lock size={13} />Approve tier
+                      </Button>
+                    </>
+                  )}
+                  {statuses[tierIdx] === 'approved' && <Badge variant="success">Approved</Badge>}
+                </div>
+              </div>
+>>>>>>> eff70c1 (Redesign Bible Workshop: 5-stage flow with per-act and per-chapter generation)
+
+              <Card className="min-h-[300px]">
+                <CardContent className="p-5">
+                  {statuses[tierIdx] === 'locked' && (
+                    <p className="text-sm text-muted-foreground italic">Complete the tier above to unlock this one.</p>
+                  )}
+                  {statuses[tierIdx] === 'active' && !contents[tierIdx] && (
+                    <p className="text-sm text-muted-foreground italic">Run the agent to generate this tier.</p>
+                  )}
+                  {contents[tierIdx] && (
+                    <pre className="text-sm text-foreground whitespace-pre-wrap font-mono leading-relaxed">
+                      {contents[tierIdx]}
+                      {statuses[tierIdx] === 'running' && <span className="animate-pulse">▋</span>}
+                    </pre>
+                  )}
+                </CardContent>
+              </Card>
+
+<<<<<<< HEAD
           {statuses[activeTier] === 'review' && (
             <div className="space-y-2">
               <Separator />
@@ -397,12 +759,367 @@ export default function BibleWorkshopPage() {
                     Inject &amp; re-run
                   </Button>
                 </div>
+=======
+              {statuses[tierIdx] === 'review' && (
+                <div className="space-y-2">
+                  <Separator />
+                  <p className="text-xs text-muted-foreground pt-2">
+                    Inject a directive — saved to directives.md, agent re-runs incorporating it.
+                  </p>
+                  <div className="flex gap-2">
+                    <textarea
+                      value={directive}
+                      onChange={e => setDirective(e.target.value)}
+                      placeholder='e.g. "Add a merchant who joins in Acre and dies in Constantinople…"'
+                      rows={2}
+                      disabled={streaming}
+                      className="flex-1 resize-none rounded-md border border-input bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    />
+                    <Button variant="outline" size="sm" onClick={() => editTier(tierIdx)} disabled={!directive.trim() || streaming}>
+                      Edit current
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => injectAndRerun(tierIdx)} disabled={!directive.trim() || streaming}>
+                      Inject &amp; re-run
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* ── Consolidate panel ── */}
+          {activeStage === 'consolidate' && (
+            <div className="space-y-5">
+              <div className="flex items-start justify-between">
+                <div>
+                  <h2 className="font-semibold">Mini-Consolidation — Story Bible Skeleton</h2>
+                  <p className="text-sm text-muted-foreground mt-0.5">
+                    Extract named entities from your North Star and Acts breakdown.
+                    These seed the entity sidebar in the Chapters stage.
+                  </p>
+                </div>
+                <Button size="sm" onClick={runMiniConsol} className="gap-2 shrink-0 ml-4" disabled={miniConsolRunning}>
+                  {miniConsolRunning
+                    ? <><Loader2 size={13} className="animate-spin" />Extracting…</>
+                    : <><Play size={13} />{skeletonExists ? 'Re-run' : 'Extract skeleton'}</>
+                  }
+                </Button>
+>>>>>>> eff70c1 (Redesign Bible Workshop: 5-stage flow with per-act and per-chapter generation)
               </div>
+
+              {miniConsolError && (
+                <p className="text-sm text-destructive">⚠ {miniConsolError}</p>
+              )}
+
+              {miniConsolRunning && (
+                <Card className="bg-muted/30">
+                  <CardContent className="p-4">
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 size={14} className="animate-spin" />
+                      Agent reading North Star and Acts, extracting entities…
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {skeletonExists && skeleton && !miniConsolRunning && (
+                <>
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm text-muted-foreground">
+                      {skeleton.acts.length} acts · {skeleton.entities.length} entities extracted
+                    </span>
+                    <Badge variant="success" className="gap-1">
+                      <CheckCircle size={11} />Ready
+                    </Badge>
+                  </div>
+
+                  <div className="space-y-3">
+                    {ENTITY_TYPES.filter(t => skeleton.entities.some(e => e.type === t)).map(type => {
+                      const Icon = TYPE_ICON[type] ?? BookOpen
+                      const entities = skeleton.entities.filter(e => e.type === t)
+                      return (
+                        <div key={type}>
+                          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">
+                            {type}s ({entities.length})
+                          </p>
+                          <div className="space-y-0.5">
+                            {entities.map(e => (
+                              <div key={e.id} className="flex items-center gap-2 px-2 py-1 rounded-md hover:bg-muted/50">
+                                <Icon size={12} className="shrink-0 text-muted-foreground" />
+                                <span className="text-sm font-medium">{e.name}</span>
+                                <span className="text-[10px] text-muted-foreground/60">{e.id}</span>
+                                {e.appearsInActs?.length ? (
+                                  <span className="text-[10px] text-muted-foreground ml-auto">
+                                    Acts {e.appearsInActs.join(', ')}
+                                  </span>
+                                ) : null}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  <div className="pt-2 border-t border-border flex justify-end">
+                    <Button onClick={() => setActiveStage('chapters')} className="gap-2">
+                      Continue to Chapters <ChevronRight size={14} />
+                    </Button>
+                  </div>
+                </>
+              )}
             </div>
           )}
 
-          {/* ── Phase 2 panel (appears when all tiers approved) ── */}
-          {allTiersApproved && (
+          {/* ── Chapters panel (Tier 3 — per act) ── */}
+          {activeStage === 'chapters' && (
+            <div className="space-y-3">
+              <div>
+                <h2 className="font-semibold">Chapters — per act</h2>
+                <p className="text-sm text-muted-foreground">Generate and approve chapter summaries act by act.</p>
+              </div>
+
+              {!tier3Status?.acts?.length ? (
+                <Card className="bg-muted/30">
+                  <CardContent className="p-4">
+                    <p className="text-sm text-muted-foreground italic">No acts found — run mini-consolidation first.</p>
+                  </CardContent>
+                </Card>
+              ) : (
+                tier3Status.acts.map(actInfo => {
+                  const isExpanded = activeActNum === actInfo.act
+                  const content = actContents[actInfo.act]
+                  const isRunning = actRunning === actInfo.act
+                  const hasLocalContent = content !== undefined
+
+                  return (
+                    <div key={actInfo.act} className="border border-border rounded-lg overflow-hidden">
+                      {/* Act header — click to expand */}
+                      <button
+                        className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/30 transition-colors text-left"
+                        onClick={() => setActiveActNum(isExpanded ? null : actInfo.act)}
+                      >
+                        <div className="flex items-center gap-2.5">
+                          {actInfo.approved
+                            ? <CheckCircle size={14} className="text-emerald-500 shrink-0" />
+                            : isRunning
+                              ? <Loader2 size={14} className="animate-spin text-muted-foreground shrink-0" />
+                              : <div className="w-3.5 h-3.5 rounded-full border border-muted-foreground/40 shrink-0" />
+                          }
+                          <span className="text-sm font-medium">Act {actInfo.act} — {actInfo.title}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {actInfo.approved && (
+                            <span className="text-xs text-muted-foreground">{actInfo.chapters.length} ch</span>
+                          )}
+                          <ChevronRight size={14} className={cn('text-muted-foreground/60 transition-transform duration-150', isExpanded && 'rotate-90')} />
+                        </div>
+                      </button>
+
+                      {/* Act detail */}
+                      {isExpanded && (
+                        <div className="border-t border-border px-4 py-4 space-y-3">
+                          {actInfo.approved ? (
+                            <>
+                              <div className="space-y-1">
+                                {actInfo.chapters.map(ch => (
+                                  <p key={ch.number} className="text-sm text-muted-foreground">
+                                    <span className="text-foreground font-medium">Ch {ch.number}</span> — {ch.title}
+                                  </p>
+                                ))}
+                              </div>
+                              <Button size="sm" variant="outline" onClick={() => runAct(actInfo.act)} disabled={isRunning} className="gap-2">
+                                <Play size={12} />Re-run act
+                              </Button>
+                            </>
+                          ) : (
+                            <>
+                              <div className="flex items-center justify-end gap-2">
+                                {isRunning ? (
+                                  <Badge variant="secondary" className="gap-1.5">
+                                    <Loader2 size={12} className="animate-spin" />Agent running…
+                                  </Badge>
+                                ) : (
+                                  <Button size="sm" onClick={() => runAct(actInfo.act)} className="gap-2">
+                                    <Play size={13} />{actInfo.has_content || hasLocalContent ? 'Re-run' : 'Run act'}
+                                  </Button>
+                                )}
+                                {hasLocalContent && !isRunning && (
+                                  <Button size="sm" onClick={() => approveAct(actInfo.act)} className="gap-2">
+                                    <Lock size={13} />Approve act
+                                  </Button>
+                                )}
+                              </div>
+
+                              <Card className="min-h-[180px]">
+                                <CardContent className="p-4">
+                                  {!hasLocalContent && !actInfo.has_content && (
+                                    <p className="text-sm text-muted-foreground italic">Run the agent to generate chapters for this act.</p>
+                                  )}
+                                  {!hasLocalContent && actInfo.has_content && (
+                                    <p className="text-sm text-muted-foreground italic">Content exists from a previous session. Re-run to reload.</p>
+                                  )}
+                                  {hasLocalContent && (
+                                    <pre className="text-sm whitespace-pre-wrap font-mono leading-relaxed text-foreground">
+                                      {content}
+                                      {isRunning && <span className="animate-pulse">▋</span>}
+                                    </pre>
+                                  )}
+                                </CardContent>
+                              </Card>
+
+                              {hasLocalContent && !isRunning && (
+                                <div className="space-y-2">
+                                  <Separator />
+                                  <div className="flex gap-2 pt-1">
+                                    <textarea
+                                      value={actDirective}
+                                      onChange={e => setActDirective(e.target.value)}
+                                      placeholder='e.g. "Add a confrontation in Act 2 chapter 3…"'
+                                      rows={2}
+                                      className="flex-1 resize-none rounded-md border border-input bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                    />
+                                    <Button variant="outline" size="sm" onClick={() => editAct(actInfo.act)} disabled={!actDirective.trim()}>
+                                      Edit current
+                                    </Button>
+                                  </div>
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })
+              )}
+
+              {allActsApproved && (
+                <div className="flex justify-end pt-2">
+                  <Button onClick={() => setActiveStage('scenes')} className="gap-2">
+                    Continue to Scenes <ChevronRight size={14} />
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Scenes panel (Tier 4 — per chapter) ── */}
+          {activeStage === 'scenes' && (
+            <div className="space-y-3">
+              <div>
+                <h2 className="font-semibold">Scenes — per chapter</h2>
+                <p className="text-sm text-muted-foreground">Generate and approve scene lists chapter by chapter.</p>
+              </div>
+
+              {!tier4Status?.chapters?.length ? (
+                <Card className="bg-muted/30">
+                  <CardContent className="p-4">
+                    <p className="text-sm text-muted-foreground italic">No chapters found — approve all acts first.</p>
+                  </CardContent>
+                </Card>
+              ) : (
+                tier4Status.chapters.map(chInfo => {
+                  const isExpanded = activeChapterNum === chInfo.number
+                  const content = chapterContents[chInfo.number]
+                  const isRunning = chapterRunning === chInfo.number
+                  const hasLocalContent = content !== undefined
+
+                  return (
+                    <div key={chInfo.number} className="border border-border rounded-lg overflow-hidden">
+                      {/* Chapter header */}
+                      <button
+                        className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/30 transition-colors text-left"
+                        onClick={() => setActiveChapterNum(isExpanded ? null : chInfo.number)}
+                      >
+                        <div className="flex items-center gap-2.5">
+                          {chInfo.approved
+                            ? <CheckCircle size={14} className="text-emerald-500 shrink-0" />
+                            : isRunning
+                              ? <Loader2 size={14} className="animate-spin text-muted-foreground shrink-0" />
+                              : <div className="w-3.5 h-3.5 rounded-full border border-muted-foreground/40 shrink-0" />
+                          }
+                          <span className="text-sm font-medium">Ch {chInfo.number} — {chInfo.title}</span>
+                        </div>
+                        <ChevronRight size={14} className={cn('text-muted-foreground/60 transition-transform duration-150', isExpanded && 'rotate-90')} />
+                      </button>
+
+                      {/* Chapter detail */}
+                      {isExpanded && (
+                        <div className="border-t border-border px-4 py-4 space-y-3">
+                          {chInfo.approved ? (
+                            <div className="flex items-center justify-between">
+                              <Badge variant="success" className="gap-1"><CheckCircle size={11} />Approved</Badge>
+                              <Button size="sm" variant="outline" onClick={() => runChapter(chInfo.number)} disabled={isRunning} className="gap-2">
+                                <Play size={12} />Re-run
+                              </Button>
+                            </div>
+                          ) : (
+                            <>
+                              <div className="flex items-center justify-end gap-2">
+                                {isRunning ? (
+                                  <Badge variant="secondary" className="gap-1.5">
+                                    <Loader2 size={12} className="animate-spin" />Agent running…
+                                  </Badge>
+                                ) : (
+                                  <Button size="sm" onClick={() => runChapter(chInfo.number)} className="gap-2">
+                                    <Play size={13} />{chInfo.has_content || hasLocalContent ? 'Re-run' : 'Run chapter'}
+                                  </Button>
+                                )}
+                                {hasLocalContent && !isRunning && (
+                                  <Button size="sm" onClick={() => approveChapter(chInfo.number)} className="gap-2">
+                                    <Lock size={13} />Approve
+                                  </Button>
+                                )}
+                              </div>
+
+                              <Card className="min-h-[180px]">
+                                <CardContent className="p-4">
+                                  {!hasLocalContent && !(chInfo as { has_content?: boolean }).has_content && (
+                                    <p className="text-sm text-muted-foreground italic">Run the agent to generate scenes for this chapter.</p>
+                                  )}
+                                  {!hasLocalContent && chInfo.has_content && (
+                                    <p className="text-sm text-muted-foreground italic">Content exists from a previous session. Re-run to reload.</p>
+                                  )}
+                                  {hasLocalContent && (
+                                    <pre className="text-sm whitespace-pre-wrap font-mono leading-relaxed text-foreground">
+                                      {content}
+                                      {isRunning && <span className="animate-pulse">▋</span>}
+                                    </pre>
+                                  )}
+                                </CardContent>
+                              </Card>
+
+                              {hasLocalContent && !isRunning && (
+                                <div className="space-y-2">
+                                  <Separator />
+                                  <div className="flex gap-2 pt-1">
+                                    <textarea
+                                      value={chapterDirective}
+                                      onChange={e => setChapterDirective(e.target.value)}
+                                      placeholder='e.g. "Add a moment where Marcus sees the fleet from the harbour wall…"'
+                                      rows={2}
+                                      className="flex-1 resize-none rounded-md border border-input bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                    />
+                                    <Button variant="outline" size="sm" onClick={() => editChapter(chInfo.number)} disabled={!chapterDirective.trim()}>
+                                      Edit current
+                                    </Button>
+                                  </div>
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          )}
+
+          {/* ── Phase 2 panel (appears when all chapters approved) ── */}
+          {allChaptersApproved && (
             <>
               <Separator className="my-4" />
               <div className="space-y-4">
@@ -413,24 +1130,25 @@ export default function BibleWorkshopPage() {
                   </p>
                 </div>
 
-                {/* Step 1: Consolidate */}
                 <div className="space-y-2">
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
+<<<<<<< HEAD
                       <span className={cn(
                         'flex items-center justify-center w-5 h-5 rounded-full text-xs font-bold shrink-0',
                         bibleExists ? 'bg-emerald-500/20 text-emerald-500' : 'bg-muted text-muted-foreground'
                       )}>1</span>
+=======
+                      <span className={cn('flex items-center justify-center w-5 h-5 rounded-full text-xs font-bold',
+                        bibleExists ? 'bg-emerald-500/20 text-emerald-500' : 'bg-muted text-muted-foreground')}>1</span>
+>>>>>>> eff70c1 (Redesign Bible Workshop: 5-stage flow with per-act and per-chapter generation)
                       <span className="text-sm font-medium">Consolidate entity ledger</span>
                       {bibleExists && <CheckCircle size={13} className="text-emerald-500 shrink-0" />}
                     </div>
                     {!p2Approved && (
-                      <Button
-                        size="sm"
-                        variant={bibleExists ? 'outline' : 'default'}
+                      <Button size="sm" variant={bibleExists ? 'outline' : 'default'}
                         disabled={p2Step === 'consolidating' || p2Step === 'researching'}
-                        onClick={() => runP2('consolidate', 'Consolidating…', 'consolidating')}
-                      >
+                        onClick={() => runP2('consolidate', 'Consolidating…', 'consolidating')}>
                         {p2Step === 'consolidating'
                           ? <><Loader2 size={12} className="animate-spin mr-1" />Running…</>
                           : bibleExists ? 'Re-run' : 'Run'}
@@ -440,27 +1158,26 @@ export default function BibleWorkshopPage() {
                   {bibleExists && <p className="text-xs text-muted-foreground pl-7">{entityCount} entities in ledger</p>}
                 </div>
 
-                {/* Step 2: Research */}
                 <div className="space-y-2">
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
+<<<<<<< HEAD
                       <span className={cn(
                         'flex items-center justify-center w-5 h-5 rounded-full text-xs font-bold shrink-0',
+=======
+                      <span className={cn('flex items-center justify-center w-5 h-5 rounded-full text-xs font-bold',
+>>>>>>> eff70c1 (Redesign Bible Workshop: 5-stage flow with per-act and per-chapter generation)
                         (p2Status === 'researched' || p2Status === 'approved') ? 'bg-emerald-500/20 text-emerald-500'
-                          : bibleExists ? 'bg-muted text-foreground' : 'bg-muted text-muted-foreground/40'
-                      )}>2</span>
+                          : bibleExists ? 'bg-muted text-foreground' : 'bg-muted text-muted-foreground/40')}>2</span>
                       <span className={cn('text-sm font-medium', !bibleExists && 'text-muted-foreground/40')}>
                         Research &amp; complete entities
                       </span>
                       {(p2Status === 'researched' || p2Status === 'approved') && <CheckCircle size={13} className="text-emerald-500 shrink-0" />}
                     </div>
                     {!p2Approved && bibleExists && (
-                      <Button
-                        size="sm"
-                        variant={(p2Status === 'researched') ? 'outline' : 'default'}
+                      <Button size="sm" variant={(p2Status === 'researched') ? 'outline' : 'default'}
                         disabled={p2Step === 'consolidating' || p2Step === 'researching'}
-                        onClick={() => runP2('run', 'Researching…', 'researching')}
-                      >
+                        onClick={() => runP2('run', 'Researching…', 'researching')}>
                         {p2Step === 'researching'
                           ? <><Loader2 size={12} className="animate-spin mr-1" />Running…</>
                           : (p2Status === 'researched' || p2Status === 'approved') ? 'Re-run' : 'Run'}
@@ -469,14 +1186,19 @@ export default function BibleWorkshopPage() {
                   </div>
                 </div>
 
+<<<<<<< HEAD
                 {/* Step 3: Approve */}
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <span className={cn(
                       'flex items-center justify-center w-5 h-5 rounded-full text-xs font-bold shrink-0',
+=======
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className={cn('flex items-center justify-center w-5 h-5 rounded-full text-xs font-bold',
+>>>>>>> eff70c1 (Redesign Bible Workshop: 5-stage flow with per-act and per-chapter generation)
                       p2Approved ? 'bg-emerald-500/20 text-emerald-500'
-                        : (p2Status === 'researched') ? 'bg-muted text-foreground' : 'bg-muted text-muted-foreground/40'
-                    )}>3</span>
+                        : (p2Status === 'researched') ? 'bg-muted text-foreground' : 'bg-muted text-muted-foreground/40')}>3</span>
                     <span className={cn('text-sm font-medium', !bibleExists && 'text-muted-foreground/40')}>
                       Approve &amp; unlock Writing Loop
                     </span>
@@ -490,15 +1212,12 @@ export default function BibleWorkshopPage() {
                   {p2Approved && <Badge variant="success">Writing Loop unlocked</Badge>}
                 </div>
 
-                {/* Streaming log */}
                 {p2Log && (
                   <Card className="bg-muted/30">
                     <CardContent className="p-4">
                       <pre className="text-xs font-mono whitespace-pre-wrap leading-relaxed text-muted-foreground max-h-48 overflow-y-auto">
                         {p2Log}
-                        {(p2Step === 'consolidating' || p2Step === 'researching') && (
-                          <span className="animate-pulse">▋</span>
-                        )}
+                        {(p2Step === 'consolidating' || p2Step === 'researching') && <span className="animate-pulse">▋</span>}
                       </pre>
                     </CardContent>
                   </Card>
@@ -509,6 +1228,7 @@ export default function BibleWorkshopPage() {
         </div>
       </div>
 
+<<<<<<< HEAD
       {/* ── Mobile ledger overlay ── */}
       {ledgerOpen && (
         <>
@@ -546,6 +1266,169 @@ export default function BibleWorkshopPage() {
         </div>
         <LedgerBody {...ledgerProps} />
       </div>
+=======
+      {/* ── Sidebar ── */}
+      {activeStage === 'scenes' ? (
+        /* Skeleton entity sidebar (read-only reference) */
+        <div className="w-72 border-l border-border flex flex-col">
+          <div className="px-4 py-4 border-b border-border">
+            <h3 className="text-sm font-medium">Story Bible</h3>
+            <p className="text-xs text-muted-foreground">{skeleton?.entities?.length ?? 0} entities</p>
+          </div>
+          <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+            {ENTITY_TYPES.filter(t => skeletonByType[t]?.length).map(type => {
+              const Icon = TYPE_ICON[type] ?? BookOpen
+              const entities = skeletonByType[type]
+              return (
+                <div key={type}>
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider py-1">
+                    {type}s ({entities.length})
+                  </p>
+                  <div className="space-y-1">
+                    {entities.map(e => (
+                      <div key={e.id} className="flex items-start gap-2 px-2 py-1.5 rounded-md">
+                        <Icon size={12} className="mt-0.5 shrink-0 text-muted-foreground" />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-medium truncate">{e.name}</p>
+                          {e.coreFacts?.purpose && (
+                            <p className="text-[10px] text-muted-foreground truncate">{e.coreFacts.purpose}</p>
+                          )}
+                        </div>
+                        <span className="text-[9px] text-muted-foreground/40 shrink-0">{e.id}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )
+            })}
+            {!skeleton?.entities?.length && (
+              <p className="text-xs text-muted-foreground italic">No entities in skeleton.</p>
+            )}
+          </div>
+        </div>
+      ) : activeStage === 'chapters' ? (
+        /* Skeleton entity sidebar (editable) */
+        <div className="w-72 border-l border-border flex flex-col">
+          <div className="px-4 py-4 border-b border-border flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-medium">Story Bible</h3>
+              <p className="text-xs text-muted-foreground">
+                {skeleton?.entities?.length ?? 0} entities
+              </p>
+            </div>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-7 w-7"
+              onClick={() => { setAddingEntity(true); setEditingEntityId(null); setEntityDraft(BLANK_DRAFT) }}
+            >
+              <Plus size={14} />
+            </Button>
+          </div>
+          <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+            {addingEntity && (
+              <EntityForm onSave={addEntity} onCancel={() => { setAddingEntity(false); setEntityDraft(BLANK_DRAFT) }} />
+            )}
+
+            {ENTITY_TYPES.filter(t => skeletonByType[t]?.length).map(type => {
+              const Icon = TYPE_ICON[type] ?? BookOpen
+              const entities = skeletonByType[type]
+              return (
+                <div key={type}>
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider py-1">
+                    {type}s ({entities.length})
+                  </p>
+                  <div className="space-y-1">
+                    {entities.map(e => (
+                      <div key={e.id}>
+                        {editingEntityId === e.id ? (
+                          <EntityForm
+                            onSave={saveEditEntity}
+                            onCancel={() => { setEditingEntityId(null); setEntityDraft(BLANK_DRAFT) }}
+                          />
+                        ) : (
+                          <div
+                            className="flex items-start gap-2 px-2 py-1.5 rounded-md hover:bg-muted/50 transition-colors cursor-pointer group"
+                            onClick={() => startEditEntity(e)}
+                          >
+                            <Icon size={12} className="mt-0.5 shrink-0 text-muted-foreground" />
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs font-medium truncate">{e.name}</p>
+                              {e.coreFacts?.purpose && (
+                                <p className="text-[10px] text-muted-foreground truncate">{e.coreFacts.purpose}</p>
+                              )}
+                            </div>
+                            <span className="text-[9px] text-muted-foreground/40 shrink-0 group-hover:text-muted-foreground/80">
+                              {e.id}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )
+            })}
+
+            {!skeleton?.entities?.length && !addingEntity && (
+              <p className="text-xs text-muted-foreground italic">No entities yet. Run mini-consolidation or add manually.</p>
+            )}
+          </div>
+        </div>
+      ) : (
+        /* Phase 2 entity ledger sidebar (read-only) */
+        <div className="w-72 border-l border-border flex flex-col">
+          <div className="px-4 py-4 border-b border-border">
+            <h3 className="text-sm font-medium">Entity Ledger</h3>
+            <p className="text-xs text-muted-foreground">
+              {entityCount > 0 ? `${entityCount} entities` : 'Populated in Phase 2'}
+            </p>
+          </div>
+          <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+            {sortedTypes.length === 0 ? (
+              ['Characters', 'Locations', 'Factions'].map(type => (
+                <div key={type}>
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider py-1">{type}</p>
+                  <Card className="bg-muted/30">
+                    <CardContent className="px-3 py-2">
+                      <p className="text-xs text-muted-foreground italic">Populated in Phase 2</p>
+                    </CardContent>
+                  </Card>
+                </div>
+              ))
+            ) : (
+              sortedTypes.map(type => {
+                const Icon = TYPE_ICON[type] ?? BookOpen
+                const entities = byType[type]
+                return (
+                  <div key={type}>
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider py-1">
+                      {type}s ({entities.length})
+                    </p>
+                    <div className="space-y-1">
+                      {entities.map(([id, entity]) => (
+                        <div key={id} className="flex items-start gap-2 px-2 py-1.5 rounded-md hover:bg-muted/50 transition-colors">
+                          <Icon size={12} className="mt-0.5 shrink-0 text-muted-foreground" />
+                          <div className="min-w-0">
+                            <p className="text-xs font-medium truncate">{entity.name}</p>
+                            {entity.aliases && entity.aliases.length > 0 && (
+                              <p className="text-[10px] text-muted-foreground truncate">
+                                {entity.aliases.slice(0, 2).join(', ')}
+                              </p>
+                            )}
+                          </div>
+                          <span className="text-[9px] text-muted-foreground/60 ml-auto shrink-0">{id}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })
+            )}
+          </div>
+        </div>
+      )}
+>>>>>>> eff70c1 (Redesign Bible Workshop: 5-stage flow with per-act and per-chapter generation)
     </div>
   )
 }

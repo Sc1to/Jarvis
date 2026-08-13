@@ -12,15 +12,17 @@ from deps import current_user
 
 router = APIRouter()
 
-CONSOLIDATOR_SYSTEM = """You are the Bible Consolidator. Extract every named entity from the approved story bible tiers and produce a structured JSON entity ledger.
+CONSOLIDATOR_SYSTEM = """You are the Bible Consolidator. Build a structured JSON entity ledger from a skeleton entity list and approved story content.
 
-Rules:
-- Assign unique IDs: CHAR_001, CHAR_002, LOC_001, LOC_002, FRAC_001, OBJ_001, etc.
-- Include every named character, location, faction, and significant object
-- For each entity, list all alias forms (name variants, role descriptions, nicknames, pronouns used)
-- coreFacts: 3-6 key timeless facts (for characters: appearance, personality, role; for locations: geography, culture, period setting)
-- eventLog: concrete events from the tier text, tagged to act and chapter number
+The skeleton is authoritative: preserve every skeleton entity's ID, name, type, and coreFacts exactly as given. Do not rename, merge, or re-ID skeleton entities.
+
+For every entity — skeleton and newly discovered:
+- aliases: add any name variants found in the story content
+- coreFacts: keep skeleton facts; add new facts from the story content (never remove existing ones)
+- eventLog: extract concrete events from the tier text, tagged to act and chapter number
 - lifecycle: list of act numbers where this entity is active
+
+New entities (not in the skeleton): assign IDs following the convention (CHAR_NNN, LOC_NNN, FRAC_NNN, OBJ_NNN), numbering from above the highest existing skeleton ID of that type.
 
 Output ONLY valid JSON. No preamble, no explanation, no markdown fences. Structure:
 {
@@ -28,7 +30,7 @@ Output ONLY valid JSON. No preamble, no explanation, no markdown fences. Structu
     "ID": {
       "type": "character|location|faction|object",
       "name": "canonical name",
-      "aliases": ["variant 1", "role description"],
+      "aliases": ["variant 1"],
       "coreFacts": {"key": "value"},
       "eventLog": [{"act": 1, "chapter": 1, "event": "what happens"}],
       "lifecycle": [1, 2, 3]
@@ -87,8 +89,29 @@ def _read_bible(book_id: str) -> dict | None:
 
 @router.get("/books/{book_id}/phase2/status")
 def phase2_status(book_id: str):
-    tiers = _read_tiers(book_id)
-    phase1_complete = len(tiers) == 4 and all(t.get("approved") for t in tiers)
+    book_dir = db.data_dir(book_id)
+
+    # Tiers 1 & 2 still live in tiers.json
+    tiers = _read_tiers(book_dir)
+    tiers_1_2_done = len(tiers) >= 2 and all(tiers[i].get("approved") for i in range(2))
+
+    # Tier 3: all acts approved
+    tier3_status_path = os.path.join(book_dir, "tier3", "status.json")
+    tier3_complete = False
+    if os.path.exists(tier3_status_path):
+        t3 = json.load(open(tier3_status_path))
+        acts = t3.get("acts", [])
+        tier3_complete = bool(acts) and all(a.get("approved") for a in acts)
+
+    # Tier 4: all chapters approved
+    tier4_status_path = os.path.join(book_dir, "tier4", "status.json")
+    tier4_complete = False
+    if os.path.exists(tier4_status_path):
+        t4 = json.load(open(tier4_status_path))
+        chapters = t4.get("chapters", [])
+        tier4_complete = bool(chapters) and all(c.get("approved") for c in chapters)
+
+    phase1_complete = tiers_1_2_done and tier3_complete and tier4_complete
 
     bible = _read_bible(book_id)
     bible_exists = bible is not None
@@ -115,21 +138,59 @@ def consolidate(book_id: str, user: str = Depends(current_user)):
             return
 
         book_dir = db.data_dir(book_id)
-        yield f'data: {json.dumps({"type": "status", "message": "Reading approved tiers…"})}\n\n'
+
+        # Skeleton — authoritative entity seed
+        skeleton_path = os.path.join(book_dir, "bible_skeleton.json")
+        skeleton_entities = []
+        if os.path.exists(skeleton_path):
+            skeleton = json.load(open(skeleton_path))
+            skeleton_entities = skeleton.get("entities", [])
+        skeleton_count = len(skeleton_entities)
+        yield f'data: {json.dumps({"type": "status", "message": f"Seeding from {skeleton_count} skeleton entities…"})}\n\n'
 
         ns_path = os.path.join(book_dir, "north_star.md")
         north_star = open(ns_path).read() if os.path.exists(ns_path) else ""
 
-        tiers = _read_tiers(book_id)
-        tier_labels = ["Book", "Acts", "Chapters", "Scenes"]
+        # Tiers 1 & 2
+        tiers = _read_tiers(book_dir)
+        tier_labels = ["Book", "Acts"]
         tier_text = "\n\n".join(
             f"## Tier {i + 1} — {tier_labels[i]}\n\n{t['content']}"
-            for i, t in enumerate(tiers)
+            for i, t in enumerate(tiers[:2])
             if t.get("approved") and t.get("content")
         )
 
-        context = f"## North Star\n\n{north_star}\n\n{tier_text}"
-        messages = [{"role": "user", "content": f"Extract the entity ledger from this story bible:\n\n{context}"}]
+        # Tier 3 — per-act chapter files
+        tier3_dir = os.path.join(book_dir, "tier3")
+        tier3_text = ""
+        if os.path.exists(tier3_dir):
+            act_files = sorted(f for f in os.listdir(tier3_dir) if f.startswith("act_") and f.endswith(".md"))
+            if act_files:
+                tier3_text = "\n\n".join(open(os.path.join(tier3_dir, f)).read() for f in act_files)
+
+        # Tier 4 — per-chapter scene files
+        tier4_dir = os.path.join(book_dir, "tier4")
+        tier4_text = ""
+        if os.path.exists(tier4_dir):
+            ch_files = sorted(f for f in os.listdir(tier4_dir) if f.startswith("chapter_") and f.endswith(".md"))
+            if ch_files:
+                tier4_text = "\n\n".join(open(os.path.join(tier4_dir, f)).read() for f in ch_files)
+
+        context = f"## North Star\n\n{north_star}"
+        if skeleton_entities:
+            context += f"\n\n## Skeleton Bible — Authoritative Entity List\n\n{json.dumps(skeleton_entities, indent=2)}"
+        if tier_text:
+            context += f"\n\n{tier_text}"
+        if tier3_text:
+            context += f"\n\n## Tier 3 — Chapter Summaries\n\n{tier3_text}"
+        if tier4_text:
+            context += f"\n\n## Tier 4 — Scene Lists\n\n{tier4_text}"
+
+        messages = [{"role": "user", "content": (
+            "Build the entity ledger from the skeleton and story content below. "
+            "Preserve skeleton entity IDs and coreFacts exactly. Add eventLog, lifecycle, "
+            "and any new entities from the story content.\n\n" + context
+        )}]
 
         yield f'data: {json.dumps({"type": "status", "message": "Running Bible Consolidator…"})}\n\n'
 
@@ -155,6 +216,7 @@ def consolidate(book_id: str, user: str = Depends(current_user)):
             "consolidated_at": datetime.now(timezone.utc).isoformat(),
             "phase2_status": "consolidated",
             "phase2_approved": False,
+            "skeleton_entity_count": skeleton_count,
         }
 
         with open(_bible_path(book_id), "w") as f:
@@ -163,7 +225,7 @@ def consolidate(book_id: str, user: str = Depends(current_user)):
         from git import Repo
         repo = Repo(book_dir)
         repo.index.add(["bible.json"])
-        repo.index.commit("Phase 2 — Consolidate entity ledger from approved tiers")
+        repo.index.commit("Phase 2 — Consolidate entity ledger (seeded from skeleton)")
 
         entity_count = len(bible.get("ledger", {}))
         yield f'data: {json.dumps({"type": "saved", "entity_count": entity_count})}\n\n'
