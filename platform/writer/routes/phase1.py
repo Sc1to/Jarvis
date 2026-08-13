@@ -56,14 +56,36 @@ Do not rephrase, restructure, summarise, or rewrite anything you were not asked 
 If you are unsure what to change, change as little as possible.
 Output only the modified document. No preamble, no explanation."""
 
-SCENE_WRITER_SYSTEM = """You are a scene writer for a novel. Write the full prose for one specific scene.
+SCENE_WRITER_SYSTEM = """You are a scene development editor. Write a detailed scene brief for one specific scene — not prose.
+
+Output the brief using these exact sections:
+
+## Location
+Specific geographical setting: place name, interior/exterior, time of day, relevant physical details.
+
+## Mood
+The dominant emotional atmosphere of the scene (e.g. tense, melancholic, hopeful, threatening). How it should feel to the reader.
+
+## Characters Present
+Each character with their emotional state and goal entering this scene.
+
+## Scene Beats
+Numbered list of what happens, in order. Concrete actions and decisions — no prose sentences, just clear beats.
+
+## Key Dialogue Points
+The exchanges or lines that must occur. Paraphrase is fine — capture intent, not exact wording.
+
+## Sensory & Atmosphere Notes
+Specific sensory details (sounds, smells, light, weather, texture) that should colour the scene.
+
+## Entry / Exit State
+- Entry: [world state at scene open]
+- Exit: [world state at scene close — this is the QA contract]
 
 Rules:
-- Write ONLY this scene — no transitions, no section headers, no scene number
 - Use specific character names, locations, and facts from the story bible and North Star
-- Match the Entry and Exit states from the scene plan exactly — Exit is your QA contract
-- Third person past tense unless the North Star specifies otherwise
-- Output only the prose — no metadata, no preamble"""
+- No prose — bullets and short sentences only
+- Be specific, not vague"""
 
 SCENE_BIBLE_SYNC_SYSTEM = """You are a story bible updater. Given an approved scene and the current entity skeleton, identify any NEW entities in the scene not yet in the skeleton.
 
@@ -1021,7 +1043,7 @@ def run_scene(book_id: str, chapter_num: int, body: RunSceneBody, user: str = De
         context += f"\n\n## Previous Scene (ending)\n\n…{prev_scene_tail}"
     context += f"\n\n## Scene to Write\n\n{scene_plan_section or f'Scene {body.scene} of Chapter {chapter_num}'}"
 
-    messages = [{"role": "user", "content": context + "\n\nWrite this scene in full prose now."}]
+    messages = [{"role": "user", "content": context + "\n\nWrite the scene brief now."}]
     provider = db.get_setting("agent_bible_agent_provider")
     model = db.get_setting("agent_bible_agent_model")
 
