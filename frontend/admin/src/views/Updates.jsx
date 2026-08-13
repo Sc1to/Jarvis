@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getUpdates, applyUpdates, gitPull, restartService, deployService } from '../api.js'
+import { getUpdates, applyUpdates, gitPull, restartService, deployService, getHealthCheck } from '../api.js'
 
 const SERVICES = ['admin', 'chat', 'writer', 'coding', 'trading', 'autocoder']
 
@@ -21,8 +21,10 @@ export default function Updates() {
   const [pulling, setPulling] = useState(false)
   const [pullResult, setPullResult] = useState(null)
   const [restarting, setRestarting] = useState(null)
+  const [restartPolling, setRestartPolling] = useState(false)
   const [restartMsg, setRestartMsg] = useState(null)
   const [deploying, setDeploying] = useState(false)
+  const [deployPolling, setDeployPolling] = useState(false)
   const [deployMsg, setDeployMsg] = useState(null)
   const [msg, setMsg] = useState(null)
   const [error, setError] = useState(null)
@@ -70,14 +72,56 @@ export default function Updates() {
     }
   }
 
+  // Poll /health-check until target service(s) report ok, or 60s elapses.
+  async function pollHealth(appName, setPolling, setMsg) {
+    setPolling(true)
+    // Let the service begin shutting down before the first check.
+    await new Promise(r => setTimeout(r, 2000))
+
+    const deadline = Date.now() + 60_000
+    const label = appName === 'all' ? 'All services' : appName
+
+    while (Date.now() < deadline) {
+      try {
+        const r = await getHealthCheck()
+        const all = r.data  // [{name, health: {status}}, ...]
+
+        // admin is never in the apps table — the health-check responding at
+        // all means admin is up (it IS the server that handles this request).
+        if (appName === 'admin') {
+          setMsg({ ok: true, text: '✓ admin is up and running' })
+          setPolling(false)
+          return
+        }
+
+        const targets = appName === 'all'
+          ? all.filter(s => s.health !== null)
+          : all.filter(s => s.name === appName)
+
+        if (targets.length > 0 && targets.every(s => s.health?.status === 'ok')) {
+          setMsg({ ok: true, text: `✓ ${label} ${appName === 'all' ? 'are' : 'is'} up and running` })
+          setPolling(false)
+          return
+        }
+      } catch {
+        // API down (admin restarting) — keep trying
+      }
+      await new Promise(r => setTimeout(r, 3000))
+    }
+
+    setMsg({ ok: false, text: `${label} didn't respond within 60s — check the dashboard` })
+    setPolling(false)
+  }
+
   async function deploy() {
     setDeploying(true)
     setDeployMsg(null)
+    setDeployPolling(false)
     try {
-      const r = await deployService('all')
-      setDeployMsg(r.data.message ?? 'Deploying…')
+      await deployService('all')
+      pollHealth('all', setDeployPolling, setDeployMsg)
     } catch (e) {
-      setDeployMsg(`Error: ${e.response?.data?.detail ?? e.message}`)
+      setDeployMsg({ ok: false, text: `Error: ${e.response?.data?.detail ?? e.message}` })
     } finally {
       setDeploying(false)
     }
@@ -86,11 +130,12 @@ export default function Updates() {
   async function restart(app) {
     setRestarting(app)
     setRestartMsg(null)
+    setRestartPolling(false)
     try {
       await restartService(app)
-      setRestartMsg(`${app === 'all' ? 'All services' : app} restarting…`)
+      pollHealth(app, setRestartPolling, setRestartMsg)
     } catch (e) {
-      setRestartMsg(`Error: ${e.response?.data?.detail ?? e.message}`)
+      setRestartMsg({ ok: false, text: `Error: ${e.response?.data?.detail ?? e.message}` })
     } finally {
       setRestarting(null)
     }
@@ -135,23 +180,26 @@ export default function Updates() {
           <div className="flex gap-2">
             <button
               onClick={deploy}
-              disabled={deploying || !!restarting}
+              disabled={deploying || deployPolling || !!restarting || restartPolling}
               className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs px-3 py-1.5 rounded"
             >
               {deploying ? 'Deploying…' : 'Deploy all'}
             </button>
             <button
               onClick={() => restart('all')}
-              disabled={deploying || !!restarting}
+              disabled={deploying || deployPolling || !!restarting || restartPolling}
               className="bg-red-700 hover:bg-red-600 disabled:opacity-50 text-white text-xs px-3 py-1.5 rounded"
             >
               {restarting === 'all' ? 'Restarting…' : 'Restart all'}
             </button>
           </div>
         </div>
+        {deployPolling && (
+          <p className="text-xs text-yellow-400">Waiting for services to come back up…</p>
+        )}
         {deployMsg && (
-          <p className={`text-xs ${deployMsg.startsWith('Error') ? 'text-red-400' : 'text-green-400'}`}>
-            {deployMsg}
+          <p className={`text-xs ${deployMsg.ok ? 'text-green-400' : 'text-red-400'}`}>
+            {deployMsg.text}
           </p>
         )}
         <div className="flex flex-wrap gap-2">
@@ -159,16 +207,19 @@ export default function Updates() {
             <button
               key={svc}
               onClick={() => restart(svc)}
-              disabled={!!restarting}
+              disabled={deploying || deployPolling || !!restarting || restartPolling}
               className="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-white text-xs px-3 py-1.5 rounded"
             >
               {restarting === svc ? 'Restarting…' : svc}
             </button>
           ))}
         </div>
+        {restartPolling && (
+          <p className="text-xs text-yellow-400">Waiting for service to come back up…</p>
+        )}
         {restartMsg && (
-          <p className={`text-xs ${restartMsg.startsWith('Error') ? 'text-red-400' : 'text-green-400'}`}>
-            {restartMsg}
+          <p className={`text-xs ${restartMsg.ok ? 'text-green-400' : 'text-red-400'}`}>
+            {restartMsg.text}
           </p>
         )}
       </div>
