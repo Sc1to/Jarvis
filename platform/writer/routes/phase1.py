@@ -135,7 +135,8 @@ Critical rules:
 - Entry and Exit must be different concrete facts, not restatements of each other
 - Use real names from the entity ledger and North Star — never placeholders like [protagonist] or [location]
 - Flat sequential list — no sub-headers, no act grouping header
-- Start directly with ### Chapter N — no preamble, no commentary""",
+- Chapter numbers are continuous across all acts — use the starting number given in ## Chapter Numbering above
+- Start directly with ### Chapter {N} using the starting number from context — no preamble, no commentary""",
 
     """Write the scene list for the current chapter only (see ## Current Chapter above).
 
@@ -628,6 +629,14 @@ def run_tier3_act(book_id: str, body: RunActBody, user: str = Depends(current_us
     if prior_acts_text:
         context += prior_acts_text
     context += f"\n\n## Current Act\n\nAct {body.act} — {act_title}"
+
+    # Continuous chapter numbering across acts
+    start_chapter = 1 + sum(
+        len(a.get("chapters", []))
+        for a in status.get("acts", [])
+        if a["act"] < body.act
+    )
+    context += f"\n\n## Chapter Numbering\n\nChapters are numbered continuously across all acts. This act's first chapter is Chapter {start_chapter}."
 
     directives_path = os.path.join(book_dir, "directives.md")
     if os.path.exists(directives_path):
