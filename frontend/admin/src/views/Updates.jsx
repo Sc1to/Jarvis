@@ -17,6 +17,7 @@ function fmtChecked(iso) {
 export default function Updates() {
   const [data, setData] = useState(null)
   const [svcStatus, setSvcStatus] = useState(null)
+  const [svcError, setSvcError] = useState(null)
   const [applying, setApplying] = useState(false)
   const [checking, setChecking] = useState(false)
   const [pulling, setPulling] = useState(false)
@@ -37,7 +38,8 @@ export default function Updates() {
       const [upd, status] = await Promise.allSettled([getUpdates(), getServicesStatus()])
       if (upd.status === 'fulfilled') setData(upd.value.data)
       else setError(upd.reason?.message ?? 'Failed to load updates')
-      if (status.status === 'fulfilled') setSvcStatus(status.value.data)
+      if (status.status === 'fulfilled') { setSvcStatus(status.value.data); setSvcError(null) }
+      else setSvcError(status.reason?.response?.data?.detail ?? status.reason?.message ?? 'Failed')
     } catch (e) {
       setError(e.message)
     } finally {
@@ -159,7 +161,9 @@ export default function Updates() {
               </tr>
             </thead>
             <tbody>
-              {svcStatus
+              {svcError
+                ? <tr><td colSpan={5} className="py-2 text-red-400">Error: {svcError}</td></tr>
+                : svcStatus
                 ? ['admin', 'chat', 'writer', 'coding', 'trading', 'autocoder'].map(svc => {
                     const s = svcStatus[svc]
                     if (!s) return null
@@ -189,7 +193,8 @@ export default function Updates() {
                       </tr>
                     )
                   })
-                : <tr><td colSpan={5} className="py-2 text-gray-500">Loading…</td></tr>}
+                : <tr><td colSpan={5} className="py-2 text-gray-500">Loading…</td></tr>
+              }
             </tbody>
           </table>
         </div>
