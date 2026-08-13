@@ -359,10 +359,17 @@ def _read_skeleton(book_id: str) -> dict:
 
 def _extract_json_skeleton(text: str) -> dict:
     text = text.strip()
-    if text.startswith("```"):
-        text = re.sub(r"^```(?:json)?\n?", "", text)
-        text = re.sub(r"\n?```$", "", text.strip())
-    return json.loads(text.strip())
+    if "```json" in text:
+        text = text[text.index("```json") + 7:]
+        text = text[:text.index("```")]
+    elif "```" in text:
+        text = text[text.index("```") + 3:]
+        text = text[:text.rindex("```")]
+    start = text.find("{")
+    end = text.rfind("}") + 1
+    if start == -1 or end == 0:
+        raise ValueError(f"No JSON object found in response (got {len(text)} chars)")
+    return json.loads(text[start:end])
 
 
 @router.get("/books/{book_id}/phase1/bible-skeleton")
