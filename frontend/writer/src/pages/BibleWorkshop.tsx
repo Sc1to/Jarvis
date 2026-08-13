@@ -8,7 +8,7 @@ import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 import { readSSE } from '@/lib/sse'
 import { API } from '@/lib/api'
-import { ChevronRight, Play, CheckCircle, Lock, Loader2, BookOpen, MapPin, Users, Plus, X } from 'lucide-react'
+import { ChevronRight, Play, CheckCircle, Lock, Loader2, BookOpen, MapPin, Users, Plus } from 'lucide-react'
 
 type Stage = 'book' | 'acts' | 'consolidate' | 'chapters' | 'scenes'
 type TierStatus = 'locked' | 'active' | 'running' | 'review' | 'approved'
@@ -94,7 +94,6 @@ export default function BibleWorkshopPage() {
   const [statuses, setStatuses] = useState<TierStatus[]>(['active', 'locked'])
   const [streaming, setStreaming] = useState(false)
   const [directive, setDirective] = useState('')
-  const [ledgerOpen, setLedgerOpen] = useState(false)
 
   // ── Stage state ──────────────────────────────────────────────────────────────
   const [activeStage, setActiveStage] = useState<Stage>('book')
@@ -741,7 +740,7 @@ export default function BibleWorkshopPage() {
                   <div className="space-y-3">
                     {ENTITY_TYPES.filter(t => skeleton.entities.some(e => e.type === t)).map(type => {
                       const Icon = TYPE_ICON[type] ?? BookOpen
-                      const entities = skeleton.entities.filter(e => e.type === t)
+                      const entities = skeleton.entities.filter(e => e.type === type)
                       return (
                         <div key={type}>
                           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">
