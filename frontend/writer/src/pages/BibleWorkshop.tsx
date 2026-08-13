@@ -114,6 +114,7 @@ export default function BibleWorkshopPage() {
   const [activeChapterNum, setActiveChapterNum] = useState<number | null>(null)
   const [chapterContents, setChapterContents] = useState<Record<number, string>>({})
   const [chapterRunning, setChapterRunning] = useState<number | null>(null)
+  const [chapterApproving, setChapterApproving] = useState<number | null>(null)
   const [chapterDirective, setChapterDirective] = useState('')
 
   // ── Scene management state (individual scene generation) ─────────────────────
@@ -463,12 +464,29 @@ export default function BibleWorkshopPage() {
 
   async function approveChapter(chapterNum: number) {
     const content = chapterContents[chapterNum] ?? ''
-    await fetch(`${API}/books/${bookId}/phase1/tier4/approve-chapter`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chapter: chapterNum, content }),
-    })
-    await refetchTier4()
+    setChapterApproving(chapterNum)
+    try {
+      const res = await fetch(`${API}/books/${bookId}/phase1/tier4/approve-chapter`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chapter: chapterNum, content }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        setChapterContents(prev => ({ ...prev, [chapterNum]: `⚠ Lock failed: ${err.detail ?? res.status}` }))
+        return
+      }
+      const data = await res.json()
+      if (!data.scenes) {
+        setChapterContents(prev => ({ ...prev, [chapterNum]: `⚠ No scenes parsed — check that the plan uses "### Scene N — Title" headers` }))
+        return
+      }
+    } catch {
+      setChapterContents(prev => ({ ...prev, [chapterNum]: '⚠ Connection error' }))
+    } finally {
+      setChapterApproving(null)
+      await refetchTier4()
+    }
   }
 
   async function editChapter(chapterNum: number) {
@@ -1014,6 +1032,7 @@ export default function BibleWorkshopPage() {
                   const isExpanded = activeChapterNum === chInfo.number
                   const planContent = chapterContents[chInfo.number]
                   const isPlanRunning = chapterRunning === chInfo.number
+                  const isPlanApproving = chapterApproving === chInfo.number
                   const hasScenes = !!(chInfo.scenes?.length)
 
                   return (
@@ -1056,8 +1075,9 @@ export default function BibleWorkshopPage() {
                                     </Button>
                                   )}
                                   {planContent !== undefined && !isPlanRunning && (
-                                    <Button size="sm" onClick={() => approveChapter(chInfo.number)} className="gap-2">
-                                      <Lock size={13} />Lock plan
+                                    <Button size="sm" onClick={() => approveChapter(chInfo.number)} disabled={isPlanApproving} className="gap-2">
+                                      {isPlanApproving ? <Loader2 size={13} className="animate-spin" /> : <Lock size={13} />}
+                                      {isPlanApproving ? 'Locking…' : 'Lock plan'}
                                     </Button>
                                   )}
                                 </div>

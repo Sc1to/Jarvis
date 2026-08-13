@@ -897,11 +897,14 @@ def approve_tier4_chapter(book_id: str, body: ApproveChapterBody):
         f.write(body.content)
 
     # Parse scene headings from the plan to create scene entries
-    scene_pattern = re.compile(r'^### Scene (\d+)\s*[—–-]\s*(.+)', re.MULTILINE)
+    scene_pattern = re.compile(r'^### Scene (\d+)\s*[—–:\-]+\s*(.+)', re.MULTILINE)
     scenes = [
         {"number": int(m.group(1)), "title": m.group(2).strip(), "approved": False}
         for m in scene_pattern.finditer(body.content)
     ]
+    if not scenes:
+        from fastapi import HTTPException
+        raise HTTPException(422, "No scene headers found in plan — ensure the agent output uses '### Scene N — Title' format")
 
     status = _read_tier4_status(book_id)
     for ch in status.get("chapters", []):
