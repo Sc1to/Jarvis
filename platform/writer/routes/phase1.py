@@ -885,6 +885,16 @@ def run_tier4_chapter(book_id: str, body: RunChapterBody, user: str = Depends(cu
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
+@router.get("/books/{book_id}/phase1/tier4/chapter/{chapter_num}/plan")
+def get_tier4_chapter_plan(book_id: str, chapter_num: int):
+    path = _tier4_chapter_path(book_id, chapter_num)
+    if not os.path.exists(path):
+        from fastapi import HTTPException
+        raise HTTPException(404, "No plan on disk for this chapter")
+    with open(path) as f:
+        return {"content": f.read()}
+
+
 class ApproveChapterBody(BaseModel):
     chapter: int
     content: str

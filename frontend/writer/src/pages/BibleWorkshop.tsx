@@ -115,6 +115,7 @@ export default function BibleWorkshopPage() {
   const [chapterContents, setChapterContents] = useState<Record<number, string>>({})
   const [chapterRunning, setChapterRunning] = useState<number | null>(null)
   const [chapterApproving, setChapterApproving] = useState<number | null>(null)
+  const [chapterLockError, setChapterLockError] = useState<Record<number, string>>({})
   const [chapterDirective, setChapterDirective] = useState('')
 
   // ── Scene management state (individual scene generation) ─────────────────────
@@ -194,6 +195,19 @@ export default function BibleWorkshopPage() {
     setActiveStage('scenes')
     hasSetInitial.current = true
   }, [savedTiers, skeleton, tier3Status, tier4Status])
+
+  // Auto-load chapter plan from disk when accordion opens and plan exists but isn't in session state
+  useEffect(() => {
+    if (activeChapterNum === null || !tier4Status) return
+    const chInfo = tier4Status.chapters.find(c => c.number === activeChapterNum)
+    if (!chInfo || chInfo.scenes?.length || chapterContents[activeChapterNum] !== undefined || !chInfo.has_content) return
+    fetch(`${API}/books/${bookId}/phase1/tier4/chapter/${activeChapterNum}/plan`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data?.content) setChapterContents(prev => ({ ...prev, [activeChapterNum]: data.content })) })
+      .catch(() => {})
+  // chapterContents intentionally omitted — only run when accordion opens or status changes
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeChapterNum, bookId, tier4Status])
 
   // Sync p2Step from server state
   useEffect(() => {
@@ -465,6 +479,7 @@ export default function BibleWorkshopPage() {
   async function approveChapter(chapterNum: number) {
     const content = chapterContents[chapterNum] ?? ''
     setChapterApproving(chapterNum)
+    setChapterLockError(prev => { const n = { ...prev }; delete n[chapterNum]; return n })
     try {
       const res = await fetch(`${API}/books/${bookId}/phase1/tier4/approve-chapter`, {
         method: 'POST',
@@ -473,16 +488,20 @@ export default function BibleWorkshopPage() {
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
-        setChapterContents(prev => ({ ...prev, [chapterNum]: `⚠ Lock failed: ${err.detail ?? res.status}` }))
+        setChapterLockError(prev => ({ ...prev, [chapterNum]: err.detail ?? `Error ${res.status}` }))
         return
       }
       const data = await res.json()
       if (!data.scenes) {
-        setChapterContents(prev => ({ ...prev, [chapterNum]: `⚠ No scenes parsed — check that the plan uses "### Scene N — Title" headers` }))
+        setChapterLockError(prev => ({ ...prev, [chapterNum]: 'No scenes parsed — ensure headers use "### Scene N — Title" format' }))
         return
       }
+      // Auto-open the next unlocked chapter
+      const chapters = tier4Status?.chapters ?? []
+      const nextCh = chapters.find(c => c.number > chapterNum && !c.approved)
+      if (nextCh) setActiveChapterNum(nextCh.number)
     } catch {
-      setChapterContents(prev => ({ ...prev, [chapterNum]: '⚠ Connection error' }))
+      setChapterLockError(prev => ({ ...prev, [chapterNum]: 'Connection error — is the server running?' }))
     } finally {
       setChapterApproving(null)
       await refetchTier4()
@@ -1082,15 +1101,34 @@ export default function BibleWorkshopPage() {
                                   )}
                                 </div>
                               </div>
+                              {chapterLockError[chInfo.number] && (
+                                <p className="text-xs text-red-500">⚠ {chapterLockError[chInfo.number]}</p>
+                              )}
                               {planContent !== undefined && (
-                                <Card className="min-h-[140px]"><CardContent className="p-4">
-                                  <pre className="text-sm whitespace-pre-wrap font-mono leading-relaxed text-foreground">
-                                    {planContent}{isPlanRunning && <span className="animate-pulse">▋</span>}
-                                  </pre>
-                                </CardContent></Card>
+                                <>
+                                  <Card className="min-h-[140px]"><CardContent className="p-4">
+                                    <pre className="text-sm whitespace-pre-wrap font-mono leading-relaxed text-foreground">
+                                      {planContent}{isPlanRunning && <span className="animate-pulse">▋</span>}
+                                    </pre>
+                                  </CardContent></Card>
+                                  {!isPlanRunning && (
+                                    <div className="flex gap-2 pt-1">
+                                      <textarea
+                                        value={chapterDirective}
+                                        onChange={e => setChapterDirective(e.target.value)}
+                                        placeholder='e.g. "Add a mystery subplot to scene 2…"'
+                                        rows={2}
+                                        className="flex-1 resize-none rounded-md border border-input bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                      />
+                                      <Button variant="outline" size="sm" onClick={() => editChapter(chInfo.number)} disabled={!chapterDirective.trim()}>
+                                        Edit plan
+                                      </Button>
+                                    </div>
+                                  )}
+                                </>
                               )}
                               {planContent === undefined && chInfo.has_content && (
-                                <p className="text-xs text-muted-foreground italic">Plan exists from a previous session. Re-plan or reload to see it.</p>
+                                <p className="text-xs text-muted-foreground italic">Loading plan…</p>
                               )}
                             </>
                           )}
