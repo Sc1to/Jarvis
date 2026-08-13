@@ -396,12 +396,19 @@ def mini_consolidate(book_id: str, user: str = Depends(current_user)):
 
     messages = [
         {"role": "user", "content": (
-            "Extract a JSON story bible skeleton from the source material below. "
-            "Output ONLY the raw JSON object — no preamble, no markdown fences, no commentary.\n\n"
+            "Fill in the JSON template below using ONLY the source material. "
+            "Output the completed JSON and nothing else — no preamble, no explanation.\n\n"
             f"## North Star\n\n{north_star}\n\n"
-            f"## Act Breakdown (Tier 2)\n\n{tier2}"
+            f"## Act Breakdown (Tier 2)\n\n{tier2}\n\n"
+            "Fill in this template:\n"
+            '{\n'
+            '  "acts": [{"number": 1, "title": "act title from text"}, ...],\n'
+            '  "entities": [\n'
+            '    {"id": "CHAR_001", "name": "full name", "type": "character", "aliases": [], "coreFacts": {}, "appearsInActs": [1]},\n'
+            '    {"id": "LOC_001", "name": "place name", "type": "location", "aliases": [], "coreFacts": {}, "appearsInActs": [1]}\n'
+            '  ]\n'
+            '}'
         )},
-        {"role": "assistant", "content": "{"},
     ]
 
     provider = db.get_setting("agent_bible_agent_provider")
@@ -422,7 +429,7 @@ def mini_consolidate(book_id: str, user: str = Depends(current_user)):
             return
 
         try:
-            skeleton = _extract_json_skeleton("{" + full_text)
+            skeleton = _extract_json_skeleton(full_text)
         except Exception as e:
             import logging
             logging.getLogger(__name__).error("mini-consolidate parse fail:\n%s", full_text[:500])
