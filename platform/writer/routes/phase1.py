@@ -154,8 +154,8 @@ Critical rules:
 - Entry and Exit must be meaningfully different — Exit is not a restatement of Entry
 - Setting must be a specific named location from the entity ledger, not a vague description
 - POV must be a named character from the entity ledger
-- Scene numbers restart at 1 for each chapter
-- No preamble, no commentary — start directly with ### Scene 1""",
+- Scene numbers are continuous across the whole novel — the starting number for this chapter is given in ## Scene Numbering above; use it for the first scene
+- No preamble, no commentary — start directly with ### Scene {N} using the starting number from context""",
 ]
 
 
@@ -838,6 +838,15 @@ def run_tier4_chapter(book_id: str, body: RunChapterBody, user: str = Depends(cu
         context += f"\n\n## Current Chapter\n\nChapter {body.chapter} — {chapter_title}"
     if next_summary:
         context += f"\n\n## Next Chapter (Chapter {body.chapter + 1}) — forward context\n\n{next_summary}"
+
+    # Continuous scene numbering: count all scenes in earlier chapters
+    tier4_status = _read_tier4_status(book_id)
+    start_scene = 1 + sum(
+        len(ch.get("scenes", []))
+        for ch in tier4_status.get("chapters", [])
+        if ch["number"] < body.chapter
+    )
+    context += f"\n\n## Scene Numbering\n\nScenes are numbered continuously across the whole novel. This chapter's first scene is Scene {start_scene}."
 
     instruction = prompt_store.get("tier_scenes", TIER_INSTRUCTIONS[3])
     messages = [{"role": "user", "content": f"{context}\n\n---\n\n{instruction}"}]
