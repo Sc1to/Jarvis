@@ -75,7 +75,7 @@ export default function Updates() {
   // Poll /health-check until target service(s) report ok, or 60s elapses.
   async function pollHealth(appName, setPolling, setMsg) {
     setPolling(true)
-    // Brief pause so the service has time to begin its restart cycle.
+    // Let the service begin shutting down before the first check.
     await new Promise(r => setTimeout(r, 2000))
 
     const deadline = Date.now() + 60_000
@@ -85,16 +85,26 @@ export default function Updates() {
       try {
         const r = await getHealthCheck()
         const all = r.data  // [{name, health: {status}}, ...]
+
+        // admin is never in the apps table — the health-check responding at
+        // all means admin is up (it IS the server that handles this request).
+        if (appName === 'admin') {
+          setMsg({ ok: true, text: '✓ admin is up and running' })
+          setPolling(false)
+          return
+        }
+
         const targets = appName === 'all'
           ? all.filter(s => s.health !== null)
           : all.filter(s => s.name === appName)
+
         if (targets.length > 0 && targets.every(s => s.health?.status === 'ok')) {
           setMsg({ ok: true, text: `✓ ${label} ${appName === 'all' ? 'are' : 'is'} up and running` })
           setPolling(false)
           return
         }
       } catch {
-        // health-check may fail transiently if admin itself restarts — keep trying
+        // API down (admin restarting) — keep trying
       }
       await new Promise(r => setTimeout(r, 3000))
     }
