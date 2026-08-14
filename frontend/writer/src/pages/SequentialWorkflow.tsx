@@ -331,7 +331,19 @@ export default function SequentialWorkflow() {
               <p className="text-sm text-muted-foreground">Generate a detailed planning brief for Scene {scene}.</p>
               {streaming
                 ? <StreamDisplay ref={streamRef} text={streamText} />
-                : <Button onClick={() => runSSE(`${base}/phase1/tier4/chapter/${chapter}/run-scene`, { scene })}>Generate brief</Button>
+                : (
+                  <div className="space-y-2">
+                    <textarea
+                      value={directive}
+                      onChange={e => setDirective(e.target.value)}
+                      placeholder="Optional directive — e.g. 'raise tension', 'keep it brief', 'focus on character reaction'…"
+                      className="w-full h-20 p-3 text-sm rounded-md border border-input bg-background resize-y placeholder:text-muted-foreground/50"
+                    />
+                    <Button onClick={() => runSSE(`${base}/phase1/tier4/chapter/${chapter}/run-scene`, directive.trim() ? { scene, directive } : { scene })}>
+                      Generate brief
+                    </Button>
+                  </div>
+                )
               }
             </div>
           )}

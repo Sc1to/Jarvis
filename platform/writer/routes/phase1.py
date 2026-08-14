@@ -1060,6 +1060,7 @@ def edit_tier4_chapter(book_id: str, body: EditChapterBody, user: str = Depends(
 
 class RunSceneBody(BaseModel):
     scene: int
+    directive: str = ""
 
 
 @router.post("/books/{book_id}/phase1/tier4/chapter/{chapter_num}/run-scene")
@@ -1099,6 +1100,8 @@ def run_scene(book_id: str, chapter_num: int, body: RunSceneBody, user: str = De
     if prev_scene_tail:
         context += f"\n\n## Previous Scene (ending)\n\n…{prev_scene_tail}"
     context += f"\n\n## Scene to Write\n\n{scene_plan_section or f'Scene {body.scene} of Chapter {chapter_num}'}"
+    if body.directive.strip():
+        context += f"\n\n## Author directive\n\n{body.directive}"
 
     messages = [{"role": "user", "content": context + "\n\nWrite the scene brief now. Use ONLY the 7 section headers from the instructions. Do NOT write prose sentences or paragraphs. Bullets and short phrases only."}]
     provider = db.get_setting("agent_bible_agent_provider")
