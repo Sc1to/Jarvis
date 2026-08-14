@@ -160,6 +160,7 @@ export default function SequentialWorkflow() {
   const [editContent, setEditContent] = useState('')
   // For consolidate_act: 'idle' | 'consolidated' | 'run_done'
   const [phase2Step, setPhase2Step] = useState<'idle' | 'consolidated' | 'run_done'>('idle')
+  const [directive, setDirective] = useState('')
   const streamRef = useRef<HTMLDivElement>(null)
   const prevStepKey = useRef<string>('')
 
@@ -180,6 +181,7 @@ export default function SequentialWorkflow() {
     setError(null)
     setEditContent(current?.content ?? '')
     setPhase2Step('idle')
+    setDirective('')
   }, [stepKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const refetch = () => qc.invalidateQueries({ queryKey: ['seq-progress', bookId] })
@@ -379,7 +381,19 @@ export default function SequentialWorkflow() {
               <p className="text-sm text-muted-foreground">Write the prose for Scene {scene}.</p>
               {streaming
                 ? <StreamDisplay ref={streamRef} text={streamText} />
-                : <Button onClick={() => runSSE(`${base}/phase3/chapter/${chapter}/scene/${scene}/write`)}>Write scene</Button>
+                : (
+                  <div className="space-y-2">
+                    <textarea
+                      value={directive}
+                      onChange={e => setDirective(e.target.value)}
+                      placeholder="Optional directive — e.g. 'make it tense', 'focus on subtext', 'cut the preamble'…"
+                      className="w-full h-20 p-3 text-sm rounded-md border border-input bg-background resize-y placeholder:text-muted-foreground/50"
+                    />
+                    <Button onClick={() => runSSE(`${base}/phase3/chapter/${chapter}/scene/${scene}/write`, directive.trim() ? { directive } : undefined)}>
+                      Write scene
+                    </Button>
+                  </div>
+                )
               }
             </div>
           )}

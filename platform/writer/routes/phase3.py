@@ -692,8 +692,12 @@ def sequential_progress(book_id: str):
     return {"ready": True, "acts": acts, "current": current}
 
 
+class WriteSceneSequentialBody(BaseModel):
+    directive: str = ""
+
+
 @router.post("/books/{book_id}/phase3/chapter/{chapter}/scene/{scene}/write")
-def write_scene_sequential(book_id: str, chapter: int, scene: int, user: str = Depends(current_user)):
+def write_scene_sequential(book_id: str, chapter: int, scene: int, body: WriteSceneSequentialBody, user: str = Depends(current_user)):
     async def generate():
         writer_provider = db.get_setting("agent_writer_agent_provider")
         writer_model = db.get_setting("agent_writer_agent_model")
@@ -750,7 +754,8 @@ def write_scene_sequential(book_id: str, chapter: int, scene: int, user: str = D
             f"## Prior scenes in this chapter\n\n{prior_text}\n\n"
             f"## Scene Plan\n\n{scene_plan_section or f'Scene {scene} of Chapter {chapter}'}\n\n"
             f"## Scene Brief\n\n{brief_content}\n\n"
-            f"Chapter: {chapter} | Scene: {scene}\n\nWrite this scene now."
+            + (f"## Author directive\n\n{body.directive}\n\n" if body.directive.strip() else "")
+            + f"Chapter: {chapter} | Scene: {scene}\n\nWrite this scene now."
         )
 
         scene_text = ""
