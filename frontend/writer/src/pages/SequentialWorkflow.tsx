@@ -409,7 +409,7 @@ export default function SequentialWorkflow() {
               {/* Step 1: consolidate */}
               <div className="space-y-2">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Step 1 — Consolidate</p>
-                {(phase2Step === 'idle' || (streaming && phase2Step === 'idle')) && streamText && (
+                {phase2Step === 'idle' && streamText && (
                   <StreamDisplay ref={streamRef} text={streamText} />
                 )}
                 <Button
