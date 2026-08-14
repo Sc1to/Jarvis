@@ -226,7 +226,7 @@ export default function SequentialWorkflow() {
     <div className="flex-1 flex flex-col items-center justify-center gap-3 p-8 text-center max-w-md mx-auto">
       <p className="text-sm font-medium">Sequential mode not ready</p>
       <p className="text-sm text-muted-foreground">{progress.reason}</p>
-      <p className="text-xs text-muted-foreground">Complete the Bible Workshop through Acts (Tier 2) first.</p>
+      <p className="text-xs text-muted-foreground">Complete mini-consolidation in Bible Workshop first (Book → Acts → Consolidate).</p>
     </div>
   )
 

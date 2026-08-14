@@ -550,11 +550,24 @@ def _read_json(path: str, default):
 def sequential_progress(book_id: str):
     book_dir = db.data_dir(book_id)
 
-    tiers = _read_tiers(book_id)
-    if not (len(tiers) >= 2 and tiers[1].get("approved")):
-        return {"ready": False, "reason": "Acts (Tier 2) not yet approved"}
+    # Readiness: skeleton must exist (mini-consolidation done, implies Tier 2 approved)
+    skeleton_path = os.path.join(book_dir, "bible_skeleton.json")
+    if not os.path.exists(skeleton_path):
+        return {"ready": False, "reason": "Mini-consolidation not yet complete"}
+    skeleton = json.load(open(skeleton_path))
+    if not skeleton.get("acts"):
+        return {"ready": False, "reason": "No acts found — run mini-consolidation in Bible Workshop"}
 
-    t3 = _read_json(os.path.join(book_dir, "tier3", "status.json"), {"acts": []})
+    # Load tier3 status; if it doesn't exist yet, build from skeleton acts
+    t3_path = os.path.join(book_dir, "tier3", "status.json")
+    if os.path.exists(t3_path):
+        t3 = json.load(open(t3_path))
+    else:
+        t3 = {"acts": [
+            {"act": a["number"], "title": a.get("title", f"Act {a['number']}"), "approved": False, "chapters": []}
+            for a in skeleton.get("acts", [])
+        ]}
+
     t4 = _read_json(os.path.join(book_dir, "tier4", "status.json"), {"chapters": []})
     seq_state = _read_json(os.path.join(book_dir, "sequential_state.json"), {"acts_consolidated": []})
     consolidated = set(seq_state.get("acts_consolidated", []))
