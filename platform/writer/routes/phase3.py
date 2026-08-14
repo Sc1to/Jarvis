@@ -93,6 +93,10 @@ def _read_north_star(book_id: str) -> str:
     p = os.path.join(db.data_dir(book_id), "north_star.md")
     return open(p).read() if os.path.exists(p) else ""
 
+def _read_writing_prefs(book_id: str) -> str:
+    p = os.path.join(db.data_dir(book_id), "writing_prefs.md")
+    return open(p).read() if os.path.exists(p) else ""
+
 def _read_bible(book_id: str) -> dict:
     p = os.path.join(db.data_dir(book_id), "bible.json")
     return json.load(open(p)) if os.path.exists(p) else {"ledger": {}}
@@ -188,8 +192,10 @@ def write_chapter(book_id: str, body: WriteChapterBody, user: str = Depends(curr
             return
 
         north_star = _read_north_star(book_id)
+        writing_prefs = _read_writing_prefs(book_id)
         tiers = _read_tiers(book_id)
-        tier4_content = tiers[3]["content"] if len(tiers) >= 4 and tiers[3].get("content") else ""
+        tier4_path = os.path.join(book_dir, "tier4", f"chapter_{chapter:02d}.md")
+        tier4_content = open(tier4_path).read() if os.path.exists(tier4_path) else ""
         bible = _read_bible(book_id)
         ledger_json = json.dumps(bible.get("ledger", {}))
 
@@ -247,7 +253,8 @@ def write_chapter(book_id: str, body: WriteChapterBody, user: str = Depends(curr
 
                 writer_user = (
                     f"## North Star\n\n{north_star}\n\n"
-                    f"## Entity Ledger\n\n{ledger_json}\n\n"
+                    + (f"## Writing Preferences\n\n{writing_prefs}\n\n" if writing_prefs else "")
+                    + f"## Entity Ledger\n\n{ledger_json}\n\n"
                     f"## Prior scenes in this chapter\n\n{prior_text}"
                     + (f"\n\n## Prior chapter context\n\n{prior_bridge}" if prior_bridge else "")
                     + f"\n\n## Scene contract\n\n"
@@ -442,6 +449,7 @@ def rewrite_scene(book_id: str, chapter: int, scene: int, body: RewriteBody, use
             return
 
         north_star = _read_north_star(book_id)
+        writing_prefs = _read_writing_prefs(book_id)
         ledger_json = json.dumps(_read_bible(book_id).get("ledger", {}))
 
         plan_path = _chapter_plan_path(book_id, chapter)
@@ -460,7 +468,8 @@ def rewrite_scene(book_id: str, chapter: int, scene: int, body: RewriteBody, use
 
         writer_user = (
             f"## North Star\n\n{north_star}\n\n"
-            f"## Entity Ledger\n\n{ledger_json}\n\n"
+            + (f"## Writing Preferences\n\n{writing_prefs}\n\n" if writing_prefs else "")
+            + f"## Entity Ledger\n\n{ledger_json}\n\n"
             f"## Prior scenes in this chapter\n\n{prior_text}\n\n"
             f"## Scene contract\n\nChapter: {chapter} | Scene: {scene}\n"
             f"Brief: {brief}\nExit state: {exit_state}\n\n"
@@ -530,3 +539,284 @@ def rewrite_scene(book_id: str, chapter: int, scene: int, body: RewriteBody, use
 
     return StreamingResponse(generate(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+# ── Sequential mode ────────────────────────────────────────────────────────────
+
+def _read_json(path: str, default):
+    return json.load(open(path)) if os.path.exists(path) else default
+
+
+@router.get("/books/{book_id}/sequential/progress")
+def sequential_progress(book_id: str):
+    book_dir = db.data_dir(book_id)
+
+    tiers = _read_tiers(book_id)
+    if not (len(tiers) >= 2 and tiers[1].get("approved")):
+        return {"ready": False, "reason": "Acts (Tier 2) not yet approved"}
+
+    t3 = _read_json(os.path.join(book_dir, "tier3", "status.json"), {"acts": []})
+    t4 = _read_json(os.path.join(book_dir, "tier4", "status.json"), {"chapters": []})
+    seq_state = _read_json(os.path.join(book_dir, "sequential_state.json"), {"acts_consolidated": []})
+    consolidated = set(seq_state.get("acts_consolidated", []))
+    t4_chapters = {c["number"]: c for c in t4.get("chapters", [])}
+
+    acts = []
+    current = None  # first incomplete step
+
+    for act_info in t3.get("acts", []):
+        act_num = act_info["act"]
+        act_approved = act_info.get("approved", False)
+        act_content_path = os.path.join(book_dir, "tier3", f"act_{act_num}.md")
+        act_has_content = os.path.exists(act_content_path)
+        act_consolidated = act_num in consolidated
+
+        if current is None:
+            if not act_has_content:
+                current = {"act": act_num, "chapter": None, "scene": None, "step": "generate_chapters"}
+            elif not act_approved:
+                current = {
+                    "act": act_num, "chapter": None, "scene": None, "step": "approve_chapters",
+                    "content": open(act_content_path).read(),
+                }
+
+        chapters_out = []
+        all_act_done = True
+
+        for ch_ref in act_info.get("chapters", []):
+            ch_num = ch_ref["number"]
+            ch_t4 = t4_chapters.get(ch_num, {})
+            plan_path = os.path.join(book_dir, "tier4", f"chapter_{ch_num:02d}.md")
+            plan_has_content = os.path.exists(plan_path)
+            plan_scenes = ch_t4.get("scenes", [])
+            plan_approved = bool(plan_scenes)
+            meta = _read_json(os.path.join(book_dir, f"chapter_{ch_num:02d}_meta.json"), {"scenes": []})
+            meta_by_scene = {s.get("scene"): s for s in meta.get("scenes", [])}
+
+            if current is None and act_approved:
+                if not plan_has_content:
+                    current = {"act": act_num, "chapter": ch_num, "scene": None, "step": "generate_plan"}
+                    all_act_done = False
+                elif not plan_approved:
+                    current = {
+                        "act": act_num, "chapter": ch_num, "scene": None, "step": "approve_plan",
+                        "content": open(plan_path).read(),
+                    }
+                    all_act_done = False
+
+            scenes_out = []
+            for s_ref in plan_scenes:
+                sc_num = s_ref["number"]
+                brief_path = os.path.join(book_dir, "tier4", f"chapter_{ch_num:02d}_scene_{sc_num:02d}.md")
+                brief_has_content = os.path.exists(brief_path)
+                brief_approved = s_ref.get("approved", False)
+                sc_meta = meta_by_scene.get(sc_num, {})
+                prose_written = sc_meta.get("status") == "written"
+                prose_approved = sc_meta.get("prose_approved", False)
+
+                if not prose_approved:
+                    all_act_done = False
+                    if current is None and act_approved and plan_approved:
+                        if not brief_has_content:
+                            current = {"act": act_num, "chapter": ch_num, "scene": sc_num, "step": "write_brief"}
+                        elif not brief_approved:
+                            current = {
+                                "act": act_num, "chapter": ch_num, "scene": sc_num, "step": "approve_brief",
+                                "content": open(brief_path).read(),
+                            }
+                        elif not prose_written:
+                            current = {"act": act_num, "chapter": ch_num, "scene": sc_num, "step": "write_prose",
+                                       "brief": open(brief_path).read() if brief_has_content else ""}
+                        else:
+                            # prose written but not approved — extract section from chapter file
+                            ch_prose = ""
+                            if os.path.exists(_chapter_path(book_id, ch_num)):
+                                raw = open(_chapter_path(book_id, ch_num)).read()
+                                m = re.search(
+                                    rf"## Scene {sc_num}\n\n(.*?)(?=\n\n---\n\n## Scene |\Z)",
+                                    raw, re.DOTALL
+                                )
+                                ch_prose = m.group(1).strip() if m else ""
+                            current = {
+                                "act": act_num, "chapter": ch_num, "scene": sc_num, "step": "approve_prose",
+                                "content": ch_prose,
+                            }
+
+                scenes_out.append({
+                    "number": sc_num,
+                    "title": s_ref.get("title", f"Scene {sc_num}"),
+                    "brief_has_content": brief_has_content,
+                    "brief_approved": brief_approved,
+                    "prose_written": prose_written,
+                    "prose_approved": prose_approved,
+                })
+
+            chapters_out.append({
+                "number": ch_num,
+                "title": ch_ref.get("title", f"Chapter {ch_num}"),
+                "plan_has_content": plan_has_content,
+                "plan_approved": plan_approved,
+                "scenes": scenes_out,
+            })
+
+        if all_act_done and not act_consolidated and current is None and act_approved:
+            current = {"act": act_num, "chapter": None, "scene": None, "step": "consolidate_act"}
+
+        acts.append({
+            "number": act_num,
+            "title": act_info.get("title", f"Act {act_num}"),
+            "approved": act_approved,
+            "consolidated": act_consolidated,
+            "chapters": chapters_out,
+        })
+
+    if current is None:
+        current = {"act": None, "chapter": None, "scene": None, "step": "done"}
+
+    return {"ready": True, "acts": acts, "current": current}
+
+
+@router.post("/books/{book_id}/phase3/chapter/{chapter}/scene/{scene}/write")
+def write_scene_sequential(book_id: str, chapter: int, scene: int, user: str = Depends(current_user)):
+    async def generate():
+        writer_provider = db.get_setting("agent_writer_agent_provider")
+        writer_model = db.get_setting("agent_writer_agent_model")
+        if not writer_provider or not writer_model:
+            yield _sse({"type": "error", "message": "Writer agent not configured in Settings."})
+            return
+
+        book_dir = db.data_dir(book_id)
+        brief_path = os.path.join(book_dir, "tier4", f"chapter_{chapter:02d}_scene_{scene:02d}.md")
+        if not os.path.exists(brief_path):
+            yield _sse({"type": "error", "message": f"Scene {scene} brief not found — generate and approve it first."})
+            return
+
+        brief_content = open(brief_path).read()
+        tier4_path = os.path.join(book_dir, "tier4", f"chapter_{chapter:02d}.md")
+        chapter_plan = open(tier4_path).read() if os.path.exists(tier4_path) else ""
+
+        scene_plan_section = ""
+        if chapter_plan:
+            m = re.search(
+                r'^(### Scene ' + str(scene) + r'\s*[—–-].*?)(?=^### Scene \d+|\Z)',
+                chapter_plan, re.MULTILINE | re.DOTALL
+            )
+            if m:
+                scene_plan_section = m.group(1).strip()
+
+        north_star = _read_north_star(book_id)
+        writing_prefs = _read_writing_prefs(book_id)
+        ledger_json = json.dumps(_read_bible(book_id).get("ledger", {}))
+
+        # Prior scenes already written in this chapter
+        prior_text = "None yet."
+        chapter_prose_path = _chapter_path(book_id, chapter)
+        if os.path.exists(chapter_prose_path):
+            raw = open(chapter_prose_path).read()
+            parts = raw.split("## Scene ")
+            prior_parts = []
+            for p in parts[1:]:
+                header = p.split("\n", 1)[0].strip()
+                try:
+                    sn = int(header)
+                    if sn < scene:
+                        prose = p.split("\n", 1)[1].strip() if "\n" in p else ""
+                        prior_parts.append(f"[Scene {sn}]\n{prose.rstrip('- ').strip()}")
+                except ValueError:
+                    pass
+            if prior_parts:
+                prior_text = "\n\n---\n\n".join(prior_parts)
+
+        writer_user = (
+            f"## North Star\n\n{north_star}\n\n"
+            + (f"## Writing Preferences\n\n{writing_prefs}\n\n" if writing_prefs else "")
+            + f"## Entity Ledger\n\n{ledger_json}\n\n"
+            f"## Prior scenes in this chapter\n\n{prior_text}\n\n"
+            f"## Scene Plan\n\n{scene_plan_section or f'Scene {scene} of Chapter {chapter}'}\n\n"
+            f"## Scene Brief\n\n{brief_content}\n\n"
+            f"Chapter: {chapter} | Scene: {scene}\n\nWrite this scene now."
+        )
+
+        scene_text = ""
+        yield _sse({"type": "scene_start", "scene": scene, "chapter": chapter})
+        try:
+            async for token in llm.provider_tokens(
+                writer_provider, writer_model,
+                [{"role": "user", "content": writer_user}],
+                prompt_store.get("writer", WRITER_SYSTEM),
+                user,
+            ):
+                scene_text += token
+                yield _sse({"type": "token", "content": token})
+        except Exception as e:
+            yield _sse({"type": "error", "message": str(e)})
+            return
+
+        # Upsert ## Scene N section in chapter_NN.md
+        if os.path.exists(chapter_prose_path):
+            raw = open(chapter_prose_path).read()
+            if re.search(rf"^## Scene {scene}\b", raw, re.MULTILINE):
+                new_content = re.sub(
+                    rf"(## Scene {scene}\n\n)(.*?)(?=\n\n---\n\n## Scene |\Z)",
+                    f"## Scene {scene}\n\n{scene_text}",
+                    raw, flags=re.DOTALL,
+                )
+            else:
+                new_content = raw.rstrip() + f"\n\n---\n\n## Scene {scene}\n\n{scene_text}"
+        else:
+            new_content = f"# Chapter {chapter}\n\n## Scene {scene}\n\n{scene_text}"
+
+        with open(chapter_prose_path, "w") as f:
+            f.write(new_content)
+
+        meta_path = _chapter_meta_path(book_id, chapter)
+        meta = _read_json(meta_path, {"chapter": chapter, "scenes": [], "status": "written"})
+        meta.setdefault("written_at", datetime.now(timezone.utc).isoformat())
+        meta["status"] = "written"
+        existing = next((s for s in meta["scenes"] if s.get("scene") == scene), None)
+        if existing:
+            existing.update({"status": "written", "word_count": len(scene_text.split())})
+        else:
+            meta["scenes"].append({"scene": scene, "status": "written", "word_count": len(scene_text.split())})
+        meta["scene_count"] = len(meta["scenes"])
+
+        with open(meta_path, "w") as f:
+            json.dump(meta, f, indent=2)
+
+        from git import Repo
+        repo = Repo(book_dir)
+        repo.index.add([f"chapter_{chapter:02d}.md", f"chapter_{chapter:02d}_meta.json"])
+        repo.index.commit(f"Write Chapter {chapter} Scene {scene} (sequential)")
+
+        yield _sse({"type": "scene_done", "scene": scene, "chapter": chapter, "word_count": len(scene_text.split())})
+
+    return StreamingResponse(generate(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@router.post("/books/{book_id}/sequential/chapter/{chapter}/scene/{scene}/approve-prose")
+def approve_prose_sequential(book_id: str, chapter: int, scene: int):
+    meta_path = _chapter_meta_path(book_id, chapter)
+    meta = _read_json(meta_path, {"scenes": []})
+    for s in meta.get("scenes", []):
+        if s.get("scene") == scene:
+            s["prose_approved"] = True
+            break
+    with open(meta_path, "w") as f:
+        json.dump(meta, f, indent=2)
+    return {"ok": True}
+
+
+class MarkConsolidatedBody(BaseModel):
+    act: int
+
+
+@router.patch("/books/{book_id}/sequential/mark-consolidated")
+def mark_consolidated(book_id: str, body: MarkConsolidatedBody):
+    book_dir = db.data_dir(book_id)
+    path = os.path.join(book_dir, "sequential_state.json")
+    state = _read_json(path, {"acts_consolidated": []})
+    if body.act not in state["acts_consolidated"]:
+        state["acts_consolidated"].append(body.act)
+    with open(path, "w") as f:
+        json.dump(state, f, indent=2)
+    return {"ok": True}

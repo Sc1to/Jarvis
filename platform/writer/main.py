@@ -11,7 +11,7 @@ from health import health_payload
 
 import db
 import prompt_store
-from routes.phase1 import (STORY_ARCHITECT_SYSTEM, SYNTHESIS_PROMPT, BIBLE_AGENT_SYSTEM,
+from routes.phase1 import (STORY_ARCHITECT_SYSTEM, SYNTHESIS_PROMPT, WRITING_PREFS_PROMPT, BIBLE_AGENT_SYSTEM,
                              TIER_INSTRUCTIONS, TIER_LABELS, TIER_EDITOR_SYSTEM,
                              MINI_CONSOLIDATOR_SYSTEM, SCENE_WRITER_SYSTEM, SCENE_BIBLE_SYNC_SYSTEM)
 from routes.phase2 import CONSOLIDATOR_SYSTEM, RESEARCH_SYSTEM
@@ -47,6 +47,7 @@ app.include_router(phase3_router, prefix="/api")
 _WRITER_DEFAULTS = {
     "story_architect": STORY_ARCHITECT_SYSTEM,
     "synthesis": SYNTHESIS_PROMPT,
+    "writing_prefs": WRITING_PREFS_PROMPT,
     "bible_agent": BIBLE_AGENT_SYSTEM,
     **{f"tier_{label.lower()}": TIER_INSTRUCTIONS[i] for i, label in enumerate(TIER_LABELS)},
     "tier_editor": TIER_EDITOR_SYSTEM,

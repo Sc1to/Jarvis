@@ -7,6 +7,7 @@ import BibleWorkshopPage from './pages/BibleWorkshop'
 import BibleViewerPage from './pages/BibleViewer'
 import WritingLoopPage from './pages/WritingLoop'
 import HistoryPage from './pages/History'
+import SequentialWorkflowPage from './pages/SequentialWorkflow'
 
 export default function App() {
   return (
@@ -28,6 +29,7 @@ export default function App() {
         <Route path="north-star" element={<NorthStarPage />} />
         <Route path="bible-workshop" element={<BibleWorkshopPage />} />
         <Route path="bible-viewer" element={<BibleViewerPage />} />
+        <Route path="work" element={<SequentialWorkflowPage />} />
         <Route path="writing-loop" element={<WritingLoopPage />} />
         <Route path="history" element={<HistoryPage />} />
       </Route>

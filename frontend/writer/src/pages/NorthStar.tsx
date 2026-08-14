@@ -10,6 +10,7 @@ import { API } from '@/lib/api'
 
 interface Message { role: 'user' | 'assistant'; content: string }
 
+type SidebarTab = 'northstar' | 'prefs'
 
 export default function NorthStarPage() {
   const { bookId } = useParams<{ bookId: string }>()
@@ -23,18 +24,21 @@ export default function NorthStarPage() {
   const [locking, setLocking] = useState(false)
   const [locked, setLocked] = useState(false)
   const [northStarDoc, setNorthStarDoc] = useState<string | null>(null)
+  const [writingPrefs, setWritingPrefs] = useState<string | null>(null)
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>('northstar')
   const bottomRef = useRef<HTMLDivElement>(null)
 
   // Restore state on reload
   const { data: savedState } = useQuery({
     queryKey: ['north-star-state', bookId],
-    queryFn: () => fetch(`${API}/books/${bookId}/phase1/north-star`).then(r => r.json()) as Promise<{ locked: boolean; document: string | null; messages: Message[] | null }>,
+    queryFn: () => fetch(`${API}/books/${bookId}/phase1/north-star`).then(r => r.json()) as Promise<{ locked: boolean; document: string | null; writing_prefs: string | null; messages: Message[] | null }>,
   })
   useEffect(() => {
     if (!savedState) return
     if (savedState.locked) {
       setLocked(true)
       setNorthStarDoc(savedState.document)
+      setWritingPrefs(savedState.writing_prefs)
     }
     if (savedState.messages?.length) setMessages(savedState.messages)
   }, [savedState])
@@ -111,8 +115,9 @@ export default function NorthStarPage() {
         const { error } = await resp.json()
         throw new Error(error ?? 'Lock failed')
       }
-      const { document } = await resp.json()
+      const { document, writing_prefs } = await resp.json()
       setNorthStarDoc(document)
+      setWritingPrefs(writing_prefs ?? null)
       setLocked(true)
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Lock failed')
@@ -125,12 +130,37 @@ export default function NorthStarPage() {
   const canLock = userTurns >= 2 && !streaming && !locking
   const [docOpen, setDocOpen] = useState(false)
 
-  const docContent = (
-    <div className="flex-1 overflow-y-auto px-5 py-4">
-      {northStarDoc
-        ? <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-mono leading-relaxed">{northStarDoc}</pre>
-        : <p className="text-xs text-muted-foreground italic">Synthesized from the conversation on lock. Keep talking until the Story Architect has everything it needs.</p>
-      }
+  const sidebarContent = (
+    <div className="flex flex-col flex-1 min-h-0">
+      {/* Tab bar — only show after locked (both docs exist) */}
+      {locked && (
+        <div className="flex border-b border-border shrink-0">
+          {(['northstar', 'prefs'] as SidebarTab[]).map(tab => (
+            <button
+              key={tab}
+              onClick={() => setSidebarTab(tab)}
+              className={cn(
+                'flex-1 px-3 py-2 text-xs font-medium transition-colors',
+                sidebarTab === tab
+                  ? 'text-foreground border-b-2 border-primary -mb-px'
+                  : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              {tab === 'northstar' ? 'North Star' : 'Writing Prefs'}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="flex-1 overflow-y-auto px-5 py-4">
+        {sidebarTab === 'northstar' || !locked
+          ? northStarDoc
+            ? <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-mono leading-relaxed">{northStarDoc}</pre>
+            : <p className="text-xs text-muted-foreground italic">Synthesized from the conversation on lock. Keep talking until the Story Architect has everything it needs.</p>
+          : writingPrefs
+            ? <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-mono leading-relaxed">{writingPrefs}</pre>
+            : <p className="text-xs text-muted-foreground italic">Extracted from the conversation on lock.</p>
+        }
+      </div>
     </div>
   )
 
@@ -211,11 +241,11 @@ export default function NorthStarPage() {
             className="md:hidden fixed inset-0 z-20 bg-black/50"
             onClick={() => setDocOpen(false)}
           />
-          <aside className="md:hidden fixed inset-y-0 right-0 z-30 w-80 bg-background border-l border-border flex flex-col">
+          <aside className="md:hidden fixed inset-y-0 right-0 z-30 w-80 bg-background border-l border-border flex flex-col min-h-0">
             <div className="px-5 py-4 border-b border-border flex items-center justify-between shrink-0">
               <div>
-                <h3 className="text-sm font-medium">north_star.md</h3>
-                <p className="text-xs text-muted-foreground">{locked ? 'Append-only · read-only' : 'Preview'}</p>
+                <h3 className="text-sm font-medium">{locked ? 'Documents' : 'Preview'}</h3>
+                <p className="text-xs text-muted-foreground">{locked ? 'Read-only' : 'Synthesized on lock'}</p>
               </div>
               <button
                 onClick={() => setDocOpen(false)}
@@ -224,18 +254,18 @@ export default function NorthStarPage() {
                 <X size={18} />
               </button>
             </div>
-            {docContent}
+            {sidebarContent}
           </aside>
         </>
       )}
 
       {/* Desktop document preview sidebar */}
-      <div className="hidden md:flex md:flex-col md:w-80 md:shrink-0">
+      <div className="hidden md:flex md:flex-col md:w-80 md:shrink-0 min-h-0">
         <div className="px-5 py-4 border-b border-border shrink-0">
-          <h3 className="text-sm font-medium">north_star.md</h3>
-          <p className="text-xs text-muted-foreground">{locked ? 'Append-only · read-only' : 'Preview'}</p>
+          <h3 className="text-sm font-medium">{locked ? 'Documents' : 'Preview'}</h3>
+          <p className="text-xs text-muted-foreground">{locked ? 'Read-only' : 'Synthesized on lock'}</p>
         </div>
-        {docContent}
+        {sidebarContent}
       </div>
     </div>
   )

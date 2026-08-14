@@ -21,6 +21,34 @@ Your job is to draw out their vision through conversation. Ask one or two focuse
 
 Keep responses to 150-250 words. Weave questions into prose — never bullet them."""
 
+WRITING_PREFS_PROMPT = """From our conversation, extract the author's stated writing preferences for this novel.
+
+Write a concise specification covering:
+
+## Voice & Tone
+The narrative register and emotional atmosphere (e.g. dry and sardonic, lyrical and introspective, spare and documentary). Use only what the author stated or clearly implied.
+
+## Point of View
+POV and narrative distance (e.g. close third-person limited, first-person unreliable narrator). If not discussed, write "Not specified".
+
+## Tense
+Past or present tense. If not discussed, write "Not specified".
+
+## Target Length
+Words per scene or chapter if mentioned. If not mentioned, write "Not specified".
+
+## Style Constraints
+Any explicit stylistic rules the author mentioned (e.g. no adverbs, short sentences, no chapter epigraphs, specific dialogue punctuation preferences).
+
+## Genre & Audience
+Genre and intended reader if stated.
+
+Rules:
+- Only include what came from the conversation — no invented defaults
+- Use the author's own words where possible
+- If a field has nothing to extract, write "Not specified"
+- 200-400 words total. Specificity over completeness."""
+
 SYNTHESIS_PROMPT = """Write the North Star document now using only the specific details from our conversation. This is locked as a hard constraint for every AI agent on this project.
 
 Rules:
@@ -202,12 +230,14 @@ def _read_tiers(book_id: str) -> list[dict]:
 def get_north_star(book_id: str):
     book_dir = db.data_dir(book_id)
     ns_path = os.path.join(book_dir, "north_star.md")
+    wp_path = os.path.join(book_dir, "writing_prefs.md")
     chat_path = os.path.join(book_dir, "north_star_chat.json")
     messages = json.load(open(chat_path)) if os.path.exists(chat_path) else None
     if not os.path.exists(ns_path):
-        return {"locked": False, "document": None, "messages": messages}
+        return {"locked": False, "document": None, "writing_prefs": None, "messages": messages}
+    writing_prefs = open(wp_path).read() if os.path.exists(wp_path) else None
     with open(ns_path) as f:
-        return {"locked": True, "document": f.read(), "messages": messages}
+        return {"locked": True, "document": f.read(), "writing_prefs": writing_prefs, "messages": messages}
 
 
 class SaveMessagesBody(BaseModel):
@@ -237,19 +267,27 @@ class LockBody(BaseModel):
 
 @router.post("/books/{book_id}/phase1/north-star/lock")
 async def north_star_lock(book_id: str, body: LockBody, user: str = Depends(current_user)):
-    messages = body.messages + [{"role": "user", "content": prompt_store.get("synthesis", SYNTHESIS_PROMPT)}]
-    document = await llm.call_llm("story_architect", messages, prompt_store.get("story_architect", STORY_ARCHITECT_SYSTEM), user)
+    import asyncio
+    synthesis_msgs = body.messages + [{"role": "user", "content": prompt_store.get("synthesis", SYNTHESIS_PROMPT)}]
+    prefs_msgs = body.messages + [{"role": "user", "content": prompt_store.get("writing_prefs", WRITING_PREFS_PROMPT)}]
+
+    system = prompt_store.get("story_architect", STORY_ARCHITECT_SYSTEM)
+    document, writing_prefs = await asyncio.gather(
+        llm.call_llm("story_architect", synthesis_msgs, system, user),
+        llm.call_llm("story_architect", prefs_msgs, system, user),
+    )
 
     book_dir = db.ensure_data_dir(book_id)
-    path = os.path.join(book_dir, "north_star.md")
-    with open(path, "w") as f:
+    with open(os.path.join(book_dir, "north_star.md"), "w") as f:
         f.write(document)
+    with open(os.path.join(book_dir, "writing_prefs.md"), "w") as f:
+        f.write(writing_prefs)
 
     repo = Repo(book_dir)
-    repo.index.add(["north_star.md"])
-    repo.index.commit("Lock North Star document")
+    repo.index.add(["north_star.md", "writing_prefs.md"])
+    repo.index.commit("Lock North Star document and writing preferences")
 
-    return {"ok": True, "document": document}
+    return {"ok": True, "document": document, "writing_prefs": writing_prefs}
 
 
 # ── Bible Workshop ─────────────────────────────────────────────────────────────
@@ -603,6 +641,15 @@ def _format_skeleton_for_context(skeleton: dict) -> str:
             line += f". {facts}"
         lines.append(line)
     return "\n".join(lines)
+
+
+@router.get("/books/{book_id}/phase1/tier3/act/{act_num}")
+def get_tier3_act(book_id: str, act_num: int):
+    from fastapi import HTTPException
+    p = _tier3_act_path(book_id, act_num)
+    if not os.path.exists(p):
+        raise HTTPException(404, "No content for this act")
+    return {"content": open(p).read()}
 
 
 @router.get("/books/{book_id}/phase1/tier3/status")
