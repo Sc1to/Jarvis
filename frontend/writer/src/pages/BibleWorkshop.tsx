@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -8,7 +8,7 @@ import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 import { readSSE } from '@/lib/sse'
 import { API } from '@/lib/api'
-import { ChevronRight, Play, CheckCircle, Lock, Loader2, BookOpen, MapPin, Users, Plus } from 'lucide-react'
+import { ChevronRight, Play, CheckCircle, Lock, Loader2, BookOpen, MapPin, Users, Plus, ListOrdered, Layers } from 'lucide-react'
 
 type Stage = 'book' | 'acts' | 'consolidate' | 'chapters' | 'scenes'
 type TierStatus = 'locked' | 'active' | 'running' | 'review' | 'approved'
@@ -55,6 +55,7 @@ const BLANK_DRAFT = { name: '', type: 'character' as EntityType, description: ''
 
 export default function BibleWorkshopPage() {
   const { bookId } = useParams<{ bookId: string }>()
+  const navigate = useNavigate()
   const qc = useQueryClient()
 
   // ── Queries ──────────────────────────────────────────────────────────────────
@@ -891,10 +892,34 @@ export default function BibleWorkshopPage() {
                     })}
                   </div>
 
-                  <div className="pt-2 border-t border-border flex justify-end">
-                    <Button onClick={() => setActiveStage('chapters')} className="gap-2">
-                      Continue to Chapters <ChevronRight size={14} />
-                    </Button>
+                  <div className="pt-4 border-t border-border space-y-3">
+                    <p className="text-sm font-medium">Choose how you want to write this book</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        onClick={() => navigate(`/books/${bookId}/work`)}
+                        className="flex flex-col gap-2 p-4 rounded-lg border-2 border-border hover:border-primary hover:bg-accent/30 text-left transition-colors"
+                      >
+                        <div className="flex items-center gap-2">
+                          <ListOrdered size={18} className="text-primary shrink-0" />
+                          <span className="text-sm font-semibold">Sequential</span>
+                        </div>
+                        <p className="text-xs text-muted-foreground leading-relaxed">
+                          Work act by act, chapter by chapter, scene by scene — brief then prose before moving on.
+                        </p>
+                      </button>
+                      <button
+                        onClick={() => setActiveStage('chapters')}
+                        className="flex flex-col gap-2 p-4 rounded-lg border-2 border-border hover:border-primary hover:bg-accent/30 text-left transition-colors"
+                      >
+                        <div className="flex items-center gap-2">
+                          <Layers size={18} className="text-primary shrink-0" />
+                          <span className="text-sm font-semibold">Batch</span>
+                        </div>
+                        <p className="text-xs text-muted-foreground leading-relaxed">
+                          Plan all chapters and scenes first, then write everything in the Writing Loop.
+                        </p>
+                      </button>
+                    </div>
                   </div>
                 </>
               )}
