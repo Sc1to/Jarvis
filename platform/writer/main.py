@@ -15,7 +15,8 @@ from routes.phase1 import (STORY_ARCHITECT_SYSTEM, SYNTHESIS_PROMPT, WRITING_PRE
                              TIER_INSTRUCTIONS, TIER_LABELS, TIER_EDITOR_SYSTEM,
                              MINI_CONSOLIDATOR_SYSTEM, SCENE_WRITER_SYSTEM, SCENE_BIBLE_SYNC_SYSTEM)
 from routes.phase2 import CONSOLIDATOR_SYSTEM, RESEARCH_SYSTEM
-from routes.phase3 import SCENE_PLANNER_SYSTEM, WRITER_SYSTEM, QA_SYSTEM, BIBLE_UPDATER_SYSTEM
+from routes.phase3 import (SCENE_PLANNER_SYSTEM, WRITER_SYSTEM, QA_SYSTEM, BIBLE_UPDATER_SYSTEM,
+                            BEAT_GENERATOR_SYSTEM, BEAT_EXPANDER_SYSTEM)
 from routes.settings import router as settings_router
 from routes.books import router as books_router
 from routes.models import router as models_router
@@ -24,6 +25,8 @@ from routes.git import router as git_router
 from routes.phase1 import router as phase1_router
 from routes.phase2 import router as phase2_router
 from routes.phase3 import router as phase3_router
+from routes.text_ops import (TEXT_OP_EXPAND_SYSTEM, TEXT_OP_REPHRASE_SYSTEM, TEXT_OP_NOTES_SYSTEM,
+                              router as text_ops_router)
 
 logging.basicConfig(level=logging.INFO)
 VERSION = "1.0.0"
@@ -42,6 +45,7 @@ app.include_router(git_router, prefix="/api")
 app.include_router(phase1_router, prefix="/api")
 app.include_router(phase2_router, prefix="/api")
 app.include_router(phase3_router, prefix="/api")
+app.include_router(text_ops_router, prefix="/api")
 
 
 _WRITER_DEFAULTS = {
@@ -60,6 +64,11 @@ _WRITER_DEFAULTS = {
     "writer": WRITER_SYSTEM,
     "qa": QA_SYSTEM,
     "bible_updater": BIBLE_UPDATER_SYSTEM,
+    "beat_generator": BEAT_GENERATOR_SYSTEM,
+    "beat_expander": BEAT_EXPANDER_SYSTEM,
+    "text_op_expand": TEXT_OP_EXPAND_SYSTEM,
+    "text_op_rephrase": TEXT_OP_REPHRASE_SYSTEM,
+    "text_op_notes": TEXT_OP_NOTES_SYSTEM,
 }
 
 

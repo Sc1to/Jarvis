@@ -43,11 +43,20 @@ Any explicit stylistic rules the author mentioned (e.g. no adverbs, short senten
 ## Genre & Audience
 Genre and intended reader if stated.
 
+## Prose Rhythm
+How sentence length and paragraph structure should work in this novel. If the author did not address this, write: "Vary sentence length. Mix short punchy sentences (3–7 words) with longer ones (20–30 words). Never three long sentences in a row. New paragraph at action shifts."
+
+## Dialogue
+Rules for how dialogue should be written and attributed. If the author did not address this, write: "No adverbs on dialogue tags. Attribute through action or expression adjacent to the line, not speech-tag verbs. Every exchange must advance the scene — never stall or recap."
+
+## What to Avoid
+Patterns the author wants to prohibit. If not stated, write: "Adverbs modifying dialogue tags. Abstract emotional summary (e.g. 'he felt afraid'). Rhetorical questions in narration. Head-hopping between POV characters within a scene."
+
 Rules:
-- Only include what came from the conversation — no invented defaults
+- For Voice & Tone, POV, Tense, Target Length, Style Constraints, Genre & Audience: only include what came from the conversation — write "Not specified" if nothing was said
+- For Prose Rhythm, Dialogue, What to Avoid: use the author's stated preferences if available; otherwise use the sensible craft defaults shown above
 - Use the author's own words where possible
-- If a field has nothing to extract, write "Not specified"
-- 200-400 words total. Specificity over completeness."""
+- 300-500 words total. Specificity over completeness."""
 
 SYNTHESIS_PROMPT = """Write the North Star document now using only the specific details from our conversation. This is locked as a hard constraint for every AI agent on this project.
 
