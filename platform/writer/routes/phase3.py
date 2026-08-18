@@ -11,6 +11,7 @@ import db
 from deps import current_user
 import llm
 import prompt_store
+from prompt_blocks import assemble_writer_context
 
 router = APIRouter()
 
@@ -24,11 +25,13 @@ Return ONLY valid JSON — a list of scene objects. No preamble, no fences:
     "scene": 1,
     "brief": "one-sentence scene summary",
     "entry_state": "what must be true when the scene begins",
-    "exit_state": "what must be true when the scene ends"
+    "exit_state": "what must be true when the scene ends",
+    "pov_character": "name of the POV character, or null if not determinable"
   }
 ]
 
-Extract ONLY the scenes belonging to the requested chapter number."""
+Extract ONLY the scenes belonging to the requested chapter number.
+For pov_character: use the character name exactly as it appears in the scene bible. Set null only if the scene bible gives no indication of POV."""
 
 WRITER_SYSTEM = """You are a literary novelist. Your sole task is to write scene prose.
 
@@ -137,6 +140,10 @@ async def _call(provider: str, model: str, messages: list[dict], system: str, us
         result += token
     return result
 
+def _last_words(text: str, n: int) -> str:
+    words = text.split()
+    return " ".join(words[-n:]) if len(words) > n else text
+
 # ── Status ─────────────────────────────────────────────────────────────────────
 
 @router.get("/books/{book_id}/phase3/status")
@@ -197,7 +204,6 @@ def write_chapter(book_id: str, body: WriteChapterBody, user: str = Depends(curr
 
         north_star = _read_north_star(book_id)
         writing_prefs = _read_writing_prefs(book_id)
-        tiers = _read_tiers(book_id)
         tier4_path = os.path.join(book_dir, "tier4", f"chapter_{chapter:02d}.md")
         tier4_content = open(tier4_path).read() if os.path.exists(tier4_path) else ""
         bible = _read_bible(book_id)
@@ -232,11 +238,12 @@ def write_chapter(book_id: str, body: WriteChapterBody, user: str = Depends(curr
         completed_scenes: list[str] = []
         scene_results: list[dict] = []
 
-        for scene_def in scene_plan:
+        for scene_idx, scene_def in enumerate(scene_plan):
             scene_num = scene_def.get("scene", len(completed_scenes) + 1)
             brief = scene_def.get("brief", "")
             entry_state = scene_def.get("entry_state", "")
             exit_state = scene_def.get("exit_state", "")
+            curr_pov = scene_def.get("pov_character")
 
             scene_text = ""
             qa_result: dict | None = None
@@ -255,24 +262,34 @@ def write_chapter(book_id: str, body: WriteChapterBody, user: str = Depends(curr
                     errors = [i["description"] for i in qa_result.get("issues", []) if i.get("severity") == "error"]
                     rewrite_note = "\n\nPrevious attempt issues — address in rewrite:\n" + "\n".join(f"- {e}" for e in errors)
 
-                writer_user = (
-                    f"## North Star\n\n{north_star}\n\n"
-                    + (f"## Writing Preferences\n\n{writing_prefs}\n\n" if writing_prefs else "")
-                    + f"## Entity Ledger\n\n{ledger_json}\n\n"
-                    f"## Prior scenes in this chapter\n\n{prior_text}"
-                    + (f"\n\n## Prior chapter context\n\n{prior_bridge}" if prior_bridge else "")
-                    + f"\n\n## Scene contract\n\n"
-                    f"Chapter: {chapter} | Scene: {scene_num}\n"
-                    f"Brief: {brief}\nEntry state: {entry_state}\nExit state: {exit_state}"
-                    + rewrite_note
-                    + "\n\nWrite this scene now."
+                context_block = assemble_writer_context(
+                    north_star=north_star,
+                    writing_prefs=writing_prefs,
+                    ledger_json=ledger_json,
+                    prior_text=prior_text,
+                    chapter=chapter,
+                    scene_num=scene_num,
+                    brief=brief,
+                    entry_state=entry_state,
+                    exit_state=exit_state,
+                    prior_bridge=prior_bridge,
+                    rewrite_note=rewrite_note,
                 )
+
+                # Role-spoof: if same POV as previous scene, the model believes it wrote that prose
+                messages: list[dict] = [{"role": "user", "content": context_block}]
+                if completed_scenes and attempt == 1:
+                    prev_pov = scene_plan[scene_idx - 1].get("pov_character") if scene_idx > 0 else None
+                    if prev_pov and curr_pov and prev_pov == curr_pov:
+                        prose_tail = _last_words(completed_scenes[-1], 500)
+                        messages.append({"role": "assistant", "content": prose_tail})
+                        messages.append({"role": "user", "content": f"Continue the scene.\n\nScene brief:\n\n{brief}"})
 
                 scene_text = ""
                 try:
                     async for token in llm.provider_tokens(
                         writer_provider, writer_model,
-                        [{"role": "user", "content": writer_user}],
+                        messages,
                         prompt_store.get("writer", WRITER_SYSTEM),
                         user,
                     ):
@@ -287,7 +304,8 @@ def write_chapter(book_id: str, body: WriteChapterBody, user: str = Depends(curr
                 # QA
                 yield _sse({"type": "qa_start", "scene": scene_num, "attempt": attempt})
                 qa_user = (
-                    f"## Entity Ledger\n\n{ledger_json}\n\n"
+                    (f"## Writing Preferences\n\n{writing_prefs}\n\n" if writing_prefs else "")
+                    + f"## Entity Ledger\n\n{ledger_json}\n\n"
                     f"## Prior scenes in this chapter\n\n{prior_text}\n\n"
                     f"## Exit state contract\n\n{exit_state}\n\n"
                     f"## Scene to review\n\n{scene_text}"
@@ -470,22 +488,25 @@ def rewrite_scene(book_id: str, chapter: int, scene: int, body: RewriteBody, use
 
         yield _sse({"type": "rewrite_start", "scene": scene, "attempt": 1, "brief": brief})
 
-        writer_user = (
-            f"## North Star\n\n{north_star}\n\n"
-            + (f"## Writing Preferences\n\n{writing_prefs}\n\n" if writing_prefs else "")
-            + f"## Entity Ledger\n\n{ledger_json}\n\n"
-            f"## Prior scenes in this chapter\n\n{prior_text}\n\n"
-            f"## Scene contract\n\nChapter: {chapter} | Scene: {scene}\n"
-            f"Brief: {brief}\nExit state: {exit_state}\n\n"
-            f"## Author directive\n\n{body.directive}\n\n"
-            "Rewrite this scene addressing the directive."
+        rewrite_note = f"\n\n## Author directive\n\n{body.directive}\n\nRewrite this scene addressing the directive."
+        context_block = assemble_writer_context(
+            north_star=north_star,
+            writing_prefs=writing_prefs,
+            ledger_json=ledger_json,
+            prior_text=prior_text,
+            chapter=chapter,
+            scene_num=scene,
+            brief=brief,
+            entry_state="",
+            exit_state=exit_state,
+            rewrite_note=rewrite_note,
         )
 
         scene_text = ""
         try:
             async for token in llm.provider_tokens(
                 writer_provider, writer_model,
-                [{"role": "user", "content": writer_user}],
+                [{"role": "user", "content": context_block}],
                 prompt_store.get("writer", WRITER_SYSTEM),
                 user,
             ):
@@ -499,7 +520,8 @@ def rewrite_scene(book_id: str, chapter: int, scene: int, body: RewriteBody, use
 
         yield _sse({"type": "qa_start", "scene": scene, "attempt": 1})
         qa_user = (
-            f"## Entity Ledger\n\n{ledger_json}\n\n"
+            (f"## Writing Preferences\n\n{writing_prefs}\n\n" if writing_prefs else "")
+            + f"## Entity Ledger\n\n{ledger_json}\n\n"
             f"## Prior scenes\n\n{prior_text}\n\n"
             f"## Exit state contract\n\n{exit_state}\n\n"
             f"## Scene to review\n\n{scene_text}"
@@ -747,23 +769,53 @@ def write_scene_sequential(book_id: str, chapter: int, scene: int, body: WriteSc
             if prior_parts:
                 prior_text = "\n\n---\n\n".join(prior_parts)
 
-        writer_user = (
-            f"## North Star\n\n{north_star}\n\n"
-            + (f"## Writing Preferences\n\n{writing_prefs}\n\n" if writing_prefs else "")
-            + f"## Entity Ledger\n\n{ledger_json}\n\n"
-            f"## Prior scenes in this chapter\n\n{prior_text}\n\n"
-            f"## Scene Plan\n\n{scene_plan_section or f'Scene {scene} of Chapter {chapter}'}\n\n"
-            f"## Scene Brief\n\n{brief_content}\n\n"
-            + (f"## Author directive\n\n{body.directive}\n\n" if body.directive.strip() else "")
-            + f"Chapter: {chapter} | Scene: {scene}\n\nWrite this scene now."
+        # Scene brief content becomes the "brief" for the contract block
+        directive_note = f"\n\n## Author directive\n\n{body.directive}" if body.directive.strip() else ""
+        scene_brief_block = f"## Scene Plan\n\n{scene_plan_section or f'Scene {scene} of Chapter {chapter}'}\n\n## Scene Brief\n\n{brief_content}"
+
+        context_block = assemble_writer_context(
+            north_star=north_star,
+            writing_prefs=writing_prefs,
+            ledger_json=ledger_json,
+            prior_text=prior_text,
+            chapter=chapter,
+            scene_num=scene,
+            brief=scene_brief_block,
+            entry_state="",
+            exit_state="",
+            rewrite_note=directive_note,
         )
+
+        # Role-spoof: check saved chapter plan for matching POV on previous scene
+        messages: list[dict] = [{"role": "user", "content": context_block}]
+        if scene > 1 and prior_text != "None yet.":
+            saved_plan_path = _chapter_plan_path(book_id, chapter)
+            if os.path.exists(saved_plan_path):
+                saved_plan = json.load(open(saved_plan_path))
+                curr_scene_entry = next((s for s in saved_plan if s.get("scene") == scene), {})
+                prev_scene_entry = next((s for s in saved_plan if s.get("scene") == scene - 1), {})
+                curr_pov = curr_scene_entry.get("pov_character")
+                prev_pov = prev_scene_entry.get("pov_character")
+                if curr_pov and prev_pov and curr_pov == prev_pov:
+                    # Extract the last written scene's prose from the chapter file
+                    chapter_prose_path = _chapter_path(book_id, chapter)
+                    if os.path.exists(chapter_prose_path):
+                        raw = open(chapter_prose_path).read()
+                        m = re.search(
+                            rf"## Scene {scene - 1}\n\n(.*?)(?=\n\n---\n\n## Scene |\Z)",
+                            raw, re.DOTALL
+                        )
+                        if m:
+                            prose_tail = _last_words(m.group(1).strip(), 500)
+                            messages.append({"role": "assistant", "content": prose_tail})
+                            messages.append({"role": "user", "content": f"Continue the scene.\n\nScene brief:\n\n{brief_content}"})
 
         scene_text = ""
         yield _sse({"type": "scene_start", "scene": scene, "chapter": chapter})
         try:
             async for token in llm.provider_tokens(
                 writer_provider, writer_model,
-                [{"role": "user", "content": writer_user}],
+                messages,
                 prompt_store.get("writer", WRITER_SYSTEM),
                 user,
             ):
@@ -842,3 +894,167 @@ def mark_consolidated(book_id: str, body: MarkConsolidatedBody):
     with open(path, "w") as f:
         json.dump(state, f, indent=2)
     return {"ok": True}
+
+
+# ── Beat-based expansion ───────────────────────────────────────────────────────
+
+BEAT_GENERATOR_SYSTEM = """You are a story structure expert.
+
+Given a scene brief, generate 6–10 concrete scene beats. Each beat is a single specific action or moment — not a summary, not a theme.
+
+Return ONLY valid JSON — a numbered list. No preamble, no fences:
+[
+  {"beat": 1, "description": "Hamid enters the counting house to find the ledger open on the wrong page."},
+  {"beat": 2, "description": "He checks the column totals — the numbers have been altered, not erased."}
+]
+
+Be specific. Use character names. Beats must be ordered and causally connected."""
+
+BEAT_EXPANDER_SYSTEM = """You are a literary novelist. Your sole task is to expand a beat list into continuous scene prose.
+
+The user message contains the scene context and an ordered list of beats. Expand each beat into 2–4 sentences of prose. Connect beats into a continuous, flowing scene — do not number them or add headers.
+
+Rules:
+- Follow all writing preferences and entity facts exactly
+- Do not introduce new events, characters, or information beyond the beats
+- Match the voice, tense, and style of the writing preferences
+- Write ONLY prose. No headers, no beat numbers, no formatting markers.
+Target length: 600–900 words."""
+
+
+class WriteWithBeatsBody(BaseModel):
+    directive: str = ""
+
+
+@router.post("/books/{book_id}/phase3/chapter/{chapter}/scene/{scene}/write-with-beats")
+def write_scene_with_beats(book_id: str, chapter: int, scene: int, body: WriteWithBeatsBody, user: str = Depends(current_user)):
+    async def generate():
+        writer_provider = db.get_setting("agent_writer_agent_provider")
+        writer_model = db.get_setting("agent_writer_agent_model")
+        beat_gen_provider = db.get_setting("agent_beat_generator_provider") or writer_provider
+        beat_gen_model = db.get_setting("agent_beat_generator_model") or writer_model
+        beat_exp_provider = db.get_setting("agent_beat_expander_provider") or writer_provider
+        beat_exp_model = db.get_setting("agent_beat_expander_model") or writer_model
+
+        if not writer_provider:
+            yield _sse({"type": "error", "message": "Writer agent not configured in Settings."})
+            return
+
+        book_dir = db.data_dir(book_id)
+        brief_path = os.path.join(book_dir, "tier4", f"chapter_{chapter:02d}_scene_{scene:02d}.md")
+        brief_content = open(brief_path).read() if os.path.exists(brief_path) else ""
+
+        north_star = _read_north_star(book_id)
+        writing_prefs = _read_writing_prefs(book_id)
+        ledger_json = json.dumps(_read_bible(book_id).get("ledger", {}))
+
+        prior_text = "None yet."
+        chapter_prose_path = _chapter_path(book_id, chapter)
+        if os.path.exists(chapter_prose_path):
+            raw = open(chapter_prose_path).read()
+            parts = raw.split("## Scene ")
+            prior_parts = []
+            for p in parts[1:]:
+                header = p.split("\n", 1)[0].strip()
+                try:
+                    sn = int(header)
+                    if sn < scene:
+                        prose = p.split("\n", 1)[1].strip() if "\n" in p else ""
+                        prior_parts.append(f"[Scene {sn}]\n{prose.rstrip('- ').strip()}")
+                except ValueError:
+                    pass
+            if prior_parts:
+                prior_text = "\n\n---\n\n".join(prior_parts)
+
+        # Step 1: Generate beats
+        yield _sse({"type": "beat_start", "scene": scene, "chapter": chapter})
+        beat_prompt = (
+            f"Scene brief:\n\n{brief_content}"
+            + (f"\n\nAuthor directive:\n\n{body.directive}" if body.directive.strip() else "")
+        )
+        try:
+            beat_text = await _call(
+                beat_gen_provider, beat_gen_model,
+                [{"role": "user", "content": beat_prompt}],
+                prompt_store.get("beat_generator", BEAT_GENERATOR_SYSTEM),
+                user,
+            )
+            beats = _extract_json_list(beat_text)
+        except Exception as e:
+            yield _sse({"type": "error", "message": f"Beat generation failed: {e}"})
+            return
+
+        yield _sse({"type": "beat_done", "scene": scene, "beats": beats})
+
+        # Step 2: Expand beats to prose
+        yield _sse({"type": "expand_start", "scene": scene})
+        beats_formatted = "\n".join(f"{b['beat']}. {b['description']}" for b in beats)
+        expand_context = assemble_writer_context(
+            north_star=north_star,
+            writing_prefs=writing_prefs,
+            ledger_json=ledger_json,
+            prior_text=prior_text,
+            chapter=chapter,
+            scene_num=scene,
+            brief=brief_content,
+            entry_state="",
+            exit_state="",
+        )
+        expand_user = f"{expand_context}\n\n## Beat list\n\n{beats_formatted}\n\nExpand these beats into continuous prose now."
+
+        scene_text = ""
+        try:
+            async for token in llm.provider_tokens(
+                beat_exp_provider, beat_exp_model,
+                [{"role": "user", "content": expand_user}],
+                prompt_store.get("beat_expander", BEAT_EXPANDER_SYSTEM),
+                user,
+            ):
+                scene_text += token
+                yield _sse({"type": "token", "content": token})
+        except Exception as e:
+            yield _sse({"type": "error", "message": f"Beat expansion failed: {e}"})
+            return
+
+        yield _sse({"type": "scene_written", "scene": scene, "word_count": len(scene_text.split())})
+
+        # Patch or create chapter file
+        if os.path.exists(chapter_prose_path):
+            existing = open(chapter_prose_path).read()
+            if f"## Scene {scene}" in existing:
+                new_content = re.sub(
+                    rf"(## Scene {scene}\n\n)(.*?)(?=\n\n---\n\n## Scene |\Z)",
+                    f"## Scene {scene}\n\n{scene_text}",
+                    existing, flags=re.DOTALL
+                )
+            else:
+                new_content = existing.rstrip() + f"\n\n---\n\n## Scene {scene}\n\n{scene_text}"
+        else:
+            new_content = f"# Chapter {chapter}\n\n## Scene {scene}\n\n{scene_text}"
+
+        with open(chapter_prose_path, "w") as f:
+            f.write(new_content)
+
+        meta_path = _chapter_meta_path(book_id, chapter)
+        meta = _read_json(meta_path, {"chapter": chapter, "scenes": [], "status": "written"})
+        meta.setdefault("written_at", datetime.now(timezone.utc).isoformat())
+        meta["status"] = "written"
+        existing_scene = next((s for s in meta["scenes"] if s.get("scene") == scene), None)
+        if existing_scene:
+            existing_scene.update({"status": "written", "word_count": len(scene_text.split())})
+        else:
+            meta["scenes"].append({"scene": scene, "status": "written", "word_count": len(scene_text.split())})
+        meta["scene_count"] = len(meta["scenes"])
+
+        with open(meta_path, "w") as f:
+            json.dump(meta, f, indent=2)
+
+        from git import Repo
+        repo = Repo(book_dir)
+        repo.index.add([f"chapter_{chapter:02d}.md", f"chapter_{chapter:02d}_meta.json"])
+        repo.index.commit(f"Write Chapter {chapter} Scene {scene} (beats)")
+
+        yield _sse({"type": "scene_done", "scene": scene, "chapter": chapter, "word_count": len(scene_text.split())})
+
+    return StreamingResponse(generate(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

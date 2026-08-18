@@ -8,7 +8,7 @@ import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 import { readSSE } from '@/lib/sse'
 import { API } from '@/lib/api'
-import { Play, CheckCircle, Loader2, Lock, AlertTriangle } from 'lucide-react'
+import { Play, CheckCircle, Loader2, Lock, AlertTriangle, Expand, RotateCcw, FileText, Zap } from 'lucide-react'
 
 interface ChapterSummary {
   chapter: number
@@ -125,6 +125,14 @@ export default function WritingLoopPage() {
   const [rewriteScene, setRewriteScene] = useState<number | null>(null)
   const [rewriteDirective, setRewriteDirective] = useState('')
   const [rewriting, setRewriting] = useState(false)
+  // Text op panel state
+  const [sceneProse, setSceneProse] = useState('')
+  const [textOpRunning, setTextOpRunning] = useState(false)
+  const [editorialNotes, setEditorialNotes] = useState('')
+  const [rephraseInstruction, setRephraseInstruction] = useState('')
+  const [showRephrase, setShowRephrase] = useState(false)
+  // Beats mode: scenes that should use beat-based expansion on rewrite
+  const [beatScenes, setBeatScenes] = useState<Set<number>>(new Set())
 
   const { data: chapterData, refetch: refetchChapter } = useQuery<{ chapter: number; content: string; meta: ChapterMeta } | null>({
     queryKey: ['chapter', bookId, activeChapter],
@@ -150,6 +158,95 @@ export default function WritingLoopPage() {
     setChapterDone(false)
     setRewriteScene(null)
   }, [activeChapter])
+
+  // Pre-fill scene prose when rewrite panel opens
+  useEffect(() => {
+    if (rewriteScene !== null && chapterData?.content) {
+      setSceneProse(extractSceneProse(chapterData.content, rewriteScene))
+      setEditorialNotes('')
+      setRephraseInstruction('')
+      setShowRephrase(false)
+    }
+  }, [rewriteScene, chapterData?.content])
+
+  function extractSceneProse(content: string, scene: number): string {
+    const parts = content.split('## Scene ')
+    for (const part of parts.slice(1)) {
+      const newlineIdx = part.indexOf('\n')
+      if (newlineIdx === -1) continue
+      const header = part.slice(0, newlineIdx).trim()
+      if (header === String(scene)) {
+        return part.slice(newlineIdx + 1).replace(/\n\n---\n\n$/, '').trim()
+      }
+    }
+    return ''
+  }
+
+  async function doExpand() {
+    if (!sceneProse.trim() || !bookId) return
+    setTextOpRunning(true)
+    try {
+      const resp = await fetch(`${API}/books/${bookId}/text-ops/expand`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scene_prose: sceneProse }),
+      })
+      let result = ''
+      for await (const ev of readSSE(resp)) {
+        const event = ev as { type: string; content?: string }
+        if (event.type === 'token' && event.content) result += event.content
+      }
+      if (result) setSceneProse(result)
+    } finally {
+      setTextOpRunning(false)
+    }
+  }
+
+  async function doRephrase() {
+    if (!sceneProse.trim() || !rephraseInstruction.trim() || !bookId) return
+    setTextOpRunning(true)
+    try {
+      const resp = await fetch(`${API}/books/${bookId}/text-ops/rephrase`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scene_prose: sceneProse, instruction: rephraseInstruction }),
+      })
+      let result = ''
+      for await (const ev of readSSE(resp)) {
+        const event = ev as { type: string; content?: string }
+        if (event.type === 'token' && event.content) result += event.content
+      }
+      if (result) setSceneProse(result)
+      setShowRephrase(false)
+      setRephraseInstruction('')
+    } finally {
+      setTextOpRunning(false)
+    }
+  }
+
+  async function doEditorialNotes() {
+    if (!sceneProse.trim() || !bookId) return
+    setTextOpRunning(true)
+    try {
+      const resp = await fetch(`${API}/books/${bookId}/text-ops/editorial-notes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scene_prose: sceneProse }),
+      })
+      const data = await resp.json()
+      setEditorialNotes(data.notes || '')
+    } finally {
+      setTextOpRunning(false)
+    }
+  }
+
+  function toggleBeats(scene: number) {
+    setBeatScenes(prev => {
+      const next = new Set(prev)
+      next.has(scene) ? next.delete(scene) : next.add(scene)
+      return next
+    })
+  }
 
   async function writeChapter(chapter: number) {
     setWriting(true)
@@ -205,8 +302,13 @@ export default function WritingLoopPage() {
     setRewriting(true)
     setEvents([])
 
+    const useBeats = beatScenes.has(scene)
+    const endpoint = useBeats
+      ? `${API}/books/${bookId}/phase3/chapter/${chapter}/scene/${scene}/write-with-beats`
+      : `${API}/books/${bookId}/phase3/chapter/${chapter}/scene/${scene}/rewrite`
+
     try {
-      const resp = await fetch(`${API}/books/${bookId}/phase3/chapter/${chapter}/scene/${scene}/rewrite`, {
+      const resp = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ directive: rewriteDirective }),
@@ -373,26 +475,113 @@ export default function WritingLoopPage() {
           <div className="flex-1 overflow-y-auto px-8 py-6">
             <div className="max-w-2xl mx-auto">
               {rewriteScene !== null ? (
-                <div className="space-y-3">
+                <div className="space-y-4">
                   <div className="flex items-center gap-2">
                     <Button variant="ghost" size="sm" onClick={() => setRewriteScene(null)}>← Back</Button>
-                    <span className="text-sm font-medium">Rewrite Scene {rewriteScene}</span>
+                    <span className="text-sm font-medium">Scene {rewriteScene}</span>
                   </div>
-                  <textarea
-                    value={rewriteDirective}
-                    onChange={e => setRewriteDirective(e.target.value)}
-                    placeholder="Describe what to change in this scene…"
-                    rows={3}
-                    className="w-full resize-none rounded-md border border-input bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                  />
-                  <Button
-                    size="sm"
-                    onClick={() => doRewrite(activeChapter, rewriteScene)}
-                    disabled={!rewriteDirective.trim() || rewriting}
-                    className="gap-2"
-                  >
-                    {rewriting ? <><Loader2 size={12} className="animate-spin" />Rewriting…</> : 'Rewrite scene'}
-                  </Button>
+
+                  {/* Prose textarea + text op toolbar */}
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-1 flex-wrap">
+                      <span className="text-xs text-muted-foreground mr-1">Edit prose:</span>
+                      <Button
+                        variant="outline" size="sm"
+                        onClick={doExpand}
+                        disabled={textOpRunning || !sceneProse.trim()}
+                        className="h-6 px-2 text-xs gap-1"
+                      >
+                        {textOpRunning ? <Loader2 size={10} className="animate-spin" /> : <Expand size={10} />}
+                        Expand
+                      </Button>
+                      <Button
+                        variant="outline" size="sm"
+                        onClick={() => setShowRephrase(v => !v)}
+                        disabled={textOpRunning}
+                        className="h-6 px-2 text-xs gap-1"
+                      >
+                        <RotateCcw size={10} />Rephrase
+                      </Button>
+                      <Button
+                        variant="outline" size="sm"
+                        onClick={doEditorialNotes}
+                        disabled={textOpRunning || !sceneProse.trim()}
+                        className="h-6 px-2 text-xs gap-1"
+                      >
+                        {textOpRunning ? <Loader2 size={10} className="animate-spin" /> : <FileText size={10} />}
+                        Notes
+                      </Button>
+                    </div>
+
+                    {showRephrase && (
+                      <div className="flex gap-2">
+                        <input
+                          value={rephraseInstruction}
+                          onChange={e => setRephraseInstruction(e.target.value)}
+                          placeholder="e.g. more tense, cut by half, more physical detail…"
+                          className="flex-1 rounded-md border border-input bg-transparent px-2 py-1 text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                          onKeyDown={e => e.key === 'Enter' && doRephrase()}
+                        />
+                        <Button
+                          size="sm" variant="outline"
+                          onClick={doRephrase}
+                          disabled={!rephraseInstruction.trim() || textOpRunning}
+                          className="h-7 px-2 text-xs"
+                        >
+                          {textOpRunning ? <Loader2 size={10} className="animate-spin" /> : 'Apply'}
+                        </Button>
+                      </div>
+                    )}
+
+                    <textarea
+                      value={sceneProse}
+                      onChange={e => setSceneProse(e.target.value)}
+                      rows={10}
+                      className="w-full resize-y rounded-md border border-input bg-transparent px-3 py-2 text-sm font-serif leading-relaxed placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    />
+
+                    {editorialNotes && (
+                      <div className="rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground whitespace-pre-wrap">
+                        {editorialNotes}
+                      </div>
+                    )}
+                  </div>
+
+                  <Separator />
+
+                  {/* Writer-agent rewrite */}
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground">Or rewrite via Writer agent:</p>
+                    <textarea
+                      value={rewriteDirective}
+                      onChange={e => setRewriteDirective(e.target.value)}
+                      placeholder="Describe what to change in this scene…"
+                      rows={2}
+                      className="w-full resize-none rounded-md border border-input bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    />
+                    <div className="flex items-center gap-2">
+                      <Button
+                        size="sm"
+                        onClick={() => doRewrite(activeChapter, rewriteScene)}
+                        disabled={!rewriteDirective.trim() || rewriting}
+                        className="gap-2"
+                      >
+                        {rewriting ? <><Loader2 size={12} className="animate-spin" />Rewriting…</> : 'Rewrite scene'}
+                      </Button>
+                      <button
+                        onClick={() => toggleBeats(rewriteScene)}
+                        className={cn(
+                          'flex items-center gap-1 text-xs px-2 py-1 rounded border transition-colors',
+                          beatScenes.has(rewriteScene)
+                            ? 'border-amber-400 text-amber-500 bg-amber-50 dark:bg-amber-950/20'
+                            : 'border-border text-muted-foreground hover:border-foreground'
+                        )}
+                        title="Use beat-based expansion for this rewrite"
+                      >
+                        <Zap size={10} />Beats
+                      </button>
+                    </div>
+                  </div>
                 </div>
               ) : (
                 <pre className="whitespace-pre-wrap font-serif text-base leading-relaxed text-foreground">
