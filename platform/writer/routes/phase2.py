@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 from datetime import datetime, timezone
 
@@ -9,6 +10,8 @@ import db
 import llm
 import prompt_store
 from deps import current_user
+
+log = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -264,23 +267,33 @@ def research_run(book_id: str, user: str = Depends(current_user)):
             yield f'data: {json.dumps({"type": "error", "message": "Run consolidation first."})}\n\n'
             return
 
-        yield f'data: {json.dumps({"type": "status", "message": "Running Research & Completion Agent…"})}\n\n'
-
+        system_prompt = prompt_store.get("research", RESEARCH_SYSTEM)
         ledger_json = json.dumps(bible.get("ledger", {}), indent=2)
         messages = [{"role": "user", "content": ledger_json}]
 
+        log.info("[RESEARCH] provider=%s model=%s json_mode=True", provider, model)
+        log.info("[RESEARCH] system_prompt (%d chars):\n%s", len(system_prompt), system_prompt)
+        log.info("[RESEARCH] user_message (%d chars):\n%s", len(ledger_json), ledger_json[:2000])
+
+        yield f'data: {json.dumps({"type": "status", "message": "Running Research & Completion Agent…"})}\n\n'
+
         full_text = ""
         try:
-            async for token in llm.provider_tokens(provider, model, messages, prompt_store.get("research", RESEARCH_SYSTEM), user, json_mode=True):
+            async for token in llm.provider_tokens(provider, model, messages, system_prompt, user, json_mode=True):
                 full_text += token
                 yield f'data: {json.dumps({"type": "token", "content": token})}\n\n'
         except Exception as e:
+            log.error("[RESEARCH] LLM call failed: %s", e)
             yield f'data: {json.dumps({"type": "error", "message": str(e)})}\n\n'
             return
 
+        log.info("[RESEARCH] raw response (%d chars):\n%s", len(full_text), full_text[:3000])
+
         try:
             enriched_ledger = _extract_json(full_text)
+            log.info("[RESEARCH] JSON parsed OK, top-level keys: %s", list(enriched_ledger.keys())[:10])
         except Exception as e:
+            log.error("[RESEARCH] JSON parse failed: %s\nRaw: %s", e, full_text[:1000])
             yield f'data: {json.dumps({"type": "error", "message": f"Could not parse JSON response: {e}"})}\n\n'
             return
 
