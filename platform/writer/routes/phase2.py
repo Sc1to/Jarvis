@@ -266,7 +266,14 @@ def research_run(book_id: str, user: str = Depends(current_user)):
         yield f'data: {json.dumps({"type": "status", "message": "Running Research & Completion Agent…"})}\n\n'
 
         ledger_json = json.dumps(bible.get("ledger", {}), indent=2)
-        messages = [{"role": "user", "content": f"## North Star\n\n{north_star}\n\n## Current Entity Ledger\n\n{ledger_json}\n\nEnrich and complete this ledger."}]
+        # North Star trimmed to setting/period context only — full prose confuses weak models into thinking input was truncated
+        ns_context = north_star[:800].strip() if north_star else ""
+        messages = [{"role": "user", "content": (
+            "INPUT LEDGER (JSON — enrich this):\n\n"
+            + ledger_json
+            + (f"\n\nSTORY CONTEXT (period/setting reference):\n{ns_context}" if ns_context else "")
+            + "\n\nReturn the enriched ledger as JSON."
+        )}]
 
         full_text = ""
         try:
