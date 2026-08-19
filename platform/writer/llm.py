@@ -145,7 +145,7 @@ async def _openai_tokens(model: str, messages: list[dict], system: str | None, u
 async def _ollama_tokens(model: str, messages: list[dict], system: str | None, user_id: str, json_mode: bool = False) -> AsyncGenerator[str, None]:
     host = db.get_setting("ollama_host") or "http://localhost:11434"
     msgs = ([{"role": "system", "content": system}] if system else []) + messages
-    body: dict = {"model": model, "stream": True, "messages": msgs}
+    body: dict = {"model": model, "stream": True, "messages": msgs, "options": {"num_ctx": 32768}}
     if json_mode:
         body["format"] = "json"
 
