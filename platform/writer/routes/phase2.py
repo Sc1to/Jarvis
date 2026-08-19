@@ -61,17 +61,23 @@ CRITICAL OUTPUT RULES — no exceptions:
 def _extract_json(text: str) -> dict:
     text = text.strip()
     if "```json" in text:
-        text = text[text.index("```json") + 7:]
-        text = text[:text.index("```")]
-    elif "```" in text:
-        text = text[text.index("```") + 3:]
-        text = text[:text.rindex("```")]
-    # Find outermost braces
-    start = text.find("{")
-    end = text.rfind("}") + 1
-    if start == -1 or end == 0:
+        text = text[text.index("```json") + 7:text.rindex("```")]
+    elif "```" in text and text.count("```") >= 2:
+        text = text[text.index("```") + 3:text.rindex("```")]
+    # Scan backward from the last } to find the outermost JSON object.
+    # This skips thinking-model prose that appears before the actual JSON response.
+    last_close = text.rfind("}")
+    if last_close == -1:
         raise ValueError("No JSON object found in response")
-    return json.loads(text[start:end])
+    depth = 0
+    for i in range(last_close, -1, -1):
+        if text[i] == "}":
+            depth += 1
+        elif text[i] == "{":
+            depth -= 1
+            if depth == 0:
+                return json.loads(text[i:last_close + 1])
+    raise ValueError("No JSON object found in response")
 
 
 def _read_tiers(book_dir: str) -> list[dict]:

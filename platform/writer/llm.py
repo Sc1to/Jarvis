@@ -146,19 +146,9 @@ async def _ollama_tokens(model: str, messages: list[dict], system: str | None, u
     host = db.get_setting("ollama_host") or "http://localhost:11434"
     msgs = ([{"role": "system", "content": system}] if system else []) + messages
 
+    body: dict = {"model": model, "stream": True, "messages": msgs, "options": {"num_ctx": 32768}}
     if json_mode:
-        # ponytail: stream=False for JSON mode — thinking models stream thinking tokens through content,
-        # but non-streaming returns only the final response after internal thinking completes
-        body: dict = {"model": model, "stream": False, "messages": msgs, "options": {"num_ctx": 32768}, "format": "json"}
-        async with httpx.AsyncClient(timeout=600) as client:
-            r = await client.post(f"{host}/api/chat", json=body)
-            r.raise_for_status()
-            text = r.json().get("message", {}).get("content", "")
-            if text:
-                yield text
-        return
-
-    body = {"model": model, "stream": True, "messages": msgs, "options": {"num_ctx": 32768}}
+        body["format"] = "json"
     async with httpx.AsyncClient(timeout=600) as client:
         async with client.stream("POST", f"{host}/api/chat", json=body) as r:
             r.raise_for_status()
