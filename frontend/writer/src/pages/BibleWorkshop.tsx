@@ -134,6 +134,8 @@ export default function BibleWorkshopPage() {
   // ── Phase 2 state ────────────────────────────────────────────────────────────
   const [p2Step, setP2Step] = useState<P2Step>('idle')
   const [p2Log, setP2Log] = useState('')
+  const [p2LastSaved, setP2LastSaved] = useState<{ step: string; count: number } | null>(null)
+  const p2LogRef = useRef<HTMLPreElement>(null)
 
   // ── Derived stage completeness ───────────────────────────────────────────────
   const tier1Approved = statuses[0] === 'approved'
@@ -620,16 +622,21 @@ export default function BibleWorkshopPage() {
   }
 
   // ── Phase 2 actions ──────────────────────────────────────────────────────────
-  async function runP2(endpoint: string, _label: string, nextStep: P2Step) {
+  useEffect(() => {
+    if (p2LogRef.current) p2LogRef.current.scrollTop = p2LogRef.current.scrollHeight
+  }, [p2Log])
+
+  async function runP2(endpoint: string, label: string, nextStep: P2Step) {
     setP2Step(nextStep)
     setP2Log('')
+    setP2LastSaved(null)
     try {
       const resp = await fetch(`${API}/books/${bookId}/phase2/${endpoint}`, { method: 'POST' })
       for await (const event of readSSE(resp)) {
         if (event.type === 'token') setP2Log(prev => prev + event.content)
         else if (event.type === 'status') setP2Log(prev => prev + `\n[${event.message}]\n`)
         else if (event.type === 'saved') {
-          setP2Log(prev => prev + `\n\n✓ Saved — ${event.entity_count} entities`)
+          setP2LastSaved({ step: label, count: event.entity_count })
           await refetchP2Status()
           await refetchBible()
         } else if (event.type === 'error') {
@@ -1297,7 +1304,7 @@ export default function BibleWorkshopPage() {
                     {!p2Approved && (
                       <Button size="sm" variant={bibleExists ? 'outline' : 'default'}
                         disabled={p2Step === 'consolidating' || p2Step === 'researching'}
-                        onClick={() => runP2('consolidate', 'Consolidating…', 'consolidating')}>
+                        onClick={() => runP2('consolidate', 'Consolidate', 'consolidating')}>
                         {p2Step === 'consolidating'
                           ? <><Loader2 size={12} className="animate-spin mr-1" />Running…</>
                           : bibleExists ? 'Re-run' : 'Run'}
@@ -1321,7 +1328,7 @@ export default function BibleWorkshopPage() {
                     {!p2Approved && bibleExists && (
                       <Button size="sm" variant={(p2Status === 'researched') ? 'outline' : 'default'}
                         disabled={p2Step === 'consolidating' || p2Step === 'researching'}
-                        onClick={() => runP2('run', 'Researching…', 'researching')}>
+                        onClick={() => runP2('run', 'Research', 'researching')}>
                         {p2Step === 'researching'
                           ? <><Loader2 size={12} className="animate-spin mr-1" />Running…</>
                           : (p2Status === 'researched' || p2Status === 'approved') ? 'Re-run' : 'Run'}
@@ -1348,10 +1355,16 @@ export default function BibleWorkshopPage() {
                   {p2Approved && <Badge variant="success">Writing Loop unlocked</Badge>}
                 </div>
 
+                {p2LastSaved && (
+                  <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400">
+                    <CheckCircle size={16} className="shrink-0" />
+                    <span className="text-sm font-medium">{p2LastSaved.step} saved — {p2LastSaved.count} entities</span>
+                  </div>
+                )}
                 {p2Log && (
                   <Card className="bg-muted/30">
                     <CardContent className="p-4">
-                      <pre className="text-xs font-mono whitespace-pre-wrap leading-relaxed text-muted-foreground max-h-48 overflow-y-auto">
+                      <pre ref={p2LogRef} className="text-xs font-mono whitespace-pre-wrap leading-relaxed text-muted-foreground max-h-48 overflow-y-auto">
                         {p2Log}
                         {(p2Step === 'consolidating' || p2Step === 'researching') && <span className="animate-pulse">▋</span>}
                       </pre>
