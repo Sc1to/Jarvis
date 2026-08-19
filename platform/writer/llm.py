@@ -148,6 +148,7 @@ async def _ollama_tokens(model: str, messages: list[dict], system: str | None, u
     body: dict = {"model": model, "stream": True, "messages": msgs, "options": {"num_ctx": 32768}}
     if json_mode:
         body["format"] = "json"
+        body["think"] = False
 
     async with httpx.AsyncClient(timeout=600) as client:
         async with client.stream("POST", f"{host}/api/chat", json=body) as r:
