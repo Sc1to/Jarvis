@@ -87,9 +87,6 @@ export default function Agents() {
           <select className={inp} value={form.model} onChange={e => field('model', e.target.value)} required>
             <option value="">Select model…</option>
             {models.map(m => <option key={m.name} value={m.name}>{m.name}</option>)}
-            <option value="qwen2.5:14b">qwen2.5:14b</option>
-            <option value="qwen2.5-coder:32b">qwen2.5-coder:32b</option>
-            <option value="qwen2.5:72b-instruct-q4_K_M">qwen2.5:72b-instruct-q4_K_M</option>
           </select>
           <select className={inp} value={form.memory_scope} onChange={e => field('memory_scope', e.target.value)}>
             <option value="session">session</option>
