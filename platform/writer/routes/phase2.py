@@ -225,13 +225,17 @@ def consolidate(book_id: str, user: str = Depends(current_user)):
             "skeleton_entity_count": skeleton_count,
         }
 
-        with open(_bible_path(book_id), "w") as f:
-            json.dump(bible, f, indent=2)
+        try:
+            with open(_bible_path(book_id), "w") as f:
+                json.dump(bible, f, indent=2)
 
-        from git import Repo
-        repo = Repo(book_dir)
-        repo.index.add(["bible.json"])
-        repo.index.commit("Phase 2 — Consolidate entity ledger (seeded from skeleton)")
+            from git import Repo
+            repo = Repo(book_dir)
+            repo.index.add(["bible.json"])
+            repo.index.commit("Phase 2 — Consolidate entity ledger (seeded from skeleton)")
+        except Exception as e:
+            yield f'data: {json.dumps({"type": "error", "message": f"Save failed: {e}"})}\n\n'
+            return
 
         entity_count = len(bible.get("ledger", {}))
         yield f'data: {json.dumps({"type": "saved", "entity_count": entity_count})}\n\n'
@@ -300,17 +304,21 @@ def research_run(book_id: str, user: str = Depends(current_user)):
         bible["metadata"]["phase2_status"] = "researched"
         bible["metadata"]["researched_at"] = datetime.now(timezone.utc).isoformat()
 
-        with open(_bible_path(book_id), "w") as f:
-            json.dump(bible, f, indent=2)
+        try:
+            with open(_bible_path(book_id), "w") as f:
+                json.dump(bible, f, indent=2)
 
-        diff_path = os.path.join(book_dir, "bible_diff.json")
-        with open(diff_path, "w") as f:
-            json.dump(bible_diff, f, indent=2)
+            diff_path = os.path.join(book_dir, "bible_diff.json")
+            with open(diff_path, "w") as f:
+                json.dump(bible_diff, f, indent=2)
 
-        from git import Repo
-        repo = Repo(book_dir)
-        repo.index.add(["bible.json", "bible_diff.json"])
-        repo.index.commit("Phase 2 — Research & entity completion")
+            from git import Repo
+            repo = Repo(book_dir)
+            repo.index.add(["bible.json", "bible_diff.json"])
+            repo.index.commit("Phase 2 — Research & entity completion")
+        except Exception as e:
+            yield f'data: {json.dumps({"type": "error", "message": f"Save failed: {e}"})}\n\n'
+            return
 
         yield f'data: {json.dumps({"type": "saved", "entity_count": len(enriched_ledger)})}\n\n'
 
