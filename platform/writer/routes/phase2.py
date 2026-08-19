@@ -271,11 +271,6 @@ def research_run(book_id: str, user: str = Depends(current_user)):
         ledger_json = json.dumps(bible.get("ledger", {}), indent=2)
         messages = [{"role": "user", "content": ledger_json}]
 
-        with open("/tmp/research_debug.txt", "w") as _d:
-            _d.write(f"provider={provider} model={model}\n\n")
-            _d.write(f"=== SYSTEM PROMPT ===\n{system_prompt}\n\n")
-            _d.write(f"=== USER MESSAGE ({len(ledger_json)} chars) ===\n{ledger_json[:3000]}\n\n")
-
         yield f'data: {json.dumps({"type": "status", "message": "Running Research & Completion Agent…"})}\n\n'
 
         full_text = ""
@@ -284,21 +279,12 @@ def research_run(book_id: str, user: str = Depends(current_user)):
                 full_text += token
                 yield f'data: {json.dumps({"type": "token", "content": token})}\n\n'
         except Exception as e:
-            with open("/tmp/research_debug.txt", "a") as _d:
-                _d.write(f"=== LLM ERROR ===\n{e}\n")
             yield f'data: {json.dumps({"type": "error", "message": str(e)})}\n\n'
             return
 
-        with open("/tmp/research_debug.txt", "a") as _d:
-            _d.write(f"=== RAW RESPONSE ({len(full_text)} chars) ===\n{full_text[:5000]}\n\n")
-
         try:
             enriched_ledger = _extract_json(full_text)
-            with open("/tmp/research_debug.txt", "a") as _d:
-                _d.write(f"=== JSON PARSED OK, keys: {list(enriched_ledger.keys())[:10]} ===\n")
         except Exception as e:
-            with open("/tmp/research_debug.txt", "a") as _d:
-                _d.write(f"=== JSON PARSE FAILED: {e} ===\n")
             yield f'data: {json.dumps({"type": "error", "message": f"Could not parse JSON response: {e}"})}\n\n'
             return
 
