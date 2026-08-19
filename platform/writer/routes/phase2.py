@@ -271,9 +271,10 @@ def research_run(book_id: str, user: str = Depends(current_user)):
         ledger_json = json.dumps(bible.get("ledger", {}), indent=2)
         messages = [{"role": "user", "content": ledger_json}]
 
-        print(f"[RESEARCH] provider={provider} model={model} json_mode=True", flush=True)
-        print(f"[RESEARCH] system_prompt ({len(system_prompt)} chars):\n{system_prompt}", flush=True)
-        print(f"[RESEARCH] user_message ({len(ledger_json)} chars):\n{ledger_json[:2000]}", flush=True)
+        with open("/tmp/research_debug.txt", "w") as _d:
+            _d.write(f"provider={provider} model={model}\n\n")
+            _d.write(f"=== SYSTEM PROMPT ===\n{system_prompt}\n\n")
+            _d.write(f"=== USER MESSAGE ({len(ledger_json)} chars) ===\n{ledger_json[:3000]}\n\n")
 
         yield f'data: {json.dumps({"type": "status", "message": "Running Research & Completion Agent…"})}\n\n'
 
@@ -283,17 +284,21 @@ def research_run(book_id: str, user: str = Depends(current_user)):
                 full_text += token
                 yield f'data: {json.dumps({"type": "token", "content": token})}\n\n'
         except Exception as e:
-            print(f"[RESEARCH] LLM call failed: {e}", flush=True)
+            with open("/tmp/research_debug.txt", "a") as _d:
+                _d.write(f"=== LLM ERROR ===\n{e}\n")
             yield f'data: {json.dumps({"type": "error", "message": str(e)})}\n\n'
             return
 
-        print(f"[RESEARCH] raw response ({len(full_text)} chars):\n{full_text[:3000]}", flush=True)
+        with open("/tmp/research_debug.txt", "a") as _d:
+            _d.write(f"=== RAW RESPONSE ({len(full_text)} chars) ===\n{full_text[:5000]}\n\n")
 
         try:
             enriched_ledger = _extract_json(full_text)
-            print(f"[RESEARCH] JSON parsed OK, top-level keys: {list(enriched_ledger.keys())[:10]}", flush=True)
+            with open("/tmp/research_debug.txt", "a") as _d:
+                _d.write(f"=== JSON PARSED OK, keys: {list(enriched_ledger.keys())[:10]} ===\n")
         except Exception as e:
-            print(f"[RESEARCH] JSON parse failed: {e}\nRaw: {full_text[:1000]}", flush=True)
+            with open("/tmp/research_debug.txt", "a") as _d:
+                _d.write(f"=== JSON PARSE FAILED: {e} ===\n")
             yield f'data: {json.dumps({"type": "error", "message": f"Could not parse JSON response: {e}"})}\n\n'
             return
 
