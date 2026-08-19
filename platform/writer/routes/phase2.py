@@ -267,10 +267,13 @@ def research_run(book_id: str, user: str = Depends(current_user)):
         ns_path = os.path.join(book_dir, "north_star.md")
         north_star = open(ns_path).read() if os.path.exists(ns_path) else ""
 
+        ledger_json = json.dumps(bible.get("ledger", {}), indent=2)
+        user_content = f"## North Star\n\n{north_star}\n\n## Current Entity Ledger\n\n{ledger_json}\n\nEnrich and complete this ledger."
+        import logging; logging.getLogger(__name__).info("Research input (%d chars): %s…", len(user_content), user_content[:500])
+
         yield f'data: {json.dumps({"type": "status", "message": "Running Research & Completion Agent…"})}\n\n'
 
-        ledger_json = json.dumps(bible.get("ledger", {}), indent=2)
-        messages = [{"role": "user", "content": f"## North Star\n\n{north_star}\n\n## Current Entity Ledger\n\n{ledger_json}\n\nEnrich and complete this ledger."}]
+        messages = [{"role": "user", "content": user_content}]
 
         full_text = ""
         try:

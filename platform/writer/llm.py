@@ -42,13 +42,15 @@ async def _gemini_tokens(model: str, messages: list[dict], system: str | None, u
                     pass
 
 
-async def _openrouter_tokens(model: str, messages: list[dict], system: str | None, user_id: str) -> AsyncGenerator[str, None]:
+async def _openrouter_tokens(model: str, messages: list[dict], system: str | None, user_id: str, json_mode: bool = False) -> AsyncGenerator[str, None]:
     api_key = db.get_user_key(user_id, "openrouter")
     if not api_key:
         raise ValueError("OpenRouter API key not configured in Settings")
 
     msgs = ([{"role": "system", "content": system}] if system else []) + messages
-    body = {"model": model, "stream": True, "messages": msgs}
+    body: dict = {"model": model, "stream": True, "messages": msgs}
+    if json_mode:
+        body["response_format"] = {"type": "json_object"}
 
     async with httpx.AsyncClient(timeout=120) as client:
         async with client.stream(
@@ -166,7 +168,7 @@ def provider_tokens(provider: str, model: str, messages: list[dict], system: str
     if provider == "gemini":
         return _gemini_tokens(model, messages, system, user_id)
     if provider == "openrouter":
-        return _openrouter_tokens(model, messages, system, user_id)
+        return _openrouter_tokens(model, messages, system, user_id, json_mode=json_mode)
     if provider == "anthropic":
         return _anthropic_tokens(model, messages, system, user_id)
     if provider == "openai":
