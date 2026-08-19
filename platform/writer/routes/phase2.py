@@ -202,7 +202,7 @@ def consolidate(book_id: str, user: str = Depends(current_user)):
 
         full_text = ""
         try:
-            async for token in llm.provider_tokens(provider, model, messages, prompt_store.get("consolidator", CONSOLIDATOR_SYSTEM), user):
+            async for token in llm.provider_tokens(provider, model, messages, prompt_store.get("consolidator", CONSOLIDATOR_SYSTEM), user, json_mode=True):
                 full_text += token
                 yield f'data: {json.dumps({"type": "token", "content": token})}\n\n'
         except Exception as e:
@@ -270,7 +270,7 @@ def research_run(book_id: str, user: str = Depends(current_user)):
 
         full_text = ""
         try:
-            async for token in llm.provider_tokens(provider, model, messages, prompt_store.get("research", RESEARCH_SYSTEM), user):
+            async for token in llm.provider_tokens(provider, model, messages, prompt_store.get("research", RESEARCH_SYSTEM), user, json_mode=True):
                 full_text += token
                 yield f'data: {json.dumps({"type": "token", "content": token})}\n\n'
         except Exception as e:

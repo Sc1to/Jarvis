@@ -140,10 +140,12 @@ async def _openai_tokens(model: str, messages: list[dict], system: str | None, u
                     pass
 
 
-async def _ollama_tokens(model: str, messages: list[dict], system: str | None, user_id: str) -> AsyncGenerator[str, None]:
+async def _ollama_tokens(model: str, messages: list[dict], system: str | None, user_id: str, json_mode: bool = False) -> AsyncGenerator[str, None]:
     host = db.get_setting("ollama_host") or "http://localhost:11434"
     msgs = ([{"role": "system", "content": system}] if system else []) + messages
-    body = {"model": model, "stream": True, "messages": msgs}
+    body: dict = {"model": model, "stream": True, "messages": msgs}
+    if json_mode:
+        body["format"] = "json"
 
     async with httpx.AsyncClient(timeout=600) as client:
         async with client.stream("POST", f"{host}/api/chat", json=body) as r:
@@ -160,7 +162,7 @@ async def _ollama_tokens(model: str, messages: list[dict], system: str | None, u
                     pass
 
 
-def provider_tokens(provider: str, model: str, messages: list[dict], system: str | None = None, user_id: str = "local") -> AsyncGenerator[str, None]:
+def provider_tokens(provider: str, model: str, messages: list[dict], system: str | None = None, user_id: str = "local", json_mode: bool = False) -> AsyncGenerator[str, None]:
     if provider == "gemini":
         return _gemini_tokens(model, messages, system, user_id)
     if provider == "openrouter":
@@ -170,7 +172,7 @@ def provider_tokens(provider: str, model: str, messages: list[dict], system: str
     if provider == "openai":
         return _openai_tokens(model, messages, system, user_id)
     if provider == "ollama":
-        return _ollama_tokens(model, messages, system, user_id)
+        return _ollama_tokens(model, messages, system, user_id, json_mode=json_mode)
     raise ValueError(f"Unknown provider: {provider}")
 
 
