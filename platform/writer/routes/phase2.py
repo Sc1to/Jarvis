@@ -274,38 +274,31 @@ def research_run(book_id: str, user: str = Depends(current_user)):
             return
 
         system_prompt = prompt_store.get("research", RESEARCH_SYSTEM)
-        ledger_json = json.dumps(bible.get("ledger", {}), indent=2)
-        messages = [{"role": "user", "content": ledger_json}]
-
-        yield f'data: {json.dumps({"type": "status", "message": "Running Research & Completion Agent…"})}\n\n'
-
-        full_text = ""
-        try:
-            async for token in llm.provider_tokens(provider, model, messages, system_prompt, user, json_mode=True):
-                full_text += token
-                yield f'data: {json.dumps({"type": "token", "content": token})}\n\n'
-        except Exception as e:
-            yield f'data: {json.dumps({"type": "error", "message": str(e)})}\n\n'
-            return
-
-        try:
-            enriched_ledger = _extract_json(full_text)
-        except Exception as e:
-            yield f'data: {json.dumps({"type": "error", "message": f"Could not parse JSON response: {e}"})}\n\n'
-            return
-
-        if "ledger" in enriched_ledger:
-            enriched_ledger = enriched_ledger["ledger"]
-
         original_ledger = bible.get("ledger", {})
-        bible_diff = {
-            "phase": 2,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "added_fields": {
-                eid: [k for k in enriched_ledger.get(eid, {}) if k not in original_ledger.get(eid, {})]
-                for eid in enriched_ledger
-            },
-        }
+        enriched_ledger = {}
+        entities = list(original_ledger.items())
+        total = len(entities)
+
+        for idx, (eid, entity) in enumerate(entities):
+            yield f'data: {json.dumps({"type": "status", "message": f"Enriching {eid} ({idx + 1}/{total})…"})}\n\n'
+            messages = [{"role": "user", "content": json.dumps({eid: entity}, indent=2)}]
+
+            full_text = ""
+            try:
+                async for token in llm.provider_tokens(provider, model, messages, system_prompt, user, json_mode=True):
+                    full_text += token
+                    yield f'data: {json.dumps({"type": "token", "content": token})}\n\n'
+            except Exception as e:
+                yield f'data: {json.dumps({"type": "error", "message": str(e)})}\n\n'
+                return
+
+            try:
+                result = _extract_json(full_text)
+                enriched_entity = result.get(eid, result)
+                enriched_ledger[eid] = {**entity, **enriched_entity}
+            except Exception:
+                yield f'data: {json.dumps({"type": "status", "message": f"⚠ {eid}: parse failed — keeping original"})}\n\n'
+                enriched_ledger[eid] = entity
 
         bible["ledger"] = enriched_ledger
         bible["metadata"]["phase2_status"] = "researched"
@@ -317,7 +310,14 @@ def research_run(book_id: str, user: str = Depends(current_user)):
 
             diff_path = os.path.join(book_dir, "bible_diff.json")
             with open(diff_path, "w") as f:
-                json.dump(bible_diff, f, indent=2)
+                json.dump({
+                    "phase": 2,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "added_fields": {
+                        eid: [k for k in enriched_ledger.get(eid, {}) if k not in original_ledger.get(eid, {})]
+                        for eid in enriched_ledger
+                    },
+                }, f, indent=2)
 
             from git import Repo
             repo = Repo(book_dir)
