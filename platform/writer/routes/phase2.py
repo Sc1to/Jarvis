@@ -271,9 +271,9 @@ def research_run(book_id: str, user: str = Depends(current_user)):
         ledger_json = json.dumps(bible.get("ledger", {}), indent=2)
         messages = [{"role": "user", "content": ledger_json}]
 
-        log.info("[RESEARCH] provider=%s model=%s json_mode=True", provider, model)
-        log.info("[RESEARCH] system_prompt (%d chars):\n%s", len(system_prompt), system_prompt)
-        log.info("[RESEARCH] user_message (%d chars):\n%s", len(ledger_json), ledger_json[:2000])
+        print(f"[RESEARCH] provider={provider} model={model} json_mode=True", flush=True)
+        print(f"[RESEARCH] system_prompt ({len(system_prompt)} chars):\n{system_prompt}", flush=True)
+        print(f"[RESEARCH] user_message ({len(ledger_json)} chars):\n{ledger_json[:2000]}", flush=True)
 
         yield f'data: {json.dumps({"type": "status", "message": "Running Research & Completion Agent…"})}\n\n'
 
@@ -283,17 +283,17 @@ def research_run(book_id: str, user: str = Depends(current_user)):
                 full_text += token
                 yield f'data: {json.dumps({"type": "token", "content": token})}\n\n'
         except Exception as e:
-            log.error("[RESEARCH] LLM call failed: %s", e)
+            print(f"[RESEARCH] LLM call failed: {e}", flush=True)
             yield f'data: {json.dumps({"type": "error", "message": str(e)})}\n\n'
             return
 
-        log.info("[RESEARCH] raw response (%d chars):\n%s", len(full_text), full_text[:3000])
+        print(f"[RESEARCH] raw response ({len(full_text)} chars):\n{full_text[:3000]}", flush=True)
 
         try:
             enriched_ledger = _extract_json(full_text)
-            log.info("[RESEARCH] JSON parsed OK, top-level keys: %s", list(enriched_ledger.keys())[:10])
+            print(f"[RESEARCH] JSON parsed OK, top-level keys: {list(enriched_ledger.keys())[:10]}", flush=True)
         except Exception as e:
-            log.error("[RESEARCH] JSON parse failed: %s\nRaw: %s", e, full_text[:1000])
+            print(f"[RESEARCH] JSON parse failed: {e}\nRaw: {full_text[:1000]}", flush=True)
             yield f'data: {json.dumps({"type": "error", "message": f"Could not parse JSON response: {e}"})}\n\n'
             return
 
