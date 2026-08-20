@@ -209,6 +209,7 @@ def consolidate(book_id: str, user: str = Depends(current_user)):
 
         yield f'data: {json.dumps({"type": "status", "message": "Running Bible Consolidator…"})}\n\n'
 
+        log.info("Bible Consolidator: provider=%s model=%s user=%s", provider, model, user)
         full_text = ""
         try:
             async for token in llm.provider_tokens(provider, model, messages, prompt_store.get("consolidator", CONSOLIDATOR_SYSTEM), user, json_mode=True):
@@ -279,6 +280,7 @@ def research_run(book_id: str, user: str = Depends(current_user)):
         entities = list(original_ledger.items())
         total = len(entities)
 
+        log.info("Research Agent: provider=%s model=%s user=%s entities=%d", provider, model, user, total)
         for idx, (eid, entity) in enumerate(entities):
             yield f'data: {json.dumps({"type": "status", "message": f"Enriching {eid} ({idx + 1}/{total})…"})}\n\n'
             messages = [{"role": "user", "content": json.dumps({eid: entity}, indent=2)}]

@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 from datetime import datetime, timezone
@@ -13,6 +14,7 @@ import llm
 import prompt_store
 from prompt_blocks import assemble_writer_context
 
+log = logging.getLogger(__name__)
 router = APIRouter()
 
 # ── Prompts ────────────────────────────────────────────────────────────────────
@@ -409,9 +411,10 @@ def approve_chapter(book_id: str, chapter: int, user: str = Depends(current_user
             "Update the ledger with facts from this chapter."
         )
 
+        log.info("Bible Updater: provider=%s model=%s user=%s chapter=%s", bu_provider, bu_model, user, chapter)
         full_text = ""
         try:
-            async for token in llm.provider_tokens(bu_provider, bu_model, [{"role": "user", "content": bu_user}], prompt_store.get("bible_updater", BIBLE_UPDATER_SYSTEM), user):
+            async for token in llm.provider_tokens(bu_provider, bu_model, [{"role": "user", "content": bu_user}], prompt_store.get("bible_updater", BIBLE_UPDATER_SYSTEM), user, json_mode=True):
                 full_text += token
                 yield _sse({"type": "token", "content": token})
         except Exception as e:

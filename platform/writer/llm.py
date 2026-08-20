@@ -52,6 +52,7 @@ async def _openrouter_tokens(model: str, messages: list[dict], system: str | Non
     if json_mode:
         body["response_format"] = {"type": "json_object"}
 
+    logger.info("OpenRouter request: model=%s json_mode=%s user=%s messages=%d", model, json_mode, user_id, len(msgs))
     async with httpx.AsyncClient(timeout=120) as client:
         async with client.stream(
             "POST",
@@ -59,6 +60,13 @@ async def _openrouter_tokens(model: str, messages: list[dict], system: str | Non
             json=body,
             headers={"Authorization": f"Bearer {api_key}", "HTTP-Referer": "http://localhost:8011"},
         ) as r:
+            if r.status_code != 200:
+                error_body = b""
+                async for chunk in r.aiter_bytes():
+                    error_body += chunk
+                    if len(error_body) > 1000:
+                        break
+                logger.error("OpenRouter error %d: %s", r.status_code, error_body.decode(errors="replace"))
             r.raise_for_status()
             async for line in r.aiter_lines():
                 if not line.startswith("data: "):

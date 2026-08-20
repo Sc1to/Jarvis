@@ -8,7 +8,7 @@ import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 import { readSSE } from '@/lib/sse'
 import { API } from '@/lib/api'
-import { ChevronRight, Play, CheckCircle, Lock, Loader2, BookOpen, MapPin, Users, Plus, ListOrdered, Layers } from 'lucide-react'
+import { ChevronRight, Play, CheckCircle, Lock, Loader2, BookOpen, MapPin, Users, Plus, ListOrdered, Layers, AlertTriangle } from 'lucide-react'
 
 type Stage = 'book' | 'acts' | 'consolidate' | 'chapters' | 'scenes'
 type TierStatus = 'locked' | 'active' | 'running' | 'review' | 'approved'
@@ -134,6 +134,7 @@ export default function BibleWorkshopPage() {
   // ── Phase 2 state ────────────────────────────────────────────────────────────
   const [p2Step, setP2Step] = useState<P2Step>('idle')
   const [p2Log, setP2Log] = useState('')
+  const [p2Error, setP2Error] = useState<string | null>(null)
   const [p2LastSaved, setP2LastSaved] = useState<{ step: string; count: number } | null>(null)
   const p2LogRef = useRef<HTMLPreElement>(null)
 
@@ -629,25 +630,32 @@ export default function BibleWorkshopPage() {
   async function runP2(endpoint: string, label: string, nextStep: P2Step) {
     setP2Step(nextStep)
     setP2Log('')
+    setP2Error(null)
     setP2LastSaved(null)
+    let success = false
     try {
       const resp = await fetch(`${API}/books/${bookId}/phase2/${endpoint}`, { method: 'POST' })
+      if (!resp.ok) {
+        setP2Error(`Server error ${resp.status} ${resp.statusText} — check logs with: journalctl -u platform-writer -n 50`)
+        return
+      }
       for await (const event of readSSE(resp)) {
-        if (event.type === 'token') setP2Log(prev => prev + event.content)
+        if (event.type === 'token') setP2Log(prev => prev + (event.content as string))
         else if (event.type === 'status') setP2Log(prev => prev + `\n[${event.message}]\n`)
         else if (event.type === 'saved') {
-          setP2LastSaved({ step: label, count: event.entity_count })
+          success = true
+          setP2LastSaved({ step: label, count: event.entity_count as number })
           await refetchP2Status()
           await refetchBible()
         } else if (event.type === 'error') {
-          setP2Log(prev => prev + `\n⚠ ${event.message}`)
-          setP2Step('idle')
+          setP2Error(event.message as string)
           return
         }
       }
     } catch {
-      setP2Log(prev => prev + '\n⚠ Connection error')
-      setP2Step('idle')
+      setP2Error('Connection error — is the server running?')
+    } finally {
+      if (!success) setP2Step('idle')
     }
   }
 
@@ -1355,6 +1363,15 @@ export default function BibleWorkshopPage() {
                   {p2Approved && <Badge variant="success">Writing Loop unlocked</Badge>}
                 </div>
 
+                {p2Error && (
+                  <div className="flex items-start gap-3 px-4 py-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400">
+                    <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-sm font-medium">Bible Update failed</p>
+                      <p className="text-xs mt-0.5 break-all">{p2Error}</p>
+                    </div>
+                  </div>
+                )}
                 {p2LastSaved && (
                   <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400">
                     <CheckCircle size={16} className="shrink-0" />
