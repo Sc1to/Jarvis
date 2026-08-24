@@ -120,6 +120,7 @@ export default function WritingLoopPage() {
   const [activeChapter, setActiveChapter] = useState<number | null>(null)
   const [writing, setWriting] = useState(false)
   const [approving, setApproving] = useState(false)
+  const [approveError, setApproveError] = useState<string | null>(null)
   const [events, setEvents] = useState<ProgressEvent[]>([])
   const [chapterDone, setChapterDone] = useState(false)
   const [rewriteScene, setRewriteScene] = useState<number | null>(null)
@@ -157,6 +158,7 @@ export default function WritingLoopPage() {
     setEvents([])
     setChapterDone(false)
     setRewriteScene(null)
+    setApproveError(null)
   }, [activeChapter])
 
   // Pre-fill scene prose when rewrite panel opens
@@ -278,11 +280,18 @@ export default function WritingLoopPage() {
   async function approveChapter(chapter: number) {
     setApproving(true)
     setEvents([])
+    setApproveError(null)
+    let gotEvent = false
 
     try {
       const resp = await fetch(`${API}/books/${bookId}/phase3/chapter/${chapter}/approve`, { method: 'POST' })
+      if (!resp.ok) {
+        setApproveError(`Server error ${resp.status} ${resp.statusText} — check logs with: journalctl -u platform-writer -n 50`)
+        return
+      }
       for await (const ev of readSSE(resp)) {
         const event = ev as ProgressEvent
+        gotEvent = true
         if (event.type !== 'token') {
           setEvents(prev => [...prev, event])
         }
@@ -292,6 +301,11 @@ export default function WritingLoopPage() {
           qc.invalidateQueries({ queryKey: ['bible', bookId] })
         }
       }
+      if (!gotEvent) {
+        setApproveError('No response from server — Bible Updater may have crashed. Check: journalctl -u platform-writer -n 50')
+      }
+    } catch {
+      setApproveError('Connection error — is the server running?')
     } finally {
       setApproving(false)
     }
@@ -446,6 +460,14 @@ export default function WritingLoopPage() {
             </>
           )}
         </div>
+
+        {/* Approval error banner */}
+        {approveError && (
+          <div className="mx-5 mt-3 flex items-start gap-2 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-500">
+            <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+            <span className="font-mono">{approveError}</span>
+          </div>
+        )}
 
         {/* Body */}
         {!activeChapter && (
