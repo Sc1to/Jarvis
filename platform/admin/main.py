@@ -669,6 +669,34 @@ async def update_app_prompt(app_name: str, agent_key: str, body: dict, db=Depend
     return {"status": "ok"}
 
 
+# ── Config / API keys ─────────────────────────────────────────────────────────
+
+_KNOWN_KEYS = [
+    {"key": "openai_api_key", "label": "OpenAI API Key", "provider": "openai"},
+]
+
+
+@app.get("/config/keys")
+def get_config_keys(db=Depends(get_db)):
+    rows = {r["key"]: r["value"] for r in db.execute("SELECT key, value FROM config").fetchall()}
+    result = []
+    for meta in _KNOWN_KEYS:
+        val = rows.get(meta["key"], "")
+        result.append({**meta, "set": bool(val), "masked": f"···{val[-4:]}" if len(val) > 4 else ("set" if val else "")})
+    return result
+
+
+@app.put("/config/keys/{key}")
+def set_config_key(key: str, body: dict, db=Depends(get_db)):
+    if not any(k["key"] == key for k in _KNOWN_KEYS):
+        raise HTTPException(400, f"Unknown key: {key}")
+    db.execute(
+        "INSERT OR REPLACE INTO config (key, value, updated_at) VALUES (?, ?, datetime('now'))",
+        (key, body.get("value", "")),
+    )
+    return {"status": "ok"}
+
+
 # ── Agents ────────────────────────────────────────────────────────────────────
 
 @app.get("/agents")

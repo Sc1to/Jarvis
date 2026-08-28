@@ -6,6 +6,7 @@ const NAV = [
   { id: 'prompts',   label: 'Prompts' },
   { id: 'network',   label: 'Network' },
   { id: 'updates',   label: 'Updates' },
+  { id: 'settings',  label: 'Settings' },
 ]
 
 function NavItems({ view, onNav }) {

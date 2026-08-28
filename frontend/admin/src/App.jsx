@@ -8,8 +8,9 @@ import Agents from './views/Agents.jsx'
 import Network from './views/Network.jsx'
 import Updates from './views/Updates.jsx'
 import Prompts from './views/Prompts.jsx'
+import Settings from './views/Settings.jsx'
 
-const VIEWS = { dashboard: Dashboard, apps: Apps, models: Models, agents: Agents, network: Network, updates: Updates, prompts: Prompts }
+const VIEWS = { dashboard: Dashboard, apps: Apps, models: Models, agents: Agents, network: Network, updates: Updates, prompts: Prompts, settings: Settings }
 
 export default function App() {
   const [view, setView] = useState('dashboard')
