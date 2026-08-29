@@ -1194,31 +1194,40 @@ def approve_scene(book_id: str, chapter_num: int, scene_num: int, body: ApproveS
             "List any new entities in this scene not already in the skeleton."
         )}]
 
-        full_sync = ""
-        try:
-            async for token in llm.provider_tokens(provider, model, sync_messages, SCENE_BIBLE_SYNC_SYSTEM, user):
-                full_sync += token
-        except Exception as e:
-            yield f'data: {json.dumps({"type": "bible_sync_error", "message": str(e)})}\n\n'
+        last_error = None
+        result = None
+        for attempt in range(2):
+            full_sync = ""
+            try:
+                async for token in llm.provider_tokens(provider, model, sync_messages, SCENE_BIBLE_SYNC_SYSTEM, user):
+                    full_sync += token
+            except Exception as e:
+                yield f'data: {json.dumps({"type": "bible_sync_error", "message": str(e)})}\n\n'
+                return
+            try:
+                result = _extract_json_skeleton(full_sync)
+                last_error = None
+                break
+            except Exception as e:
+                last_error = e
+
+        if last_error is not None:
+            yield f'data: {json.dumps({"type": "bible_sync_error", "message": str(last_error)})}\n\n'
             return
 
-        try:
-            result = _extract_json_skeleton(full_sync)
-            new_entities = result.get("new_entities", [])
-            if new_entities:
-                if act_num is not None:
-                    for e in new_entities:
-                        if act_num not in e.get("appearsInActs", []):
-                            e.setdefault("appearsInActs", []).append(act_num)
-                skeleton.setdefault("entities", []).extend(new_entities)
-                with open(_skeleton_path(book_id), "w") as f:
-                    json.dump(skeleton, f, indent=2)
-                rel_skel = os.path.relpath(_skeleton_path(book_id), book_dir)
-                repo.index.add([rel_skel])
-                repo.index.commit(f"Bible sync — Ch{chapter_num} Sc{scene_num} (+{len(new_entities)} entities)")
-            yield f'data: {json.dumps({"type": "bible_synced", "new_entities": len(new_entities)})}\n\n'
-        except Exception as e:
-            yield f'data: {json.dumps({"type": "bible_sync_error", "message": str(e)})}\n\n'
+        new_entities = result.get("new_entities", [])
+        if new_entities:
+            if act_num is not None:
+                for e in new_entities:
+                    if act_num not in e.get("appearsInActs", []):
+                        e.setdefault("appearsInActs", []).append(act_num)
+            skeleton.setdefault("entities", []).extend(new_entities)
+            with open(_skeleton_path(book_id), "w") as f:
+                json.dump(skeleton, f, indent=2)
+            rel_skel = os.path.relpath(_skeleton_path(book_id), book_dir)
+            repo.index.add([rel_skel])
+            repo.index.commit(f"Bible sync — Ch{chapter_num} Sc{scene_num} (+{len(new_entities)} entities)")
+        yield f'data: {json.dumps({"type": "bible_synced", "new_entities": len(new_entities)})}\n\n'
 
     return StreamingResponse(generate(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
