@@ -1087,7 +1087,7 @@ def run_scene(book_id: str, chapter_num: int, body: RunSceneBody, user: str = De
     if os.path.exists(plan_path):
         plan = open(plan_path).read()
         m = re.search(
-            r'^(### Scene ' + str(body.scene) + r'\s*[—–-].*?)(?=^### Scene \d+|\Z)',
+            r'^(### Scene ' + str(body.scene) + r'\s*[—–:\-].*?)(?=^### Scene \d+|\Z)',
             plan, re.MULTILINE | re.DOTALL
         )
         if m:
