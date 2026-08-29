@@ -8,6 +8,7 @@ import BibleViewerPage from './pages/BibleViewer'
 import WritingLoopPage from './pages/WritingLoop'
 import HistoryPage from './pages/History'
 import SequentialWorkflowPage from './pages/SequentialWorkflow'
+import SeriesBiblePage from './pages/SeriesBible'
 
 export default function App() {
   return (
@@ -17,6 +18,9 @@ export default function App() {
 
       {/* Books list — no layout chrome needed */}
       <Route path="/books" element={<BooksPage />} />
+
+      {/* Series bible — standalone page */}
+      <Route path="/series/:seriesId/bible" element={<SeriesBiblePage />} />
 
       {/* Global pages */}
       <Route element={<GlobalLayout />}>

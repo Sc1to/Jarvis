@@ -443,7 +443,9 @@ def approve_chapter(book_id: str, chapter: int, user: str = Depends(current_user
         repo.index.add([f"chapter_{chapter:02d}_meta.json", "bible.json"])
         repo.index.commit(f"Approve Chapter {chapter} — Bible updated")
 
-        yield _sse({"type": "saved", "chapter": chapter, "entity_count": len(updated)})
+        book = db.get_book(book_id)
+        yield _sse({"type": "saved", "chapter": chapter, "entity_count": len(updated),
+                    "can_sync_to_series": bool(book and book.get("series_id"))})
 
     return StreamingResponse(generate(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

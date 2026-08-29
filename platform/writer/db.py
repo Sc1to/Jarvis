@@ -23,6 +23,11 @@ def _get_conn() -> sqlite3.Connection:
                 key   TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS series (
+                id         TEXT PRIMARY KEY,
+                title      TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS books (
                 id         TEXT PRIMARY KEY,
                 title      TEXT NOT NULL,
@@ -35,6 +40,12 @@ def _get_conn() -> sqlite3.Connection:
                 PRIMARY KEY (user_id, provider)
             );
         """)
+        # Migrate existing books table — ignore error if columns already exist
+        for col in ("series_id TEXT", "series_order INTEGER"):
+            try:
+                _conn.execute(f"ALTER TABLE books ADD COLUMN {col}")
+            except Exception:
+                pass
         _conn.commit()
     return _conn
 
@@ -82,15 +93,15 @@ def list_books() -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def create_book(title: str) -> dict:
+def create_book(title: str, series_id: str | None = None, series_order: int | None = None) -> dict:
     book_id = uuid.uuid4().hex[:8]
     created_at = int(time.time() * 1000)
     _get_conn().execute(
-        "INSERT INTO books (id, title, created_at) VALUES (?, ?, ?)",
-        (book_id, title, created_at),
+        "INSERT INTO books (id, title, created_at, series_id, series_order) VALUES (?, ?, ?, ?, ?)",
+        (book_id, title, created_at, series_id, series_order),
     )
     _get_conn().commit()
-    return {"id": book_id, "title": title, "created_at": created_at}
+    return {"id": book_id, "title": title, "created_at": created_at, "series_id": series_id, "series_order": series_order}
 
 
 def get_book(book_id: str) -> dict | None:
@@ -109,5 +120,51 @@ def data_dir(book_id: str) -> str:
 
 def ensure_data_dir(book_id: str) -> str:
     d = data_dir(book_id)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+# ── Series ────────────────────────────────────────────────────────────────────
+
+def list_series() -> list[dict]:
+    rows = _get_conn().execute("SELECT * FROM series ORDER BY created_at DESC").fetchall()
+    return [dict(r) for r in rows]
+
+
+def create_series(title: str) -> dict:
+    series_id = uuid.uuid4().hex[:8]
+    created_at = int(time.time() * 1000)
+    _get_conn().execute(
+        "INSERT INTO series (id, title, created_at) VALUES (?, ?, ?)",
+        (series_id, title, created_at),
+    )
+    _get_conn().commit()
+    return {"id": series_id, "title": title, "created_at": created_at}
+
+
+def get_series(series_id: str) -> dict | None:
+    row = _get_conn().execute("SELECT * FROM series WHERE id = ?", (series_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def delete_series(series_id: str) -> None:
+    _get_conn().execute("UPDATE books SET series_id = NULL, series_order = NULL WHERE series_id = ?", (series_id,))
+    _get_conn().execute("DELETE FROM series WHERE id = ?", (series_id,))
+    _get_conn().commit()
+
+
+def list_books_in_series(series_id: str) -> list[dict]:
+    rows = _get_conn().execute(
+        "SELECT * FROM books WHERE series_id = ? ORDER BY series_order ASC, created_at ASC", (series_id,)
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def series_data_dir(series_id: str) -> str:
+    return os.path.join(DATA_ROOT, "series", series_id)
+
+
+def ensure_series_data_dir(series_id: str) -> str:
+    d = series_data_dir(series_id)
     os.makedirs(d, exist_ok=True)
     return d

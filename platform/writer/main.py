@@ -19,6 +19,7 @@ from routes.phase3 import (SCENE_PLANNER_SYSTEM, WRITER_SYSTEM, QA_SYSTEM, BIBLE
                             BEAT_GENERATOR_SYSTEM, BEAT_EXPANDER_SYSTEM)
 from routes.settings import router as settings_router
 from routes.books import router as books_router
+from routes.series import router as series_router
 from routes.models import router as models_router
 from routes.bible import router as bible_router
 from routes.git import router as git_router
@@ -39,6 +40,7 @@ db._get_conn()  # initialize DB on startup
 
 app.include_router(settings_router, prefix="/api")
 app.include_router(books_router, prefix="/api")
+app.include_router(series_router, prefix="/api")
 app.include_router(models_router, prefix="/api")
 app.include_router(bible_router, prefix="/api")
 app.include_router(git_router, prefix="/api")

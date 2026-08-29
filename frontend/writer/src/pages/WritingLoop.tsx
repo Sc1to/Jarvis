@@ -51,6 +51,7 @@ interface ProgressEvent {
   scene_count?: number
   message?: string
   entity_count?: number
+  can_sync_to_series?: boolean
 }
 
 
@@ -133,6 +134,9 @@ export default function WritingLoopPage() {
   const [showRephrase, setShowRephrase] = useState(false)
   // Beats mode: scenes that should use beat-based expansion on rewrite
   const [beatScenes, setBeatScenes] = useState<Set<number>>(new Set())
+  const [canSyncToSeries, setCanSyncToSeries] = useState(false)
+  const [syncResult, setSyncResult] = useState<{ added: string[]; updated: string[] } | null>(null)
+  const [syncing, setSyncing] = useState(false)
 
   const { data: chapterData, refetch: refetchChapter } = useQuery<{ chapter: number; content: string; meta: ChapterMeta } | null>({
     queryKey: ['chapter', bookId, activeChapter],
@@ -290,6 +294,7 @@ export default function WritingLoopPage() {
           await refetchStatus()
           await refetchChapter()
           qc.invalidateQueries({ queryKey: ['bible', bookId] })
+          if (event.can_sync_to_series) setCanSyncToSeries(true)
         }
       }
     } finally {
@@ -443,6 +448,34 @@ export default function WritingLoopPage() {
                 </Badge>
               )}
               {isApproved && <Badge variant="success">Approved</Badge>}
+              {/* Sync to series — shown after chapter approval when book is in a series */}
+              {canSyncToSeries && isApproved && !syncing && !syncResult && (
+                <Button
+                  size="sm" variant="outline"
+                  className="gap-2"
+                  onClick={async () => {
+                    setSyncing(true)
+                    try {
+                      const r = await fetch(`${API}/books/${bookId}/sync-to-series`, { method: 'POST' })
+                      if (r.ok) {
+                        const res = await r.json()
+                        setSyncResult(res)
+                        setCanSyncToSeries(false)
+                      }
+                    } finally {
+                      setSyncing(false)
+                    }
+                  }}
+                >
+                  Sync to series
+                </Button>
+              )}
+              {syncing && <Badge variant="secondary" className="gap-1.5"><Loader2 size={12} className="animate-spin" />Syncing…</Badge>}
+              {syncResult && (
+                <Badge variant="secondary" className="text-emerald-500">
+                  ✓ +{syncResult.added.length} new, {syncResult.updated.length} updated
+                </Badge>
+              )}
             </>
           )}
         </div>
