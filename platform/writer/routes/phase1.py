@@ -265,9 +265,22 @@ class ReplyBody(BaseModel):
     messages: list[dict]
 
 
+def _series_system(book_id: str, base_system: str) -> str:
+    from routes.series import read_series_text
+    book = db.get_book(book_id)
+    series_id = book and book.get("series_id")
+    if not series_id:
+        return base_system
+    ns = read_series_text(series_id, "north_star.md")
+    if not ns:
+        return base_system
+    return f"## Series North Star (fixed constraints for all books in this series)\n\n{ns}\n\n---\n\n{base_system}"
+
+
 @router.post("/books/{book_id}/phase1/north-star/reply")
 def north_star_reply(book_id: str, body: ReplyBody, user: str = Depends(current_user)):
-    return llm.stream_chat("story_architect", body.messages, prompt_store.get("story_architect", STORY_ARCHITECT_SYSTEM), user)
+    system = _series_system(book_id, prompt_store.get("story_architect", STORY_ARCHITECT_SYSTEM))
+    return llm.stream_chat("story_architect", body.messages, system, user)
 
 
 class LockBody(BaseModel):
@@ -277,10 +290,21 @@ class LockBody(BaseModel):
 @router.post("/books/{book_id}/phase1/north-star/lock")
 async def north_star_lock(book_id: str, body: LockBody, user: str = Depends(current_user)):
     import asyncio
+    from routes.series import read_series_text
     synthesis_msgs = body.messages + [{"role": "user", "content": prompt_store.get("synthesis", SYNTHESIS_PROMPT)}]
     prefs_msgs = body.messages + [{"role": "user", "content": prompt_store.get("writing_prefs", WRITING_PREFS_PROMPT)}]
 
-    system = prompt_store.get("story_architect", STORY_ARCHITECT_SYSTEM)
+    book = db.get_book(book_id)
+    series_id = book and book.get("series_id")
+    if series_id:
+        ss = read_series_text(series_id, "style_sheet.md")
+        if ss:
+            prefs_msgs = body.messages + [{"role": "user", "content": (
+                f"Series style sheet (use as baseline, adapt specifics for this book):\n\n{ss}\n\n"
+                + prompt_store.get("writing_prefs", WRITING_PREFS_PROMPT)
+            )}]
+
+    system = _series_system(book_id, prompt_store.get("story_architect", STORY_ARCHITECT_SYSTEM))
     document, writing_prefs = await asyncio.gather(
         llm.call_llm("story_architect", synthesis_msgs, system, user),
         llm.call_llm("story_architect", prefs_msgs, system, user),

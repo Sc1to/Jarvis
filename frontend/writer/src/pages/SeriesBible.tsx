@@ -5,7 +5,71 @@ import { API } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
-import { ChevronLeft, Plus, Loader2, User, MapPin, Users, Box } from 'lucide-react'
+import { ChevronLeft, Plus, Loader2, User, MapPin, Users, Box, Star, Paintbrush } from 'lucide-react'
+
+async function fetchSeriesText(seriesId: string, endpoint: string): Promise<{ content: string }> {
+  const r = await fetch(`${API}/series/${seriesId}/${endpoint}`)
+  if (!r.ok) throw new Error(String(r.status))
+  return r.json()
+}
+
+async function saveSeriesText(seriesId: string, endpoint: string, content: string) {
+  const r = await fetch(`${API}/series/${seriesId}/${endpoint}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+  })
+  if (!r.ok) throw new Error('Failed to save')
+}
+
+function TextSection({ icon: Icon, title, description, queryKey, seriesId, endpoint }: {
+  icon: React.ElementType
+  title: string
+  description: string
+  queryKey: string[]
+  seriesId: string
+  endpoint: string
+}) {
+  const qc = useQueryClient()
+  const { data, isLoading } = useQuery({
+    queryKey,
+    queryFn: () => fetchSeriesText(seriesId, endpoint),
+  })
+  const [draft, setDraft] = useState<string | null>(null)
+  const current = draft ?? data?.content ?? ''
+
+  const save = useMutation({
+    mutationFn: (content: string) => saveSeriesText(seriesId, endpoint, content),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey })
+      setDraft(null)
+    },
+  })
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        <Icon size={14} className="text-muted-foreground" />
+        <h2 className="text-sm font-medium">{title}</h2>
+      </div>
+      <p className="text-xs text-muted-foreground pl-5">{description}</p>
+      <textarea
+        value={isLoading ? '' : current}
+        onChange={e => setDraft(e.target.value)}
+        placeholder={isLoading ? 'Loading…' : `Write the ${title.toLowerCase()} here…`}
+        className="w-full h-40 rounded-md border border-input bg-background px-3 py-2 text-sm resize-y focus:outline-none focus:ring-1 focus:ring-ring"
+      />
+      {draft !== null && draft !== (data?.content ?? '') && (
+        <div className="flex gap-2">
+          <Button size="sm" onClick={() => save.mutate(draft)} disabled={save.isPending} className="h-7 text-xs gap-1.5">
+            {save.isPending && <Loader2 size={11} className="animate-spin" />}Save
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setDraft(null)} className="h-7 text-xs">Discard</Button>
+        </div>
+      )}
+    </div>
+  )
+}
 
 interface Entity {
   id: string
@@ -167,6 +231,28 @@ export default function SeriesBiblePage() {
             </p>
           )}
         </div>
+
+        {/* Series North Star */}
+        <TextSection
+          icon={Star}
+          title="Series North Star"
+          description="The overarching premise, world rules, and thematic contract that holds across all books. Injected into the Story Architect when writing a new book in this series."
+          queryKey={['series-north-star', seriesId!]}
+          seriesId={seriesId!}
+          endpoint="north-star"
+        />
+
+        {/* Series Style Sheet */}
+        <TextSection
+          icon={Paintbrush}
+          title="Series Style Sheet"
+          description="POV conventions, naming rules, prose rhythm, and recurring motifs. Used as baseline when synthesising writing preferences for a new book in this series."
+          queryKey={['series-style-sheet', seriesId!]}
+          seriesId={seriesId!}
+          endpoint="style-sheet"
+        />
+
+        <div className="border-t border-border pt-4" />
 
         {/* Entity groups */}
         {entityTypes.map(type => {

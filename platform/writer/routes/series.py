@@ -99,6 +99,54 @@ def upsert_series_entity(series_id: str, body: EntityBody):
     return {"ok": True, "entity_id": body.entity_id}
 
 
+# ── North Star & Style Sheet ──────────────────────────────────────────────────
+
+def read_series_text(series_id: str, filename: str) -> str:
+    p = os.path.join(db.series_data_dir(series_id), filename)
+    return open(p).read() if os.path.exists(p) else ""
+
+
+def _write_series_text(series_id: str, filename: str, content: str) -> None:
+    d = db.series_data_dir(series_id)
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, filename), "w") as f:
+        f.write(content)
+
+
+class TextBody(BaseModel):
+    content: str
+
+
+@router.get("/series/{series_id}/north-star")
+def get_series_north_star(series_id: str):
+    if not db.get_series(series_id):
+        raise HTTPException(404, "Not found")
+    return {"content": read_series_text(series_id, "north_star.md")}
+
+
+@router.post("/series/{series_id}/north-star")
+def save_series_north_star(series_id: str, body: TextBody):
+    if not db.get_series(series_id):
+        raise HTTPException(404, "Not found")
+    _write_series_text(series_id, "north_star.md", body.content)
+    return {"ok": True}
+
+
+@router.get("/series/{series_id}/style-sheet")
+def get_series_style_sheet(series_id: str):
+    if not db.get_series(series_id):
+        raise HTTPException(404, "Not found")
+    return {"content": read_series_text(series_id, "style_sheet.md")}
+
+
+@router.post("/series/{series_id}/style-sheet")
+def save_series_style_sheet(series_id: str, body: TextBody):
+    if not db.get_series(series_id):
+        raise HTTPException(404, "Not found")
+    _write_series_text(series_id, "style_sheet.md", body.content)
+    return {"ok": True}
+
+
 # ── Sync book → series ────────────────────────────────────────────────────────
 
 @router.post("/books/{book_id}/sync-to-series")
