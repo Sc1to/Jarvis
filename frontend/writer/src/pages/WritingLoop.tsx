@@ -315,28 +315,32 @@ export default function WritingLoopPage() {
     setAutoWriteError(null)
     const log = (msg: string) => setAutoWriteLog(prev => [...prev, msg])
     try {
-      const freshStatus = await refetchStatus()
-      const pending = (freshStatus.data?.chapters ?? []).filter(ch => !ch.approved).map(ch => ch.chapter)
-      const nextCh = freshStatus.data?.next_chapter
-      if (nextCh && !pending.includes(nextCh)) pending.push(nextCh)
-      if (!pending.length) { log('Nothing to write — all chapters approved.'); return }
-      for (const chNum of pending) {
+      let s = (await refetchStatus()).data
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
         if (autoWriteCancel.current) { log('Stopped.'); break }
-        log(`Writing Chapter ${chNum}…`)
-        setActiveChapter(chNum)
-        setEvents([])
-        setChapterDone(false)
-        const writeResp = await fetch(`${API}/books/${bookId}/phase3/write-chapter`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ chapter: chNum }),
-        })
-        for await (const ev of readSSE(writeResp)) {
-          const event = ev as ProgressEvent
-          if (event.type !== 'token') setEvents(prev => [...prev, event])
-          if (event.type === 'chapter_done') setChapterDone(true)
-          else if (event.type === 'error') throw new Error(`Chapter ${chNum}: ${event.message ?? 'Write failed'}`)
+        const unapproved = s?.chapters?.find(ch => !ch.approved)
+        const chNum = unapproved?.chapter ?? s?.next_chapter
+        if (!chNum) { log('All chapters written and approved!'); break }
+
+        if (!unapproved) {
+          log(`Writing Chapter ${chNum}…`)
+          setActiveChapter(chNum)
+          setEvents([])
+          setChapterDone(false)
+          const writeResp = await fetch(`${API}/books/${bookId}/phase3/write-chapter`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chapter: chNum }),
+          })
+          for await (const ev of readSSE(writeResp)) {
+            const event = ev as ProgressEvent
+            if (event.type !== 'token') setEvents(prev => [...prev, event])
+            if (event.type === 'chapter_done') setChapterDone(true)
+            else if (event.type === 'error') throw new Error(`Chapter ${chNum}: ${event.message ?? 'Write failed'}`)
+          }
+          if (autoWriteCancel.current) { log('Stopped.'); break }
         }
-        if (autoWriteCancel.current) { log('Stopped.'); break }
+
         log(`Approving Chapter ${chNum} (bible update)…`)
         const approveResp = await fetch(`${API}/books/${bookId}/phase3/chapter/${chNum}/approve`, { method: 'POST' })
         for await (const ev of readSSE(approveResp)) {
@@ -345,11 +349,10 @@ export default function WritingLoopPage() {
           if (event.type === 'saved') qc.invalidateQueries({ queryKey: ['bible', bookId] })
           else if (event.type === 'error') throw new Error(`Chapter ${chNum} approve: ${event.message ?? 'Failed'}`)
         }
-        await refetchStatus()
-        await refetchChapter()
         log(`Chapter ${chNum} done ✓`)
+        s = (await refetchStatus()).data
+        await refetchChapter()
       }
-      if (!autoWriteCancel.current) log('All chapters written and approved!')
     } catch (e) {
       setAutoWriteError(e instanceof Error ? e.message : String(e))
     } finally {
