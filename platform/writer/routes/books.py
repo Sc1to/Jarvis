@@ -50,7 +50,15 @@ def _seed_skeleton_from_series(book_id: str, series_id: str) -> None:
     if not ledger:
         return
     entities = [
-        {**entity, "id": eid, "series_source": True}
+        {
+            "id": eid,
+            "type": entity.get("type"),
+            "name": entity.get("name"),
+            "series_source": True,
+            "series_facts": entity.get("series_facts", {}),
+            "book_facts": {},
+            "eventLog": [],
+        }
         for eid, entity in ledger.items()
     ]
     skeleton = {"acts": [], "entities": entities}

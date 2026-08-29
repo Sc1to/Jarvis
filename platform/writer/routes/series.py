@@ -147,10 +147,14 @@ def save_series_style_sheet(series_id: str, body: TextBody):
     return {"ok": True}
 
 
-# ── Sync book → series ────────────────────────────────────────────────────────
+# ── Promote book entity → series ─────────────────────────────────────────────
 
-@router.post("/books/{book_id}/sync-to-series")
-def sync_book_to_series(book_id: str):
+class PromoteEntityBody(BaseModel):
+    entity_id: str
+
+
+@router.post("/books/{book_id}/promote-entity")
+def promote_entity_to_series(book_id: str, body: PromoteEntityBody):
     book = db.get_book(book_id)
     if not book:
         raise HTTPException(404, "Book not found")
@@ -160,25 +164,28 @@ def sync_book_to_series(book_id: str):
 
     book_bible_path = os.path.join(db.data_dir(book_id), "bible.json")
     if not os.path.exists(book_bible_path):
-        raise HTTPException(400, "Book has no bible.json yet — complete at least Phase 2 first")
+        raise HTTPException(400, "Book has no bible.json yet")
 
     with open(book_bible_path) as f:
         book_bible = json.load(f)
 
-    book_ledger = book_bible.get("ledger", {})
+    entity = book_bible.get("ledger", {}).get(body.entity_id)
+    if not entity:
+        raise HTTPException(404, f"Entity {body.entity_id} not found in book bible")
+
     series_bible = _read_series_bible(series_id)
     series_ledger = series_bible.get("ledger", {})
 
-    added, updated = [], []
-    for entity_id, entity in book_ledger.items():
-        if entity_id not in series_ledger:
-            added.append(entity_id)
-        else:
-            updated.append(entity_id)
-        series_ledger[entity_id] = entity
+    existing = series_ledger.get(body.entity_id, {})
+    series_entry = {
+        "type": entity.get("type", existing.get("type")),
+        "name": entity.get("name", existing.get("name")),
+        "series_facts": entity.get("series_facts", existing.get("series_facts", {})),
+    }
+    series_ledger[body.entity_id] = series_entry
 
     series_bible["ledger"] = series_ledger
     series_bible.setdefault("metadata", {})["last_updated"] = datetime.now(timezone.utc).isoformat()
     _write_series_bible(series_id, series_bible)
 
-    return {"ok": True, "added": added, "updated": updated}
+    return {"ok": True, "entity_id": body.entity_id}

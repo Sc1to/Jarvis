@@ -61,13 +61,17 @@ pass = true when there are zero error-severity issues. Warnings alone do not fai
 
 BIBLE_UPDATER_SYSTEM = """You are the Bible Updater. Update the entity ledger with facts that emerged in this approved chapter.
 
+Entity schema:
+  series_facts  — permanent canonical facts (appearance, background, values). READ-ONLY. Never modify.
+  book_facts    — transient state in this book (location, fatigue, mood, arc). WRITE HERE.
+  eventLog      — append-only list of significant scene events. APPEND HERE.
+
 Rules:
-- ADD only — never delete or contradict existing coreFacts or eventLog entries
-- New named characters → add with next available CHAR_XXX id
-- New named locations → LOC_XXX, factions → FRAC_XXX, significant objects → OBJ_XXX
-- eventLog: add one entry per significant scene event, including the chapter number
-- lifecycle: extend the act list if an entity appears in a new act
-- Direct contradictions with existing coreFacts → add to that entity's "flags" list
+- ONLY write to book_facts and eventLog. Never touch series_facts.
+- New entities: set series_source=false, series_facts={}, populate book_facts with facts found in the chapter.
+- New named characters → next available CHAR_XXX id; locations → LOC_XXX; factions → FRAC_XXX; objects → OBJ_XXX
+- eventLog: append {act, chapter, description} for each significant scene event
+- Contradictions with existing book_facts → add a "flags" list to book_facts
 
 Return the COMPLETE updated ledger as valid JSON. No preamble, no fences. Same structure as input."""
 
@@ -443,9 +447,7 @@ def approve_chapter(book_id: str, chapter: int, user: str = Depends(current_user
         repo.index.add([f"chapter_{chapter:02d}_meta.json", "bible.json"])
         repo.index.commit(f"Approve Chapter {chapter} — Bible updated")
 
-        book = db.get_book(book_id)
-        yield _sse({"type": "saved", "chapter": chapter, "entity_count": len(updated),
-                    "can_sync_to_series": bool(book and book.get("series_id"))})
+        yield _sse({"type": "saved", "chapter": chapter, "entity_count": len(updated)})
 
     return StreamingResponse(generate(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

@@ -127,15 +127,15 @@ function EntityEditor({ entity, onSave, onCancel }: {
 }) {
   const [name, setName] = useState(entity.name ?? '')
   const [notes, setNotes] = useState(
-    typeof entity.coreFacts === 'object' && entity.coreFacts !== null
-      ? JSON.stringify(entity.coreFacts, null, 2)
+    typeof entity.series_facts === 'object' && entity.series_facts !== null
+      ? JSON.stringify(entity.series_facts, null, 2)
       : ''
   )
 
   function handleSave() {
-    let coreFacts = {}
-    try { coreFacts = notes ? JSON.parse(notes) : {} } catch { /* leave empty */ }
-    onSave({ ...entity, name, coreFacts })
+    let series_facts = {}
+    try { series_facts = notes ? JSON.parse(notes) : {} } catch { /* leave empty */ }
+    onSave({ ...entity, name, series_facts })
   }
 
   return (
@@ -145,7 +145,7 @@ function EntityEditor({ entity, onSave, onCancel }: {
         <Input value={name} onChange={e => setName(e.target.value)} className="h-8 text-sm" />
       </div>
       <div>
-        <label className="text-xs text-muted-foreground mb-1 block">Core Facts (JSON)</label>
+        <label className="text-xs text-muted-foreground mb-1 block">Series Facts — permanent (appearance, background, values, personality)</label>
         <textarea
           value={notes}
           onChange={e => setNotes(e.target.value)}
