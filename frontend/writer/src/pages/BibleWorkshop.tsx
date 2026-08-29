@@ -771,8 +771,8 @@ export default function BibleWorkshopPage() {
           )
           for await (const event of readSSE(approveResp)) {
             if (event.type === 'bible_sync_error') {
-              setSceneSyncing(null)
-              throw new Error(`Ch${chInfo.number} Sc${scInfo.number} bible sync: ${event.message ?? 'Failed'}`)
+              // Scene is already saved — bible sync failure is non-fatal in auto-mode
+              log(`⚠ Ch${chInfo.number} Sc${scInfo.number} bible sync failed (scene saved): ${event.message ?? 'JSON error'}`)
             }
           }
           setSceneSyncing(null)
