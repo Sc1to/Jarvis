@@ -1,17 +1,33 @@
 import { useState } from 'react'
 import { API } from '@/lib/api'
 import { useParams } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
-import { ChevronLeft, GitCommit } from 'lucide-react'
+import { ChevronLeft, GitCommit, RotateCcw } from 'lucide-react'
 
 interface Commit { hash: string; message: string; date: string; author_name: string }
 
 export default function HistoryPage() {
   const { bookId } = useParams<{ bookId: string }>()
+  const qc = useQueryClient()
   const [selected, setSelected] = useState<string | null>(null)
+  const [restoreSuccess, setRestoreSuccess] = useState(false)
+
+  const restore = useMutation({
+    mutationFn: (sha: string) =>
+      fetch(`${API}/books/${bookId}/git/restore`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sha }),
+      }).then(r => r.json()),
+    onSuccess: () => {
+      setRestoreSuccess(true)
+      qc.invalidateQueries()
+    },
+  })
 
   const { data: log = [] } = useQuery<Commit[]>({
     queryKey: ['git-log', bookId],
@@ -65,9 +81,30 @@ export default function HistoryPage() {
           <div className="text-center py-20"><p className="text-sm text-muted-foreground">Select a commit to view the scene and bible changes.</p></div>
         ) : (
           <div className="space-y-6">
-            <div>
-              <h3 className="font-semibold text-sm mb-1">{log.find(c => c.hash === selected)?.message.split('\n')[0]}</h3>
-              <Badge variant="outline" className="text-xs font-mono">{selected.slice(0, 7)}</Badge>
+            <div className="space-y-3">
+              <div>
+                <h3 className="font-semibold text-sm mb-1">{log.find(c => c.hash === selected)?.message.split('\n')[0]}</h3>
+                <Badge variant="outline" className="text-xs font-mono">{selected.slice(0, 7)}</Badge>
+              </div>
+              <div className="space-y-1.5">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-2 border-amber-400/60 text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/20"
+                  onClick={() => { setRestoreSuccess(false); restore.mutate(selected) }}
+                  disabled={restore.isPending}
+                >
+                  <RotateCcw size={13} />
+                  {restore.isPending ? 'Restoring…' : 'Restore book to here'}
+                </Button>
+                <p className="text-[10px] text-muted-foreground">Resets all approvals after this commit. Files are overwritten when re-run.</p>
+                {restoreSuccess && (
+                  <p className="text-xs text-emerald-500">✓ Restored. Go to Bible Workshop or Writing Loop to continue from here.</p>
+                )}
+                {restore.isError && (
+                  <p className="text-xs text-destructive">⚠ Restore failed — try again.</p>
+                )}
+              </div>
             </div>
             {diff
               ? <Card><CardContent className="p-4"><p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Bible changes</p><pre className="text-xs font-mono whitespace-pre-wrap text-muted-foreground">{JSON.stringify(diff, null, 2)}</pre></CardContent></Card>

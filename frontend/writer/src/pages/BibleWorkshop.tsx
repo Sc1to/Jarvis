@@ -126,6 +126,18 @@ export default function BibleWorkshopPage() {
   const [sceneDirective, setSceneDirective] = useState('')
   const [expandedScenes, setExpandedScenes] = useState<Set<string>>(new Set())
 
+  // ── Auto-run state (Tier 3) ──────────────────────────────────────────────────
+  const autoCancelT3 = useRef(false)
+  const [autoRunningT3, setAutoRunningT3] = useState(false)
+  const [autoLogT3, setAutoLogT3] = useState<string[]>([])
+  const [autoErrorT3, setAutoErrorT3] = useState<string | null>(null)
+
+  // ── Auto-run state (Tier 4) ──────────────────────────────────────────────────
+  const autoCancelT4 = useRef(false)
+  const [autoRunningT4, setAutoRunningT4] = useState(false)
+  const [autoLogT4, setAutoLogT4] = useState<string[]>([])
+  const [autoErrorT4, setAutoErrorT4] = useState<string | null>(null)
+
   // ── Entity sidebar state ─────────────────────────────────────────────────────
   const [addingEntity, setAddingEntity] = useState(false)
   const [editingEntityId, setEditingEntityId] = useState<string | null>(null)
@@ -621,6 +633,166 @@ export default function BibleWorkshopPage() {
     }
   }
 
+  // ── Auto-run: all acts (Tier 3) ──────────────────────────────────────────────
+  async function autoRunAllActs() {
+    autoCancelT3.current = false
+    setAutoRunningT3(true)
+    setAutoLogT3([])
+    setAutoErrorT3(null)
+    const log = (msg: string) => setAutoLogT3(prev => [...prev, msg])
+    try {
+      const acts = (tier3Status?.acts ?? []).filter(a => !a.approved)
+      if (!acts.length) { log('All acts already approved.'); return }
+      for (const actInfo of acts) {
+        if (autoCancelT3.current) { log('Stopped.'); break }
+        log(`Generating Act ${actInfo.act}…`)
+        setActRunning(actInfo.act)
+        setActContents(prev => ({ ...prev, [actInfo.act]: '' }))
+        let text = ''
+        const resp = await fetch(`${API}/books/${bookId}/phase1/tier3/run-act`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ act: actInfo.act }),
+        })
+        for await (const event of readSSE(resp)) {
+          if (event.type === 'token' && event.content) {
+            text += event.content
+            setActContents(prev => ({ ...prev, [actInfo.act]: text }))
+          } else if (event.type === 'error') {
+            setActRunning(null)
+            throw new Error(`Act ${actInfo.act}: ${event.message ?? 'Generation failed'}`)
+          }
+        }
+        setActRunning(null)
+        if (!text) throw new Error(`Act ${actInfo.act}: no content generated`)
+        if (autoCancelT3.current) { log('Stopped.'); break }
+        log(`Approving Act ${actInfo.act}…`)
+        await fetch(`${API}/books/${bookId}/phase1/tier3/approve-act`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ act: actInfo.act, content: text }),
+        })
+        await refetchTier3()
+        await refetchTier4()
+        log(`Act ${actInfo.act} done ✓`)
+      }
+      if (!autoCancelT3.current) log('All acts complete!')
+    } catch (e) {
+      setAutoErrorT3(e instanceof Error ? e.message : String(e))
+    } finally {
+      setActRunning(null)
+      setAutoRunningT3(false)
+    }
+  }
+
+  // ── Auto-run: all chapters + scene briefs (Tier 4) ───────────────────────────
+  async function autoRunAllTier4() {
+    autoCancelT4.current = false
+    setAutoRunningT4(true)
+    setAutoLogT4([])
+    setAutoErrorT4(null)
+    const log = (msg: string) => setAutoLogT4(prev => [...prev, msg])
+    try {
+      const initialT4 = await refetchTier4()
+      const chapters = initialT4.data?.chapters ?? []
+      for (const chInfo of chapters) {
+        if (autoCancelT4.current) { log('Stopped.'); break }
+
+        // Phase A: generate + lock scene plan if not yet approved
+        if (!chInfo.approved) {
+          log(`Planning scenes for Chapter ${chInfo.number}…`)
+          setChapterRunning(chInfo.number)
+          setChapterContents(prev => ({ ...prev, [chInfo.number]: '' }))
+          let planText = ''
+          const planResp = await fetch(`${API}/books/${bookId}/phase1/tier4/run-chapter`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chapter: chInfo.number }),
+          })
+          for await (const event of readSSE(planResp)) {
+            if (event.type === 'token' && event.content) {
+              planText += event.content
+              setChapterContents(prev => ({ ...prev, [chInfo.number]: planText }))
+            } else if (event.type === 'error') {
+              setChapterRunning(null)
+              throw new Error(`Chapter ${chInfo.number} plan: ${event.message ?? 'Failed'}`)
+            }
+          }
+          setChapterRunning(null)
+          if (!planText) throw new Error(`Chapter ${chInfo.number}: no scene plan generated`)
+          if (autoCancelT4.current) { log('Stopped.'); break }
+          log(`Locking plan for Chapter ${chInfo.number}…`)
+          setChapterApproving(chInfo.number)
+          const lockRes = await fetch(`${API}/books/${bookId}/phase1/tier4/approve-chapter`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chapter: chInfo.number, content: planText }),
+          })
+          setChapterApproving(null)
+          if (!lockRes.ok) {
+            const err = await lockRes.json().catch(() => ({}))
+            throw new Error(`Chapter ${chInfo.number} lock: ${err.detail ?? `HTTP ${lockRes.status}`}`)
+          }
+          const lockData = await lockRes.json()
+          if (!lockData.scenes?.length) {
+            throw new Error(`Chapter ${chInfo.number}: no scenes parsed — ensure "### Scene N — Title" headers`)
+          }
+        }
+
+        // Phase B: run + approve each scene brief
+        if (autoCancelT4.current) { log('Stopped.'); break }
+        const freshT4 = await refetchTier4()
+        const freshCh = (freshT4.data?.chapters ?? []).find(c => c.number === chInfo.number)
+        for (const scInfo of freshCh?.scenes ?? []) {
+          if (autoCancelT4.current) { log('Stopped.'); break }
+          if (scInfo.approved) continue
+          const key = `${chInfo.number}_${scInfo.number}`
+          log(`Writing brief Ch${chInfo.number} Sc${scInfo.number}…`)
+          setSceneRunning(key)
+          setSceneContents(prev => ({ ...prev, [key]: '' }))
+          let scText = ''
+          const scResp = await fetch(`${API}/books/${bookId}/phase1/tier4/chapter/${chInfo.number}/run-scene`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ scene: scInfo.number }),
+          })
+          for await (const event of readSSE(scResp)) {
+            if (event.type === 'token' && event.content) {
+              scText += event.content
+              setSceneContents(prev => ({ ...prev, [key]: scText }))
+            } else if (event.type === 'error') {
+              setSceneRunning(null)
+              throw new Error(`Ch${chInfo.number} Sc${scInfo.number}: ${event.message ?? 'Failed'}`)
+            }
+          }
+          setSceneRunning(null)
+          if (!scText) throw new Error(`Ch${chInfo.number} Sc${scInfo.number}: no content generated`)
+          if (autoCancelT4.current) { log('Stopped.'); break }
+          log(`Approving brief Ch${chInfo.number} Sc${scInfo.number} (bible sync)…`)
+          setSceneSyncing(key)
+          const approveResp = await fetch(
+            `${API}/books/${bookId}/phase1/tier4/chapter/${chInfo.number}/scene/${scInfo.number}/approve`,
+            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: scText }) }
+          )
+          for await (const event of readSSE(approveResp)) {
+            if (event.type === 'bible_sync_error') {
+              setSceneSyncing(null)
+              throw new Error(`Ch${chInfo.number} Sc${scInfo.number} bible sync: ${event.message ?? 'Failed'}`)
+            }
+          }
+          setSceneSyncing(null)
+          await refetchTier4()
+          await refetchSkeleton()
+        }
+        if (!autoCancelT4.current) log(`Chapter ${chInfo.number} complete ✓`)
+      }
+      if (!autoCancelT4.current) log('All chapters and scenes complete!')
+    } catch (e) {
+      setAutoErrorT4(e instanceof Error ? e.message : String(e))
+    } finally {
+      setChapterRunning(null)
+      setChapterApproving(null)
+      setSceneRunning(null)
+      setSceneSyncing(null)
+      setAutoRunningT4(false)
+    }
+  }
+
   // ── Phase 2 actions ──────────────────────────────────────────────────────────
   useEffect(() => {
     if (p2LogRef.current) p2LogRef.current.scrollTop = p2LogRef.current.scrollHeight
@@ -636,7 +808,7 @@ export default function BibleWorkshopPage() {
         if (event.type === 'token') setP2Log(prev => prev + event.content)
         else if (event.type === 'status') setP2Log(prev => prev + `\n[${event.message}]\n`)
         else if (event.type === 'saved') {
-          setP2LastSaved({ step: label, count: event.entity_count })
+          setP2LastSaved({ step: label, count: event.entity_count as number })
           await refetchP2Status()
           await refetchBible()
         } else if (event.type === 'error') {
@@ -936,10 +1108,42 @@ export default function BibleWorkshopPage() {
           {/* ── Chapters panel (Tier 3 — per act) ── */}
           {activeStage === 'chapters' && (
             <div className="space-y-3">
-              <div>
-                <h2 className="font-semibold">Chapters — per act</h2>
-                <p className="text-sm text-muted-foreground">Generate and approve chapter summaries act by act.</p>
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h2 className="font-semibold">Chapters — per act</h2>
+                  <p className="text-sm text-muted-foreground">Generate and approve chapter summaries act by act.</p>
+                </div>
+                <button
+                  onClick={autoRunningT3 ? () => { autoCancelT3.current = true } : autoRunAllActs}
+                  disabled={!tier3Status?.acts?.length || (allActsApproved && !autoRunningT3)}
+                  className={`shrink-0 flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border transition-colors ${
+                    autoRunningT3
+                      ? 'border-destructive text-destructive hover:bg-destructive/10'
+                      : 'border-border text-muted-foreground hover:text-foreground hover:border-foreground disabled:opacity-40 disabled:cursor-not-allowed'
+                  }`}
+                >
+                  {autoRunningT3
+                    ? <><Loader2 size={11} className="animate-spin" />Stop</>
+                    : <><Play size={11} />Auto-run all</>
+                  }
+                </button>
               </div>
+
+              {(autoLogT3.length > 0 || autoErrorT3) && (
+                <div className="space-y-1.5">
+                  {autoErrorT3 && (
+                    <div className="flex items-start gap-2 px-3 py-2 rounded-md bg-destructive/10 border border-destructive/30 text-destructive text-xs">
+                      <span className="flex-1">⚠ {autoErrorT3}</span>
+                      <button onClick={() => setAutoErrorT3(null)} className="shrink-0 hover:opacity-70 leading-none">✕</button>
+                    </div>
+                  )}
+                  {autoLogT3.length > 0 && (
+                    <pre className="text-xs font-mono text-muted-foreground bg-muted/30 rounded-md px-3 py-2 max-h-28 overflow-y-auto whitespace-pre-wrap">
+                      {autoLogT3.join('\n')}{autoRunningT3 && <span className="animate-pulse"> ▋</span>}
+                    </pre>
+                  )}
+                </div>
+              )}
 
               {!tier3Status?.acts?.length ? (
                 <Card className="bg-muted/30">
@@ -1069,10 +1273,42 @@ export default function BibleWorkshopPage() {
           {/* ── Scenes panel (Tier 4) ── */}
           {activeStage === 'scenes' && (
             <div className="space-y-3">
-              <div>
-                <h2 className="font-semibold">Scenes — one scene at a time</h2>
-                <p className="text-sm text-muted-foreground">Plan scenes per chapter, then generate and approve each scene. Approving syncs the story bible.</p>
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h2 className="font-semibold">Scenes — one scene at a time</h2>
+                  <p className="text-sm text-muted-foreground">Plan scenes per chapter, then generate and approve each scene. Approving syncs the story bible.</p>
+                </div>
+                <button
+                  onClick={autoRunningT4 ? () => { autoCancelT4.current = true } : autoRunAllTier4}
+                  disabled={!tier4Status?.chapters?.length || (allChaptersApproved && !autoRunningT4)}
+                  className={`shrink-0 flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border transition-colors ${
+                    autoRunningT4
+                      ? 'border-destructive text-destructive hover:bg-destructive/10'
+                      : 'border-border text-muted-foreground hover:text-foreground hover:border-foreground disabled:opacity-40 disabled:cursor-not-allowed'
+                  }`}
+                >
+                  {autoRunningT4
+                    ? <><Loader2 size={11} className="animate-spin" />Stop</>
+                    : <><Play size={11} />Auto-run all</>
+                  }
+                </button>
               </div>
+
+              {(autoLogT4.length > 0 || autoErrorT4) && (
+                <div className="space-y-1.5">
+                  {autoErrorT4 && (
+                    <div className="flex items-start gap-2 px-3 py-2 rounded-md bg-destructive/10 border border-destructive/30 text-destructive text-xs">
+                      <span className="flex-1">⚠ {autoErrorT4}</span>
+                      <button onClick={() => setAutoErrorT4(null)} className="shrink-0 hover:opacity-70 leading-none">✕</button>
+                    </div>
+                  )}
+                  {autoLogT4.length > 0 && (
+                    <pre className="text-xs font-mono text-muted-foreground bg-muted/30 rounded-md px-3 py-2 max-h-28 overflow-y-auto whitespace-pre-wrap">
+                      {autoLogT4.join('\n')}{autoRunningT4 && <span className="animate-pulse"> ▋</span>}
+                    </pre>
+                  )}
+                </div>
+              )}
 
               {!tier4Status?.chapters?.length ? (
                 <Card className="bg-muted/30"><CardContent className="p-4">

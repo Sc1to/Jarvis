@@ -5,7 +5,7 @@ import { useNavigate } from 'react-router-dom'
 import { Card, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { BookOpen, Plus, Trash2, ArrowRight, Loader2, Library, ChevronDown, ChevronRight, ScrollText } from 'lucide-react'
+import { Plus, Trash2, ArrowRight, Loader2, Library, ChevronDown, ChevronRight, ScrollText } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface Book { id: string; title: string; created_at: number; series_id?: string | null; series_order?: number | null }

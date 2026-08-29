@@ -138,6 +138,12 @@ export default function WritingLoopPage() {
   const [syncResult, setSyncResult] = useState<{ added: string[]; updated: string[] } | null>(null)
   const [syncing, setSyncing] = useState(false)
 
+  // ── Auto-write state ─────────────────────────────────────────────────────────
+  const autoWriteCancel = useRef(false)
+  const [autoWriting, setAutoWriting] = useState(false)
+  const [autoWriteLog, setAutoWriteLog] = useState<string[]>([])
+  const [autoWriteError, setAutoWriteError] = useState<string | null>(null)
+
   const { data: chapterData, refetch: refetchChapter } = useQuery<{ chapter: number; content: string; meta: ChapterMeta } | null>({
     queryKey: ['chapter', bookId, activeChapter],
     queryFn: () => activeChapter
@@ -302,6 +308,55 @@ export default function WritingLoopPage() {
     }
   }
 
+  async function autoWriteAll() {
+    autoWriteCancel.current = false
+    setAutoWriting(true)
+    setAutoWriteLog([])
+    setAutoWriteError(null)
+    const log = (msg: string) => setAutoWriteLog(prev => [...prev, msg])
+    try {
+      const freshStatus = await refetchStatus()
+      const pending = (freshStatus.data?.chapters ?? []).filter(ch => !ch.approved).map(ch => ch.chapter)
+      const nextCh = freshStatus.data?.next_chapter
+      if (nextCh && !pending.includes(nextCh)) pending.push(nextCh)
+      if (!pending.length) { log('Nothing to write — all chapters approved.'); return }
+      for (const chNum of pending) {
+        if (autoWriteCancel.current) { log('Stopped.'); break }
+        log(`Writing Chapter ${chNum}…`)
+        setActiveChapter(chNum)
+        setEvents([])
+        setChapterDone(false)
+        const writeResp = await fetch(`${API}/books/${bookId}/phase3/write-chapter`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chapter: chNum }),
+        })
+        for await (const ev of readSSE(writeResp)) {
+          const event = ev as ProgressEvent
+          if (event.type !== 'token') setEvents(prev => [...prev, event])
+          if (event.type === 'chapter_done') setChapterDone(true)
+          else if (event.type === 'error') throw new Error(`Chapter ${chNum}: ${event.message ?? 'Write failed'}`)
+        }
+        if (autoWriteCancel.current) { log('Stopped.'); break }
+        log(`Approving Chapter ${chNum} (bible update)…`)
+        const approveResp = await fetch(`${API}/books/${bookId}/phase3/chapter/${chNum}/approve`, { method: 'POST' })
+        for await (const ev of readSSE(approveResp)) {
+          const event = ev as ProgressEvent
+          if (event.type !== 'token') setEvents(prev => [...prev, event])
+          if (event.type === 'saved') qc.invalidateQueries({ queryKey: ['bible', bookId] })
+          else if (event.type === 'error') throw new Error(`Chapter ${chNum} approve: ${event.message ?? 'Failed'}`)
+        }
+        await refetchStatus()
+        await refetchChapter()
+        log(`Chapter ${chNum} done ✓`)
+      }
+      if (!autoWriteCancel.current) log('All chapters written and approved!')
+    } catch (e) {
+      setAutoWriteError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setAutoWriting(false)
+    }
+  }
+
   async function doRewrite(chapter: number, scene: number) {
     if (!rewriteDirective.trim()) return
     setRewriting(true)
@@ -342,7 +397,7 @@ export default function WritingLoopPage() {
   const scenes = meta?.scenes ?? []
   const isWritten = !!chapterData?.content
   const isApproved = meta?.status === 'approved'
-  const busy = writing || approving || rewriting
+  const busy = writing || approving || rewriting || autoWriting
 
   // Show writing progress OR chapter content
   const showProgress = writing || approving || (events.length > 0 && !chapterDone)
@@ -423,6 +478,24 @@ export default function WritingLoopPage() {
             </p>
           </div>
 
+          {/* Auto-write all */}
+          {!isLocked && (
+            autoWriting
+              ? <button
+                  onClick={() => { autoWriteCancel.current = true }}
+                  className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-destructive text-destructive hover:bg-destructive/10 transition-colors"
+                >
+                  <Loader2 size={11} className="animate-spin" />Stop
+                </button>
+              : <button
+                  onClick={autoWriteAll}
+                  disabled={busy}
+                  className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-border text-muted-foreground hover:text-foreground hover:border-foreground disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  <Play size={11} />Auto-write all
+                </button>
+          )}
+
           {activeChapter !== null && (
             <>
               {/* Write button (first write or already written chapter — can re-run) */}
@@ -491,6 +564,22 @@ export default function WritingLoopPage() {
 
         {activeChapter && showProgress && (
           <EventFeed events={events} />
+        )}
+
+        {(autoWriteLog.length > 0 || autoWriteError) && !writing && !approving && (
+          <div className="px-6 py-3 space-y-1.5 border-t border-border shrink-0">
+            {autoWriteError && (
+              <div className="flex items-start gap-2 px-3 py-2 rounded-md bg-destructive/10 border border-destructive/30 text-destructive text-xs">
+                <span className="flex-1">⚠ {autoWriteError}</span>
+                <button onClick={() => setAutoWriteError(null)} className="shrink-0 hover:opacity-70 leading-none">✕</button>
+              </div>
+            )}
+            {autoWriteLog.length > 0 && (
+              <pre className="text-xs font-mono text-muted-foreground bg-muted/30 rounded-md px-3 py-2 max-h-24 overflow-y-auto whitespace-pre-wrap">
+                {autoWriteLog.join('\n')}{autoWriting && <span className="animate-pulse"> ▋</span>}
+              </pre>
+            )}
+          </div>
         )}
 
         {activeChapter && !showProgress && !isWritten && (
