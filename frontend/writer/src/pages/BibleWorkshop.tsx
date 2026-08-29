@@ -730,7 +730,7 @@ export default function BibleWorkshopPage() {
             throw new Error(`Chapter ${chInfo.number} lock: ${err.detail ?? `HTTP ${lockRes.status}`}`)
           }
           const lockData = await lockRes.json()
-          if (!lockData.scenes?.length) {
+          if (!lockData.scenes) {
             throw new Error(`Chapter ${chInfo.number}: no scenes parsed — ensure "### Scene N — Title" headers`)
           }
         }
