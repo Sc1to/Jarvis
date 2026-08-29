@@ -5,7 +5,7 @@ import { API } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
-import { ChevronLeft, Plus, Loader2, User, MapPin, Users, Box, Star, Paintbrush } from 'lucide-react'
+import { ChevronLeft, Plus, Loader2, User, MapPin, Users, Box, Star, Paintbrush, Sparkles } from 'lucide-react'
 
 async function fetchSeriesText(seriesId: string, endpoint: string): Promise<{ content: string }> {
   const r = await fetch(`${API}/series/${seriesId}/${endpoint}`)
@@ -176,6 +176,26 @@ export default function SeriesBiblePage() {
   const qc = useQueryClient()
   const [editingId, setEditingId] = useState<string | null>(null)
   const [addingType, setAddingType] = useState<string | null>(null)
+  const [extracting, setExtracting] = useState(false)
+  const [extractResult, setExtractResult] = useState<{ added: number } | null>(null)
+
+  async function extractFromNorthStar() {
+    setExtracting(true)
+    setExtractResult(null)
+    try {
+      const r = await fetch(`${API}/series/${seriesId}/extract-entities`, { method: 'POST' })
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({ detail: 'Unknown error' }))
+        alert(err.detail ?? 'Extraction failed')
+        return
+      }
+      const res = await r.json()
+      setExtractResult({ added: res.added })
+      qc.invalidateQueries({ queryKey: ['series-bible', seriesId] })
+    } finally {
+      setExtracting(false)
+    }
+  }
 
   const { data: bible, isLoading } = useQuery({
     queryKey: ['series-bible', seriesId],
@@ -251,6 +271,22 @@ export default function SeriesBiblePage() {
           seriesId={seriesId!}
           endpoint="style-sheet"
         />
+
+        {/* Extract from North Star */}
+        <div className="flex items-center gap-3">
+          <Button
+            variant="outline" size="sm"
+            className="gap-2"
+            onClick={extractFromNorthStar}
+            disabled={extracting}
+          >
+            {extracting ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+            {extracting ? 'Extracting…' : 'Extract entities from North Star'}
+          </Button>
+          {extractResult && (
+            <span className="text-xs text-emerald-500">✓ {extractResult.added} entities added</span>
+          )}
+        </div>
 
         <div className="border-t border-border pt-4" />
 
