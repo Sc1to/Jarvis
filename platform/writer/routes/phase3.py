@@ -59,24 +59,33 @@ Return ONLY valid JSON — no preamble, no fences:
 
 pass = true when there are zero error-severity issues. Warnings alone do not fail."""
 
-BIBLE_UPDATER_SYSTEM = """You are the Bible Updater. Update the entity ledger with facts that emerged in this approved chapter.
+BIBLE_UPDATER_SYSTEM = """You are the Bible Updater. Update the entity ledger with facts from this approved chapter.
 
 Entity schema:
-  series_facts  — permanent canonical facts (appearance, background, values). READ-ONLY. Never modify.
+  series_facts  — permanent canonical facts. READ-ONLY. Never modify.
   book_facts    — transient state in this book (location, fatigue, mood, arc). WRITE HERE.
   eventLog      — append-only list of significant scene events. APPEND HERE.
 
 Rules:
 - ONLY write to book_facts and eventLog. Never touch series_facts.
-- New entities: set series_source=false, series_facts={}, populate book_facts with facts found in the chapter.
+- New entities: set series_source=false, series_facts={}, populate book_facts from the chapter.
 - New named characters → next available CHAR_XXX id; locations → LOC_XXX; factions → FRAC_XXX; objects → OBJ_XXX
-- eventLog: append {act, chapter, description} for each significant scene event
-- Contradictions with existing book_facts → add a "flags" list to book_facts
+- Contradictions with existing book_facts → add to "flags" list
 
-Return ONLY a delta JSON with two keys:
-  "added"   — new entity IDs not present in the input ledger → their complete entry
-  "updated" — existing entity IDs you changed → their complete updated entry
-Do NOT include unchanged entities. No preamble, no fences."""
+Return a COMPACT field-level delta. Include only these keys (omit any that are empty):
+{
+  "added":      { "<new_id>": { ...complete entry for brand-new entities only... } },
+  "book_facts": { "<existing_id>": { "<field>": "<new_value>" } },
+  "events":     { "<entity_id>": [ {"act": N, "chapter": N, "description": "..."} ] },
+  "flags":      { "<entity_id>": ["contradiction: ..."] }
+}
+
+Critical output rules:
+- "added": full entry for new entity IDs that do not exist in the input ledger
+- "book_facts": ONLY the specific fields that changed, for existing entities only
+- "events": ONLY new events to append (not the full eventLog — just what happened this chapter)
+- Omit any entity where NOTHING changed
+- No preamble, no fences, no explanation"""
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -150,6 +159,19 @@ async def _call(provider: str, model: str, messages: list[dict], system: str, us
 def _last_words(text: str, n: int) -> str:
     words = text.split()
     return " ".join(words[-n:]) if len(words) > n else text
+
+def _apply_bible_delta(ledger: dict, delta: dict) -> None:
+    for eid, entry in delta.get("added", {}).items():
+        ledger[eid] = entry
+    for eid, updates in delta.get("book_facts", {}).items():
+        if eid in ledger:
+            ledger[eid].setdefault("book_facts", {}).update(updates)
+    for eid, new_events in delta.get("events", {}).items():
+        if eid in ledger:
+            ledger[eid].setdefault("eventLog", []).extend(new_events)
+    for eid, flags in delta.get("flags", {}).items():
+        if eid in ledger:
+            ledger[eid].setdefault("book_facts", {})["flags"] = flags
 
 # ── Background (tab-safe) write / approve helpers ──────────────────────────────
 # These are non-streaming versions used by the auto-write background task.
@@ -327,10 +349,7 @@ async def _approve_chapter_bg(book_id: str, chapter: int, user: str, log_cb) -> 
     except Exception as e:
         raise RuntimeError(f"Could not parse Bible Updater response: {e}")
 
-    for eid, entry in delta.get("added", {}).items():
-        bible["ledger"][eid] = entry
-    for eid, entry in delta.get("updated", {}).items():
-        bible["ledger"][eid] = entry
+    _apply_bible_delta(bible["ledger"], delta)
 
     bible.setdefault("metadata", {})["last_updated_chapter"] = chapter
 
@@ -666,12 +685,7 @@ def approve_chapter(book_id: str, chapter: int, user: str = Depends(current_user
             yield _sse({"type": "error", "message": f"Could not parse Bible Updater response: {e}"})
             return
 
-        # Apply delta: merge only new/changed entities so the model output stays small
-        # regardless of total ledger size (avoids output-token truncation on large ledgers)
-        for eid, entry in delta.get("added", {}).items():
-            bible["ledger"][eid] = entry
-        for eid, entry in delta.get("updated", {}).items():
-            bible["ledger"][eid] = entry
+        _apply_bible_delta(bible["ledger"], delta)
 
         bible.setdefault("metadata", {})["last_updated_chapter"] = chapter
 
