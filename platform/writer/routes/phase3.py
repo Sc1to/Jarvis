@@ -73,7 +73,10 @@ Rules:
 - eventLog: append {act, chapter, description} for each significant scene event
 - Contradictions with existing book_facts → add a "flags" list to book_facts
 
-Return the COMPLETE updated ledger as valid JSON. No preamble, no fences. Same structure as input."""
+Return ONLY a delta JSON with two keys:
+  "added"   — new entity IDs not present in the input ledger → their complete entry
+  "updated" — existing entity IDs you changed → their complete updated entry
+Do NOT include unchanged entities. No preamble, no fences."""
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -423,15 +426,18 @@ def approve_chapter(book_id: str, chapter: int, user: str = Depends(current_user
             return
 
         try:
-            updated = _extract_json(full_text)
+            delta = _extract_json(full_text)
         except Exception as e:
             yield _sse({"type": "error", "message": f"Could not parse Bible Updater response: {e}"})
             return
 
-        if "ledger" in updated:
-            updated = updated["ledger"]
+        # Apply delta: merge only new/changed entities so the model output stays small
+        # regardless of total ledger size (avoids output-token truncation on large ledgers)
+        for eid, entry in delta.get("added", {}).items():
+            bible["ledger"][eid] = entry
+        for eid, entry in delta.get("updated", {}).items():
+            bible["ledger"][eid] = entry
 
-        bible["ledger"] = updated
         bible.setdefault("metadata", {})["last_updated_chapter"] = chapter
 
         with open(os.path.join(book_dir, "bible.json"), "w") as f:
@@ -447,7 +453,7 @@ def approve_chapter(book_id: str, chapter: int, user: str = Depends(current_user
         repo.index.add([f"chapter_{chapter:02d}_meta.json", "bible.json"])
         repo.index.commit(f"Approve Chapter {chapter} — Bible updated")
 
-        yield _sse({"type": "saved", "chapter": chapter, "entity_count": len(updated)})
+        yield _sse({"type": "saved", "chapter": chapter, "entity_count": len(bible["ledger"])})
 
     return StreamingResponse(generate(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
