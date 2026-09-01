@@ -149,7 +149,9 @@ def _extract_json(text: str) -> dict:
         raise ValueError(f"Could not extract valid JSON (response was {len(original)} chars)")
 
 def _extract_json_list(text: str) -> list:
-    text = text.strip()
+    from json_repair import repair_json
+    original = text.strip()
+    text = original
     if "```json" in text:
         text = text[text.index("```json") + 7:]
         text = text[:text.index("```")]
@@ -157,9 +159,17 @@ def _extract_json_list(text: str) -> list:
         text = text[text.index("```") + 3:]
         text = text[:text.rindex("```")]
     s, e = text.find("["), text.rfind("]") + 1
-    if s == -1 or e == 0:
-        raise ValueError("No JSON array found")
-    return json.loads(text[s:e])
+    candidate = text[s:e] if s != -1 and e > 0 else original
+    try:
+        return json.loads(candidate)
+    except (json.JSONDecodeError, ValueError):
+        repaired = repair_json(candidate, return_objects=True)
+        if isinstance(repaired, list) and repaired:
+            return repaired
+        repaired = repair_json(original, return_objects=True)
+        if isinstance(repaired, list) and repaired:
+            return repaired
+        raise ValueError(f"Could not extract valid JSON array (response was {len(original)} chars)")
 
 async def _call(provider: str, model: str, messages: list[dict], system: str, user_id: str = "local", json_mode: bool = False) -> str:
     result = ""
@@ -216,6 +226,7 @@ async def _write_chapter_bg(book_id: str, chapter: int, user: str, log_cb) -> No
         [{"role": "user", "content": f"Chapter number: {chapter}\n\nTier 4 (Scenes bible):\n\n{tier4_content}"}],
         prompt_store.get("scene_planner", SCENE_PLANNER_SYSTEM),
         user,
+        json_mode=True,
     )
     scene_plan = _extract_json_list(plan_text)
     log_cb(f"  {len(scene_plan)} scenes extracted")
@@ -493,6 +504,7 @@ def write_chapter(book_id: str, body: WriteChapterBody, user: str = Depends(curr
                 [{"role": "user", "content": f"Chapter number: {chapter}\n\nTier 4 (Scenes bible):\n\n{tier4_content}"}],
                 prompt_store.get("scene_planner", SCENE_PLANNER_SYSTEM),
                 user,
+                json_mode=True,
             )
             scene_plan = _extract_json_list(plan_text)
         except Exception as e:
@@ -1292,6 +1304,7 @@ def write_scene_with_beats(book_id: str, chapter: int, scene: int, body: WriteWi
                 [{"role": "user", "content": beat_prompt}],
                 prompt_store.get("beat_generator", BEAT_GENERATOR_SYSTEM),
                 user,
+                json_mode=True,
             )
             beats = _extract_json_list(beat_text)
         except Exception as e:
