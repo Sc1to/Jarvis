@@ -344,28 +344,32 @@ async def _approve_chapter_bg(book_id: str, chapter: int, user: str, log_cb) -> 
     )
     full_text = await _call(bu_provider, bu_model, [{"role": "user", "content": bu_user}], prompt_store.get("bible_updater", BIBLE_UPDATER_SYSTEM), user)
 
+    bible_updated = False
     try:
         delta = _extract_json(full_text)
+        _apply_bible_delta(bible["ledger"], delta)
+        bible.setdefault("metadata", {})["last_updated_chapter"] = chapter
+        with open(os.path.join(book_dir, "bible.json"), "w") as f:
+            json.dump(bible, f, indent=2)
+        bible_updated = True
+        log_cb(f"  Bible updated — {len(bible['ledger'])} entities in ledger")
     except Exception as e:
-        raise RuntimeError(f"Could not parse Bible Updater response: {e}")
+        log_cb(f"  ⚠ Bible Updater parse failed (chapter still approved): {e}")
 
-    _apply_bible_delta(bible["ledger"], delta)
-
-    bible.setdefault("metadata", {})["last_updated_chapter"] = chapter
-
-    with open(os.path.join(book_dir, "bible.json"), "w") as f:
-        json.dump(bible, f, indent=2)
+    git_files = [f"chapter_{chapter:02d}_meta.json"]
+    if bible_updated:
+        git_files.append("bible.json")
 
     meta = _read_meta(book_id, chapter) or {}
-    meta.update({"status": "approved", "approved_at": datetime.now(timezone.utc).isoformat(), "bible_updated": True})
+    meta.update({"status": "approved", "approved_at": datetime.now(timezone.utc).isoformat(), "bible_updated": bible_updated})
     with open(_chapter_meta_path(book_id, chapter), "w") as f:
         json.dump(meta, f, indent=2)
 
     from git import Repo
     repo = Repo(book_dir)
-    repo.index.add([f"chapter_{chapter:02d}_meta.json", "bible.json"])
-    repo.index.commit(f"Approve Chapter {chapter} — Bible updated")
-    log_cb(f"  Bible updated — {len(bible['ledger'])} entities in ledger")
+    repo.index.add(git_files)
+    commit_msg = f"Approve Chapter {chapter} — Bible updated" if bible_updated else f"Approve Chapter {chapter} — bible parse failed"
+    repo.index.commit(commit_msg)
 
 
 async def _run_auto_write(book_id: str, job_id: str, user: str) -> None:
@@ -679,28 +683,35 @@ def approve_chapter(book_id: str, chapter: int, user: str = Depends(current_user
             yield _sse({"type": "error", "message": str(e)})
             return
 
+        bible_updated = False
+        bible_warn = None
         try:
             delta = _extract_json(full_text)
+            _apply_bible_delta(bible["ledger"], delta)
+            bible.setdefault("metadata", {})["last_updated_chapter"] = chapter
+            with open(os.path.join(book_dir, "bible.json"), "w") as f:
+                json.dump(bible, f, indent=2)
+            bible_updated = True
         except Exception as e:
-            yield _sse({"type": "error", "message": f"Could not parse Bible Updater response: {e}"})
-            return
+            bible_warn = f"Could not parse Bible Updater response: {e}"
 
-        _apply_bible_delta(bible["ledger"], delta)
+        if bible_warn:
+            yield _sse({"type": "warning", "message": bible_warn})
 
-        bible.setdefault("metadata", {})["last_updated_chapter"] = chapter
-
-        with open(os.path.join(book_dir, "bible.json"), "w") as f:
-            json.dump(bible, f, indent=2)
+        git_files = [f"chapter_{chapter:02d}_meta.json"]
+        if bible_updated:
+            git_files.append("bible.json")
 
         meta = _read_meta(book_id, chapter) or {}
-        meta.update({"status": "approved", "approved_at": datetime.now(timezone.utc).isoformat(), "bible_updated": True})
+        meta.update({"status": "approved", "approved_at": datetime.now(timezone.utc).isoformat(), "bible_updated": bible_updated})
         with open(_chapter_meta_path(book_id, chapter), "w") as f:
             json.dump(meta, f, indent=2)
 
         from git import Repo
         repo = Repo(book_dir)
-        repo.index.add([f"chapter_{chapter:02d}_meta.json", "bible.json"])
-        repo.index.commit(f"Approve Chapter {chapter} — Bible updated")
+        repo.index.add(git_files)
+        commit_msg = f"Approve Chapter {chapter} — Bible updated" if bible_updated else f"Approve Chapter {chapter} — bible parse failed"
+        repo.index.commit(commit_msg)
 
         yield _sse({"type": "saved", "chapter": chapter, "entity_count": len(bible["ledger"])})
 
