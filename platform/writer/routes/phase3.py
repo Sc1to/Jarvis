@@ -125,7 +125,9 @@ def _read_bible(book_id: str) -> dict:
     return json.load(open(p)) if os.path.exists(p) else {"ledger": {}}
 
 def _extract_json(text: str) -> dict:
-    text = text.strip()
+    from json_repair import repair_json
+    original = text.strip()
+    text = original
     if "```json" in text:
         text = text[text.index("```json") + 7:]
         text = text[:text.index("```")]
@@ -133,17 +135,18 @@ def _extract_json(text: str) -> dict:
         text = text[text.index("```") + 3:]
         text = text[:text.rindex("```")]
     s, e = text.find("{"), text.rfind("}") + 1
-    if s == -1 or e == 0:
-        raise ValueError("No JSON object found")
-    candidate = text[s:e]
+    candidate = text[s:e] if s != -1 and e > 0 else original
     try:
         return json.loads(candidate)
-    except json.JSONDecodeError:
-        from json_repair import repair_json
+    except (json.JSONDecodeError, ValueError):
         repaired = repair_json(candidate, return_objects=True)
-        if not isinstance(repaired, dict):
-            raise ValueError(f"json_repair could not recover a dict from the response")
-        return repaired
+        if isinstance(repaired, dict) and repaired:
+            return repaired
+        # last attempt: let json_repair scan the raw original text
+        repaired = repair_json(original, return_objects=True)
+        if isinstance(repaired, dict) and repaired:
+            return repaired
+        raise ValueError(f"Could not extract valid JSON (response was {len(original)} chars)")
 
 def _extract_json_list(text: str) -> list:
     text = text.strip()
@@ -281,7 +284,7 @@ async def _write_chapter_bg(book_id: str, chapter: int, user: str, log_cb) -> No
                 f"## Scene to review\n\n{scene_text}"
             )
             try:
-                qa_text = await _call(qa_provider, qa_model, [{"role": "user", "content": qa_user}], prompt_store.get("qa", QA_SYSTEM), user)
+                qa_text = await _call(qa_provider, qa_model, [{"role": "user", "content": qa_user}], prompt_store.get("qa", QA_SYSTEM), user, json_mode=True)
                 qa_result = _extract_json(qa_text)
             except Exception as e:
                 qa_result = {"pass": True, "issues": [], "notes": f"QA skipped: {e}"}
@@ -584,7 +587,7 @@ def write_chapter(book_id: str, body: WriteChapterBody, user: str = Depends(curr
                     f"## Scene to review\n\n{scene_text}"
                 )
                 try:
-                    qa_text = await _call(qa_provider, qa_model, [{"role": "user", "content": qa_user}], prompt_store.get("qa", prompt_store.get("qa", QA_SYSTEM)), user)
+                    qa_text = await _call(qa_provider, qa_model, [{"role": "user", "content": qa_user}], prompt_store.get("qa", QA_SYSTEM), user, json_mode=True)
                     qa_result = _extract_json(qa_text)
                 except Exception as e:
                     qa_result = {"pass": True, "issues": [{"type": "system", "description": str(e), "severity": "warning"}], "notes": "QA skipped"}
@@ -838,7 +841,7 @@ def rewrite_scene(book_id: str, chapter: int, scene: int, body: RewriteBody, use
             f"## Scene to review\n\n{scene_text}"
         )
         try:
-            qa_result = _extract_json(await _call(qa_provider, qa_model, [{"role": "user", "content": qa_user}], prompt_store.get("qa", QA_SYSTEM)))
+            qa_result = _extract_json(await _call(qa_provider, qa_model, [{"role": "user", "content": qa_user}], prompt_store.get("qa", QA_SYSTEM), json_mode=True))
         except Exception as e:
             qa_result = {"pass": True, "issues": [], "notes": f"QA error: {e}"}
 
