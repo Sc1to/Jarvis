@@ -135,7 +135,15 @@ def _extract_json(text: str) -> dict:
     s, e = text.find("{"), text.rfind("}") + 1
     if s == -1 or e == 0:
         raise ValueError("No JSON object found")
-    return json.loads(text[s:e])
+    candidate = text[s:e]
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError:
+        from json_repair import repair_json
+        repaired = repair_json(candidate, return_objects=True)
+        if not isinstance(repaired, dict):
+            raise ValueError(f"json_repair could not recover a dict from the response")
+        return repaired
 
 def _extract_json_list(text: str) -> list:
     text = text.strip()
@@ -150,9 +158,9 @@ def _extract_json_list(text: str) -> list:
         raise ValueError("No JSON array found")
     return json.loads(text[s:e])
 
-async def _call(provider: str, model: str, messages: list[dict], system: str, user_id: str = "local") -> str:
+async def _call(provider: str, model: str, messages: list[dict], system: str, user_id: str = "local", json_mode: bool = False) -> str:
     result = ""
-    async for token in llm.provider_tokens(provider, model, messages, system, user_id):
+    async for token in llm.provider_tokens(provider, model, messages, system, user_id, json_mode=json_mode):
         result += token
     return result
 
@@ -342,7 +350,7 @@ async def _approve_chapter_bg(book_id: str, chapter: int, user: str, log_cb) -> 
         f"## Chapter {chapter} prose\n\n{chapter_content}\n\n"
         "Update the ledger with facts from this chapter."
     )
-    full_text = await _call(bu_provider, bu_model, [{"role": "user", "content": bu_user}], prompt_store.get("bible_updater", BIBLE_UPDATER_SYSTEM), user)
+    full_text = await _call(bu_provider, bu_model, [{"role": "user", "content": bu_user}], prompt_store.get("bible_updater", BIBLE_UPDATER_SYSTEM), user, json_mode=True)
 
     bible_updated = False
     try:
@@ -676,7 +684,7 @@ def approve_chapter(book_id: str, chapter: int, user: str = Depends(current_user
 
         full_text = ""
         try:
-            async for token in llm.provider_tokens(bu_provider, bu_model, [{"role": "user", "content": bu_user}], prompt_store.get("bible_updater", BIBLE_UPDATER_SYSTEM), user):
+            async for token in llm.provider_tokens(bu_provider, bu_model, [{"role": "user", "content": bu_user}], prompt_store.get("bible_updater", BIBLE_UPDATER_SYSTEM), user, json_mode=True):
                 full_text += token
                 yield _sse({"type": "token", "content": token})
         except Exception as e:
