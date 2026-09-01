@@ -3,7 +3,7 @@ import os
 import re
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -150,6 +150,241 @@ async def _call(provider: str, model: str, messages: list[dict], system: str, us
 def _last_words(text: str, n: int) -> str:
     words = text.split()
     return " ".join(words[-n:]) if len(words) > n else text
+
+# ── Background (tab-safe) write / approve helpers ──────────────────────────────
+# These are non-streaming versions used by the auto-write background task.
+# The SSE endpoints are unchanged — these exist solely so the loop can run
+# without holding an HTTP connection.
+
+async def _write_chapter_bg(book_id: str, chapter: int, user: str, log_cb) -> None:
+    book_dir = db.data_dir(book_id)
+
+    writer_provider = db.get_setting("agent_writer_agent_provider")
+    writer_model = db.get_setting("agent_writer_agent_model")
+    qa_provider = db.get_setting("agent_qa_agent_provider")
+    qa_model = db.get_setting("agent_qa_agent_model")
+    planner_provider = db.get_setting("agent_bible_agent_provider")
+    planner_model = db.get_setting("agent_bible_agent_model")
+
+    missing = [k for k, v in [("writer_agent", writer_provider), ("qa_agent", qa_provider), ("bible_agent", planner_provider)] if not v]
+    if missing:
+        raise RuntimeError(f"Agents not configured: {', '.join(missing)}")
+
+    north_star = _read_north_star(book_id)
+    writing_prefs = _read_writing_prefs(book_id)
+    tier4_path = os.path.join(book_dir, "tier4", f"chapter_{chapter:02d}.md")
+    tier4_content = open(tier4_path).read() if os.path.exists(tier4_path) else ""
+    bible = _read_bible(book_id)
+    ledger_json = json.dumps(bible.get("ledger", {}))
+
+    log_cb(f"Planning scenes for Chapter {chapter}…")
+    plan_text = await _call(
+        planner_provider, planner_model,
+        [{"role": "user", "content": f"Chapter number: {chapter}\n\nTier 4 (Scenes bible):\n\n{tier4_content}"}],
+        prompt_store.get("scene_planner", SCENE_PLANNER_SYSTEM),
+        user,
+    )
+    scene_plan = _extract_json_list(plan_text)
+    log_cb(f"  {len(scene_plan)} scenes extracted")
+
+    prior_bridge = ""
+    for prev in range(1, chapter):
+        prev_path = _chapter_path(book_id, prev)
+        if os.path.exists(prev_path):
+            words = open(prev_path).read().split()
+            snippet = " ".join(words[-200:]) if len(words) > 200 else " ".join(words)
+            prior_bridge += f"\n\n[End of Chapter {prev}]:\n{snippet}"
+
+    completed_scenes: list[str] = []
+    scene_results: list[dict] = []
+
+    for scene_idx, scene_def in enumerate(scene_plan):
+        scene_num = scene_def.get("scene", len(completed_scenes) + 1)
+        brief = scene_def.get("brief", "")
+        entry_state = scene_def.get("entry_state", "")
+        exit_state = scene_def.get("exit_state", "")
+        curr_pov = scene_def.get("pov_character")
+
+        scene_text = ""
+        qa_result: dict | None = None
+        attempt = 0
+
+        while attempt < 3:
+            attempt += 1
+            log_cb(f"  Scene {scene_num}/{len(scene_plan)} — attempt {attempt}")
+
+            prior_text = "\n\n---\n\n".join(completed_scenes) if completed_scenes else "None yet."
+            rewrite_note = ""
+            if attempt > 1 and qa_result:
+                errors = [i["description"] for i in qa_result.get("issues", []) if i.get("severity") == "error"]
+                rewrite_note = "\n\nPrevious attempt issues — address in rewrite:\n" + "\n".join(f"- {e}" for e in errors)
+
+            context_block = assemble_writer_context(
+                north_star=north_star,
+                writing_prefs=writing_prefs,
+                ledger_json=ledger_json,
+                prior_text=prior_text,
+                chapter=chapter,
+                scene_num=scene_num,
+                brief=brief,
+                entry_state=entry_state,
+                exit_state=exit_state,
+                prior_bridge=prior_bridge,
+                rewrite_note=rewrite_note,
+            )
+
+            messages: list[dict] = [{"role": "user", "content": context_block}]
+            if completed_scenes and attempt == 1:
+                prev_pov = scene_plan[scene_idx - 1].get("pov_character") if scene_idx > 0 else None
+                if prev_pov and curr_pov and prev_pov == curr_pov:
+                    prose_tail = _last_words(completed_scenes[-1], 500)
+                    messages.append({"role": "assistant", "content": prose_tail})
+                    messages.append({"role": "user", "content": f"Continue the scene.\n\nScene brief:\n\n{brief}"})
+
+            scene_text = await _call(writer_provider, writer_model, messages, prompt_store.get("writer", WRITER_SYSTEM), user)
+
+            qa_user = (
+                (f"## Writing Preferences\n\n{writing_prefs}\n\n" if writing_prefs else "")
+                + f"## Entity Ledger\n\n{ledger_json}\n\n"
+                f"## Prior scenes in this chapter\n\n{prior_text}\n\n"
+                f"## Exit state contract\n\n{exit_state}\n\n"
+                f"## Scene to review\n\n{scene_text}"
+            )
+            try:
+                qa_text = await _call(qa_provider, qa_model, [{"role": "user", "content": qa_user}], prompt_store.get("qa", QA_SYSTEM), user)
+                qa_result = _extract_json(qa_text)
+            except Exception as e:
+                qa_result = {"pass": True, "issues": [], "notes": f"QA skipped: {e}"}
+
+            passed = qa_result.get("pass", True)
+            log_cb(f"    QA {'pass' if passed else 'fail'} — {qa_result.get('notes', '')}")
+            if passed or attempt >= 3:
+                break
+
+        completed_scenes.append(scene_text)
+        scene_results.append({
+            "scene": scene_num, "brief": brief,
+            "entry_state": entry_state, "exit_state": exit_state,
+            "attempts": attempt,
+            "qa_pass": qa_result.get("pass", True) if qa_result else True,
+            "qa_notes": qa_result.get("notes", "") if qa_result else "",
+            "word_count": len(scene_text.split()),
+        })
+
+    chapter_md = f"# Chapter {chapter}\n\n" + "\n\n---\n\n".join(
+        f"## Scene {r['scene']}\n\n{prose}"
+        for r, prose in zip(scene_results, completed_scenes)
+    )
+    meta = {
+        "chapter": chapter,
+        "scene_count": len(scene_plan),
+        "scenes": scene_results,
+        "status": "written",
+        "written_at": datetime.now(timezone.utc).isoformat(),
+        "approved_at": None,
+        "bible_updated": False,
+    }
+
+    with open(_chapter_path(book_id, chapter), "w") as f:
+        f.write(chapter_md)
+    with open(_chapter_meta_path(book_id, chapter), "w") as f:
+        json.dump(meta, f, indent=2)
+    with open(_chapter_plan_path(book_id, chapter), "w") as f:
+        json.dump(scene_plan, f, indent=2)
+
+    from git import Repo
+    repo = Repo(book_dir)
+    repo.index.add([f"chapter_{chapter:02d}.md", f"chapter_{chapter:02d}_meta.json", f"chapter_{chapter:02d}_plan.json"])
+    repo.index.commit(f"Write Chapter {chapter} — {len(scene_plan)} scenes")
+    log_cb(f"Chapter {chapter} written — {len(scene_plan)} scenes, {sum(r['word_count'] for r in scene_results):,} words")
+
+
+async def _approve_chapter_bg(book_id: str, chapter: int, user: str, log_cb) -> None:
+    bu_provider = db.get_setting("agent_bible_updater_provider")
+    bu_model = db.get_setting("agent_bible_updater_model")
+    if not bu_provider or not bu_model:
+        raise RuntimeError("Bible Updater has no model assigned")
+
+    book_dir = db.data_dir(book_id)
+    chapter_path = _chapter_path(book_id, chapter)
+    if not os.path.exists(chapter_path):
+        raise RuntimeError(f"Chapter {chapter} not found")
+
+    chapter_content = open(chapter_path).read()
+    bible = _read_bible(book_id)
+    ledger_json = json.dumps(bible.get("ledger", {}))
+
+    log_cb("  Running Bible Updater…")
+    bu_user = (
+        f"## Current Entity Ledger\n\n{ledger_json}\n\n"
+        f"## Chapter {chapter} prose\n\n{chapter_content}\n\n"
+        "Update the ledger with facts from this chapter."
+    )
+    full_text = await _call(bu_provider, bu_model, [{"role": "user", "content": bu_user}], prompt_store.get("bible_updater", BIBLE_UPDATER_SYSTEM), user)
+
+    try:
+        delta = _extract_json(full_text)
+    except Exception as e:
+        raise RuntimeError(f"Could not parse Bible Updater response: {e}")
+
+    for eid, entry in delta.get("added", {}).items():
+        bible["ledger"][eid] = entry
+    for eid, entry in delta.get("updated", {}).items():
+        bible["ledger"][eid] = entry
+
+    bible.setdefault("metadata", {})["last_updated_chapter"] = chapter
+
+    with open(os.path.join(book_dir, "bible.json"), "w") as f:
+        json.dump(bible, f, indent=2)
+
+    meta = _read_meta(book_id, chapter) or {}
+    meta.update({"status": "approved", "approved_at": datetime.now(timezone.utc).isoformat(), "bible_updated": True})
+    with open(_chapter_meta_path(book_id, chapter), "w") as f:
+        json.dump(meta, f, indent=2)
+
+    from git import Repo
+    repo = Repo(book_dir)
+    repo.index.add([f"chapter_{chapter:02d}_meta.json", "bible.json"])
+    repo.index.commit(f"Approve Chapter {chapter} — Bible updated")
+    log_cb(f"  Bible updated — {len(bible['ledger'])} entities in ledger")
+
+
+async def _run_auto_write(book_id: str, job_id: str, user: str) -> None:
+    def log(msg: str) -> None:
+        db.append_job_log(job_id, msg)
+
+    def is_cancelled() -> bool:
+        row = db.get_auto_write_job(job_id)
+        return row is None or row["status"] in ("cancelled", "error")
+
+    try:
+        while True:
+            if is_cancelled():
+                return
+
+            s = phase3_status(book_id)
+            unapproved = next((ch for ch in s["chapters"] if not ch["approved"]), None)
+            chnum = unapproved["chapter"] if unapproved else s.get("next_chapter")
+
+            if not chnum:
+                log("All chapters written and approved!")
+                db.update_auto_write_job(job_id, status="done", finished_at=datetime.now(timezone.utc).isoformat())
+                return
+
+            db.update_auto_write_job(job_id, current_chapter=chnum)
+
+            if not unapproved:
+                log(f"Writing Chapter {chnum}…")
+                await _write_chapter_bg(book_id, chnum, user, log)
+                if is_cancelled():
+                    return
+
+            log(f"Approving Chapter {chnum}…")
+            await _approve_chapter_bg(book_id, chnum, user, log)
+            log(f"Chapter {chnum} done ✓")
+
+    except Exception as e:
+        db.update_auto_write_job(job_id, status="error", error=str(e), finished_at=datetime.now(timezone.utc).isoformat())
 
 # ── Status ─────────────────────────────────────────────────────────────────────
 
@@ -457,6 +692,39 @@ def approve_chapter(book_id: str, chapter: int, user: str = Depends(current_user
 
     return StreamingResponse(generate(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+# ── Auto-write job endpoints ───────────────────────────────────────────────────
+
+@router.post("/books/{book_id}/phase3/auto-write")
+async def start_auto_write(book_id: str, background_tasks: BackgroundTasks, user: str = Depends(current_user)):
+    existing = db.get_active_auto_write_job(book_id)
+    if existing:
+        return {"job_id": existing["id"], "resumed": True}
+    job_id = db.create_auto_write_job(book_id, user)
+    background_tasks.add_task(_run_auto_write, book_id, job_id, user)
+    return {"job_id": job_id, "resumed": False}
+
+@router.get("/books/{book_id}/phase3/auto-write/status")
+def auto_write_status(book_id: str, job_id: str):
+    job = db.get_auto_write_job(job_id)
+    if not job:
+        return {"status": "not_found"}
+    return {
+        "status": job["status"],
+        "current_chapter": job["current_chapter"],
+        "log": json.loads(job["log"]),
+        "error": job["error"],
+        "started_at": job["started_at"],
+        "finished_at": job["finished_at"],
+    }
+
+@router.post("/books/{book_id}/phase3/auto-write/cancel")
+def cancel_auto_write(book_id: str, job_id: str):
+    job = db.get_auto_write_job(job_id)
+    if not job or job["status"] != "running":
+        return {"ok": False}
+    db.update_auto_write_job(job_id, status="cancelled", finished_at=datetime.now(timezone.utc).isoformat())
+    return {"ok": True}
 
 # ── Rewrite Scene ──────────────────────────────────────────────────────────────
 

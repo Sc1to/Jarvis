@@ -134,11 +134,12 @@ export default function WritingLoopPage() {
   // Beats mode: scenes that should use beat-based expansion on rewrite
   const [beatScenes, setBeatScenes] = useState<Set<number>>(new Set())
 
-  // ── Auto-write state ─────────────────────────────────────────────────────────
-  const autoWriteCancel = useRef(false)
-  const [autoWriting, setAutoWriting] = useState(false)
-  const [autoWriteLog, setAutoWriteLog] = useState<string[]>([])
-  const [autoWriteError, setAutoWriteError] = useState<string | null>(null)
+  // ── Auto-write job state (server-side, tab-safe) ──────────────────────────────
+  const jobPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const [jobId, setJobId] = useState<string | null>(null)
+  const [jobStatus, setJobStatus] = useState<string | null>(null)
+  const [jobLog, setJobLog] = useState<string[]>([])
+  const [jobError, setJobError] = useState<string | null>(null)
 
   const { data: chapterData, refetch: refetchChapter } = useQuery<{ chapter: number; content: string; meta: ChapterMeta } | null>({
     queryKey: ['chapter', bookId, activeChapter],
@@ -303,56 +304,65 @@ export default function WritingLoopPage() {
     }
   }
 
-  async function autoWriteAll() {
-    autoWriteCancel.current = false
-    setAutoWriting(true)
-    setAutoWriteLog([])
-    setAutoWriteError(null)
-    const log = (msg: string) => setAutoWriteLog(prev => [...prev, msg])
-    try {
-      let s = (await refetchStatus()).data
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        if (autoWriteCancel.current) { log('Stopped.'); break }
-        const unapproved = s?.chapters?.find(ch => !ch.approved)
-        const chNum = unapproved?.chapter ?? s?.next_chapter
-        if (!chNum) { log('All chapters written and approved!'); break }
+  const jobLocalKey = `aw_job_${bookId}`
 
-        if (!unapproved) {
-          log(`Writing Chapter ${chNum}…`)
-          setActiveChapter(chNum)
-          setEvents([])
-          setChapterDone(false)
-          const writeResp = await fetch(`${API}/books/${bookId}/phase3/write-chapter`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ chapter: chNum }),
-          })
-          for await (const ev of readSSE(writeResp)) {
-            const event = ev as ProgressEvent
-            if (event.type !== 'token') setEvents(prev => [...prev, event])
-            if (event.type === 'chapter_done') setChapterDone(true)
-            else if (event.type === 'error') throw new Error(`Chapter ${chNum}: ${event.message ?? 'Write failed'}`)
-          }
-          if (autoWriteCancel.current) { log('Stopped.'); break }
+  function startJobPolling(id: string) {
+    if (jobPollRef.current) clearInterval(jobPollRef.current)
+    jobPollRef.current = setInterval(async () => {
+      try {
+        const data = await fetch(`${API}/books/${bookId}/phase3/auto-write/status?job_id=${id}`).then(r => r.json())
+        setJobLog(data.log ?? [])
+        setJobStatus(data.status)
+        setJobError(data.error ?? null)
+        if (data.status !== 'running') {
+          clearInterval(jobPollRef.current!)
+          jobPollRef.current = null
+          localStorage.removeItem(jobLocalKey)
+          await refetchStatus()
+          await refetchChapter()
+          qc.invalidateQueries({ queryKey: ['bible', bookId] })
         }
+      } catch { /* ignore transient fetch errors */ }
+    }, 4000)
+  }
 
-        log(`Approving Chapter ${chNum} (bible update)…`)
-        const approveResp = await fetch(`${API}/books/${bookId}/phase3/chapter/${chNum}/approve`, { method: 'POST' })
-        for await (const ev of readSSE(approveResp)) {
-          const event = ev as ProgressEvent
-          if (event.type !== 'token') setEvents(prev => [...prev, event])
-          if (event.type === 'saved') qc.invalidateQueries({ queryKey: ['bible', bookId] })
-          else if (event.type === 'error') throw new Error(`Chapter ${chNum} approve: ${event.message ?? 'Failed'}`)
+  // Reconnect to a running job if the tab was closed and reopened
+  useEffect(() => {
+    const stored = localStorage.getItem(jobLocalKey)
+    if (!stored) return
+    fetch(`${API}/books/${bookId}/phase3/auto-write/status?job_id=${stored}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.status === 'running') {
+          setJobId(stored)
+          setJobStatus('running')
+          setJobLog(data.log ?? [])
+          startJobPolling(stored)
+        } else {
+          localStorage.removeItem(jobLocalKey)
         }
-        log(`Chapter ${chNum} done ✓`)
-        s = (await refetchStatus()).data
-        await refetchChapter()
-      }
-    } catch (e) {
-      setAutoWriteError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setAutoWriting(false)
-    }
+      })
+      .catch(() => localStorage.removeItem(jobLocalKey))
+  }, [bookId])
+
+  async function startAutoWrite() {
+    const data = await fetch(`${API}/books/${bookId}/phase3/auto-write`, { method: 'POST' }).then(r => r.json())
+    const id = data.job_id
+    localStorage.setItem(jobLocalKey, id)
+    setJobId(id)
+    setJobStatus('running')
+    setJobLog([])
+    setJobError(null)
+    startJobPolling(id)
+  }
+
+  async function cancelAutoWrite() {
+    if (!jobId) return
+    await fetch(`${API}/books/${bookId}/phase3/auto-write/cancel?job_id=${jobId}`, { method: 'POST' })
+    setJobStatus('cancelled')
+    clearInterval(jobPollRef.current!)
+    jobPollRef.current = null
+    localStorage.removeItem(jobLocalKey)
   }
 
   async function doRewrite(chapter: number, scene: number) {
@@ -395,6 +405,7 @@ export default function WritingLoopPage() {
   const scenes = meta?.scenes ?? []
   const isWritten = !!chapterData?.content
   const isApproved = meta?.status === 'approved'
+  const autoWriting = jobStatus === 'running'
   const busy = writing || approving || rewriting || autoWriting
 
   // Show writing progress OR chapter content
@@ -480,13 +491,13 @@ export default function WritingLoopPage() {
           {!isLocked && (
             autoWriting
               ? <button
-                  onClick={() => { autoWriteCancel.current = true }}
+                  onClick={cancelAutoWrite}
                   className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-destructive text-destructive hover:bg-destructive/10 transition-colors"
                 >
                   <Loader2 size={11} className="animate-spin" />Stop
                 </button>
               : <button
-                  onClick={autoWriteAll}
+                  onClick={startAutoWrite}
                   disabled={busy}
                   className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-border text-muted-foreground hover:text-foreground hover:border-foreground disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 >
@@ -536,17 +547,17 @@ export default function WritingLoopPage() {
           <EventFeed events={events} />
         )}
 
-        {(autoWriteLog.length > 0 || autoWriteError) && !writing && !approving && (
+        {(jobLog.length > 0 || jobError) && !writing && !approving && (
           <div className="px-6 py-3 space-y-1.5 border-t border-border shrink-0">
-            {autoWriteError && (
+            {jobError && (
               <div className="flex items-start gap-2 px-3 py-2 rounded-md bg-destructive/10 border border-destructive/30 text-destructive text-xs">
-                <span className="flex-1">⚠ {autoWriteError}</span>
-                <button onClick={() => setAutoWriteError(null)} className="shrink-0 hover:opacity-70 leading-none">✕</button>
+                <span className="flex-1">⚠ {jobError}</span>
+                <button onClick={() => setJobError(null)} className="shrink-0 hover:opacity-70 leading-none">✕</button>
               </div>
             )}
-            {autoWriteLog.length > 0 && (
+            {jobLog.length > 0 && (
               <pre className="text-xs font-mono text-muted-foreground bg-muted/30 rounded-md px-3 py-2 max-h-24 overflow-y-auto whitespace-pre-wrap">
-                {autoWriteLog.join('\n')}{autoWriting && <span className="animate-pulse"> ▋</span>}
+                {jobLog.join('\n')}{autoWriting && <span className="animate-pulse"> ▋</span>}
               </pre>
             )}
           </div>
