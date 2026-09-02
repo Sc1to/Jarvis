@@ -1,9 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useParams } from 'react-router-dom'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 import { API } from '@/lib/api'
 import { Download, Plus, Trash2, Save, Loader2, FileText } from 'lucide-react'
@@ -43,8 +41,6 @@ function formatDate(iso: string) {
 
 export default function ExportsPage() {
   const { bookId } = useParams<{ bookId: string }>()
-  const qc = useQueryClient()
-
   const { data: listData, refetch: refetchList } = useQuery<{ exports: ExportSummary[] }>({
     queryKey: ['exports', bookId],
     queryFn: () => fetch(`${API}/books/${bookId}/exports`).then(r => r.json()),
