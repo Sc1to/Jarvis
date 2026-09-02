@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { API } from '@/lib/api'
 import { useQuery } from '@tanstack/react-query'
 import { cn } from '@/lib/utils'
-import { Settings, Star, BookOpen, Eye, PenLine, History, ChevronLeft, Menu, X, ListOrdered } from 'lucide-react'
+import { Settings, Star, BookOpen, Eye, PenLine, History, ChevronLeft, Menu, X, ListOrdered, Download } from 'lucide-react'
 
 const bookNav = [
   { to: 'north-star', label: 'North Star', icon: Star },
@@ -11,6 +11,7 @@ const bookNav = [
   { to: 'work', label: 'Work', icon: ListOrdered },
   { to: 'bible-viewer', label: 'Bible Viewer', icon: Eye },
   { to: 'writing-loop', label: 'Writing Loop', icon: PenLine },
+  { to: 'exports', label: 'Exports', icon: Download },
   { to: 'history', label: 'History', icon: History },
 ]
 
