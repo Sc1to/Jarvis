@@ -216,7 +216,9 @@ async def _write_chapter_bg(book_id: str, chapter: int, user: str, log_cb) -> No
     north_star = _read_north_star(book_id)
     writing_prefs = _read_writing_prefs(book_id)
     tier4_path = os.path.join(book_dir, "tier4", f"chapter_{chapter:02d}.md")
-    tier4_content = open(tier4_path).read() if os.path.exists(tier4_path) else ""
+    if not os.path.exists(tier4_path):
+        raise RuntimeError(f"No tier4 scene bible found for Chapter {chapter} — cannot write beyond the planned chapter count")
+    tier4_content = open(tier4_path).read()
     bible = _read_bible(book_id)
     ledger_json = json.dumps(bible.get("ledger", {}))
 
@@ -403,6 +405,11 @@ async def _run_auto_write(book_id: str, job_id: str, user: str) -> None:
         return row is None or row["status"] in ("cancelled", "error")
 
     try:
+        s = phase3_status(book_id)
+        total = s.get("total_planned", 0)
+        done = sum(1 for ch in s["chapters"] if ch["approved"])
+        log(f"Auto-write started — {done}/{total} chapters approved, {total - done} remaining")
+
         while True:
             if is_cancelled():
                 return
@@ -442,6 +449,15 @@ def phase3_status(book_id: str):
         with open(bible_path) as f:
             phase2_approved = json.load(f).get("metadata", {}).get("phase2_approved", False)
 
+    # Count planned chapters from tier4 scene-bible files — this is the authoritative total
+    tier4_dir = os.path.join(book_dir, "tier4")
+    total_planned = 0
+    if os.path.isdir(tier4_dir):
+        total_planned = sum(
+            1 for f in os.listdir(tier4_dir)
+            if re.match(r'^chapter_\d+\.md$', f)
+        )
+
     chapters = []
     i = 1
     while True:
@@ -458,12 +474,18 @@ def phase3_status(book_id: str):
         i += 1
 
     last_approved = not chapters or chapters[-1]["approved"]
-    next_chapter = len(chapters) + 1 if (phase2_approved and last_approved) else None
+    candidate = len(chapters) + 1
+    # Only offer a next chapter when there are remaining planned chapters
+    if phase2_approved and last_approved and total_planned > 0 and candidate <= total_planned:
+        next_chapter = candidate
+    else:
+        next_chapter = None
 
     return {
         "phase2_approved": phase2_approved,
         "chapters": chapters,
         "next_chapter": next_chapter,
+        "total_planned": total_planned,
     }
 
 # ── Write Chapter ──────────────────────────────────────────────────────────────
