@@ -112,6 +112,7 @@ export default function WritingLoopPage() {
     phase2_approved: boolean
     chapters: ChapterSummary[]
     next_chapter: number | null
+    total_planned: number
   }>({
     queryKey: ['phase3-status', bookId],
     queryFn: () => fetch(`${API}/books/${bookId}/phase3/status`).then(r => r.json()),
@@ -399,6 +400,7 @@ export default function WritingLoopPage() {
 
   const chapters = status?.chapters ?? []
   const nextChapter = status?.next_chapter ?? null
+  const totalPlanned = status?.total_planned ?? 0
   const isLocked = !status?.phase2_approved
 
   const meta = chapterData?.meta
@@ -418,6 +420,11 @@ export default function WritingLoopPage() {
       <div className="hidden md:flex md:flex-col md:w-44 md:shrink-0 border-r border-border">
         <div className="px-3 py-4 border-b border-border">
           <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Chapters</h3>
+          {totalPlanned > 0 && (
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {chapters.filter(c => c.approved).length} / {totalPlanned} approved
+            </p>
+          )}
         </div>
         <div className="flex-1 overflow-y-auto py-2">
           {isLocked && (
