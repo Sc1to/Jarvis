@@ -6,6 +6,7 @@ import NorthStarPage from './pages/NorthStar'
 import BibleWorkshopPage from './pages/BibleWorkshop'
 import BibleViewerPage from './pages/BibleViewer'
 import WritingLoopPage from './pages/WritingLoop'
+import ExportsPage from './pages/Exports'
 import HistoryPage from './pages/History'
 import SequentialWorkflowPage from './pages/SequentialWorkflow'
 import SeriesBiblePage from './pages/SeriesBible'
@@ -35,6 +36,7 @@ export default function App() {
         <Route path="bible-viewer" element={<BibleViewerPage />} />
         <Route path="work" element={<SequentialWorkflowPage />} />
         <Route path="writing-loop" element={<WritingLoopPage />} />
+        <Route path="exports" element={<ExportsPage />} />
         <Route path="history" element={<HistoryPage />} />
       </Route>
     </Routes>
