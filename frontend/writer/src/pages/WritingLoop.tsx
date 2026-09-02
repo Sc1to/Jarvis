@@ -8,7 +8,7 @@ import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 import { readSSE } from '@/lib/sse'
 import { API } from '@/lib/api'
-import { Play, CheckCircle, Loader2, Lock, AlertTriangle, Expand, RotateCcw, FileText, Zap } from 'lucide-react'
+import { Play, CheckCircle, Loader2, Lock, AlertTriangle, Expand, RotateCcw, FileText, Zap, ChevronLeft, ChevronRight } from 'lucide-react'
 
 interface ChapterSummary {
   chapter: number
@@ -134,6 +134,8 @@ export default function WritingLoopPage() {
   const [showRephrase, setShowRephrase] = useState(false)
   // Beats mode: scenes that should use beat-based expansion on rewrite
   const [beatScenes, setBeatScenes] = useState<Set<number>>(new Set())
+  const [leftCollapsed, setLeftCollapsed] = useState(false)
+  const [rightCollapsed, setRightCollapsed] = useState(false)
 
   // ── Auto-write job state (server-side, tab-safe) ──────────────────────────────
   const jobPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -417,53 +419,77 @@ export default function WritingLoopPage() {
   return (
     <div className="flex h-full">
       {/* Left: chapter list — hidden on mobile */}
-      <div className="hidden md:flex md:flex-col md:w-44 md:shrink-0 border-r border-border">
-        <div className="px-3 py-4 border-b border-border">
-          <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Chapters</h3>
-          {totalPlanned > 0 && (
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {chapters.filter(c => c.approved).length} / {totalPlanned} approved
-            </p>
-          )}
-        </div>
-        <div className="flex-1 overflow-y-auto py-2">
-          {isLocked && (
-            <p className="px-3 py-2 text-xs text-muted-foreground italic">Approve Phase 2 first.</p>
-          )}
-          {chapters.map(ch => (
-            <button
-              key={ch.chapter}
-              onClick={() => !busy && setActiveChapter(ch.chapter)}
-              disabled={busy}
-              className={cn(
-                'w-full flex items-center gap-2 px-3 py-2 text-sm transition-colors',
-                activeChapter === ch.chapter ? 'bg-accent text-accent-foreground' : 'hover:bg-muted/50',
-                busy && 'opacity-50 cursor-not-allowed',
-              )}
-            >
-              <span className={cn(
-                'w-1.5 h-1.5 rounded-full shrink-0',
-                ch.approved ? 'bg-emerald-500' : 'bg-amber-400',
-              )} />
-              Chapter {ch.chapter}
-            </button>
-          ))}
-          {nextChapter && !isLocked && (
-            <>
-              {chapters.length > 0 && <Separator className="my-2" />}
-              <button
-                onClick={() => !busy && setActiveChapter(nextChapter)}
-                disabled={busy}
-                className={cn(
-                  'w-full flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted/50',
-                  activeChapter === nextChapter && 'bg-accent text-accent-foreground',
+      <div className={cn(
+        'hidden md:flex md:flex-col md:shrink-0 border-r border-border transition-all duration-200',
+        leftCollapsed ? 'md:w-8' : 'md:w-44',
+      )}>
+        {leftCollapsed ? (
+          <button
+            onClick={() => setLeftCollapsed(false)}
+            className="flex-1 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+            title="Show chapters"
+          >
+            <ChevronRight size={14} />
+          </button>
+        ) : (
+          <>
+            <div className="px-3 py-4 border-b border-border flex items-center justify-between gap-1">
+              <div className="min-w-0">
+                <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Chapters</h3>
+                {totalPlanned > 0 && (
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {chapters.filter(c => c.approved).length} / {totalPlanned} approved
+                  </p>
                 )}
+              </div>
+              <button
+                onClick={() => setLeftCollapsed(true)}
+                className="p-0.5 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded transition-colors"
+                title="Hide chapters"
               >
-                + Chapter {nextChapter}
+                <ChevronLeft size={13} />
               </button>
-            </>
-          )}
-        </div>
+            </div>
+            <div className="flex-1 overflow-y-auto py-2">
+              {isLocked && (
+                <p className="px-3 py-2 text-xs text-muted-foreground italic">Approve Phase 2 first.</p>
+              )}
+              {chapters.map(ch => (
+                <button
+                  key={ch.chapter}
+                  onClick={() => !busy && setActiveChapter(ch.chapter)}
+                  disabled={busy}
+                  className={cn(
+                    'w-full flex items-center gap-2 px-3 py-2 text-sm transition-colors',
+                    activeChapter === ch.chapter ? 'bg-accent text-accent-foreground' : 'hover:bg-muted/50',
+                    busy && 'opacity-50 cursor-not-allowed',
+                  )}
+                >
+                  <span className={cn(
+                    'w-1.5 h-1.5 rounded-full shrink-0',
+                    ch.approved ? 'bg-emerald-500' : 'bg-amber-400',
+                  )} />
+                  Chapter {ch.chapter}
+                </button>
+              ))}
+              {nextChapter && !isLocked && (
+                <>
+                  {chapters.length > 0 && <Separator className="my-2" />}
+                  <button
+                    onClick={() => !busy && setActiveChapter(nextChapter)}
+                    disabled={busy}
+                    className={cn(
+                      'w-full flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted/50',
+                      activeChapter === nextChapter && 'bg-accent text-accent-foreground',
+                    )}
+                  >
+                    + Chapter {nextChapter}
+                  </button>
+                </>
+              )}
+            </div>
+          </>
+        )}
       </div>
 
       {/* Main content */}
@@ -704,58 +730,82 @@ export default function WritingLoopPage() {
       </div>
 
       {/* Right sidebar: scenes + QA — hidden on mobile */}
-      <div className="hidden md:flex md:flex-col md:w-72 md:shrink-0 border-l border-border">
-        <div className="px-4 py-4 border-b border-border">
-          <h3 className="text-sm font-medium">Scenes</h3>
-          <p className="text-xs text-muted-foreground">
-            {scenes.length > 0 ? `${scenes.length} scenes · ${scenes.reduce((a, s) => a + s.word_count, 0).toLocaleString()} words` : 'No scenes yet'}
-          </p>
-        </div>
-        <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
-          {scenes.length === 0 && (
-            <p className="text-xs text-muted-foreground italic px-1">Write the chapter to see scene details.</p>
-          )}
-          {scenes.map(s => (
-            <Card key={s.scene} className={cn('bg-muted/20', rewriteScene === s.scene && 'ring-1 ring-ring')}>
-              <CardContent className="px-3 py-2 space-y-1.5">
-                <div className="flex items-center justify-between gap-1">
-                  <span className="text-xs font-medium">Scene {s.scene}</span>
-                  <div className="flex items-center gap-1">
-                    {s.qa_pass
-                      ? <CheckCircle size={11} className="text-emerald-500" />
-                      : <AlertTriangle size={11} className="text-amber-400" />
-                    }
-                    {s.attempts > 1 && (
-                      <Badge variant="outline" className="text-[10px] px-1 py-0">{s.attempts} attempts</Badge>
-                    )}
-                  </div>
-                </div>
-                <p className="text-[11px] text-muted-foreground leading-snug line-clamp-2">{s.brief}</p>
-                {s.qa_notes && (
-                  <p className="text-[10px] text-muted-foreground/70 italic line-clamp-2">{s.qa_notes}</p>
-                )}
-                <div className="flex items-center justify-between pt-0.5">
-                  <span className="text-[10px] text-muted-foreground">{s.word_count.toLocaleString()} words</span>
-                  {isWritten && !isApproved && (
-                    <button
-                      onClick={() => { setRewriteScene(s.scene); setRewriteDirective('') }}
-                      className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      Rewrite
-                    </button>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-        {isApproved && (
-          <div className="px-4 py-3 border-t border-border">
-            <div className="flex items-center gap-2 text-xs text-emerald-500">
-              <CheckCircle size={12} />
-              <span>Bible updated — Chapter {activeChapter} locked</span>
+      <div className={cn(
+        'hidden md:flex md:flex-col md:shrink-0 border-l border-border transition-all duration-200',
+        rightCollapsed ? 'md:w-8' : 'md:w-72',
+      )}>
+        {rightCollapsed ? (
+          <button
+            onClick={() => setRightCollapsed(false)}
+            className="flex-1 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+            title="Show scenes"
+          >
+            <ChevronLeft size={14} />
+          </button>
+        ) : (
+          <>
+            <div className="px-4 py-4 border-b border-border flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <h3 className="text-sm font-medium">Scenes</h3>
+                <p className="text-xs text-muted-foreground">
+                  {scenes.length > 0 ? `${scenes.length} scenes · ${scenes.reduce((a, s) => a + s.word_count, 0).toLocaleString()} words` : 'No scenes yet'}
+                </p>
+              </div>
+              <button
+                onClick={() => setRightCollapsed(true)}
+                className="shrink-0 p-0.5 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded transition-colors"
+                title="Hide scenes"
+              >
+                <ChevronRight size={13} />
+              </button>
             </div>
-          </div>
+            <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
+              {scenes.length === 0 && (
+                <p className="text-xs text-muted-foreground italic px-1">Write the chapter to see scene details.</p>
+              )}
+              {scenes.map(s => (
+                <Card key={s.scene} className={cn('bg-muted/20', rewriteScene === s.scene && 'ring-1 ring-ring')}>
+                  <CardContent className="px-3 py-2 space-y-1.5">
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="text-xs font-medium">Scene {s.scene}</span>
+                      <div className="flex items-center gap-1">
+                        {s.qa_pass
+                          ? <CheckCircle size={11} className="text-emerald-500" />
+                          : <AlertTriangle size={11} className="text-amber-400" />
+                        }
+                        {s.attempts > 1 && (
+                          <Badge variant="outline" className="text-[10px] px-1 py-0">{s.attempts} attempts</Badge>
+                        )}
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground leading-snug line-clamp-2">{s.brief}</p>
+                    {s.qa_notes && (
+                      <p className="text-[10px] text-muted-foreground/70 italic line-clamp-2">{s.qa_notes}</p>
+                    )}
+                    <div className="flex items-center justify-between pt-0.5">
+                      <span className="text-[10px] text-muted-foreground">{s.word_count.toLocaleString()} words</span>
+                      {isWritten && !isApproved && (
+                        <button
+                          onClick={() => { setRewriteScene(s.scene); setRewriteDirective('') }}
+                          className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                        >
+                          Rewrite
+                        </button>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+            {isApproved && (
+              <div className="px-4 py-3 border-t border-border">
+                <div className="flex items-center gap-2 text-xs text-emerald-500">
+                  <CheckCircle size={12} />
+                  <span>Bible updated — Chapter {activeChapter} locked</span>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

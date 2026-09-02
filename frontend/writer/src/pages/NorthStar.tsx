@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Lock, Send, Loader2, FileText, X } from 'lucide-react'
+import { Lock, Send, Loader2, FileText, X, ChevronLeft, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { readSSE } from '@/lib/sse'
 import { API } from '@/lib/api'
@@ -129,6 +129,7 @@ export default function NorthStarPage() {
   const userTurns = messages.filter(m => m.role === 'user').length
   const canLock = userTurns >= 2 && !streaming && !locking
   const [docOpen, setDocOpen] = useState(false)
+  const [docCollapsed, setDocCollapsed] = useState(false)
 
   const sidebarContent = (
     <div className="flex flex-col flex-1 min-h-0">
@@ -260,12 +261,36 @@ export default function NorthStarPage() {
       )}
 
       {/* Desktop document preview sidebar */}
-      <div className="hidden md:flex md:flex-col md:w-80 md:shrink-0 min-h-0">
-        <div className="px-5 py-4 border-b border-border shrink-0">
-          <h3 className="text-sm font-medium">{locked ? 'Documents' : 'Preview'}</h3>
-          <p className="text-xs text-muted-foreground">{locked ? 'Read-only' : 'Synthesized on lock'}</p>
-        </div>
-        {sidebarContent}
+      <div className={cn(
+        'hidden md:flex md:flex-col md:shrink-0 min-h-0 border-l border-border transition-all duration-200',
+        docCollapsed ? 'md:w-8' : 'md:w-80',
+      )}>
+        {docCollapsed ? (
+          <button
+            onClick={() => setDocCollapsed(false)}
+            className="flex-1 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+            title="Show document preview"
+          >
+            <ChevronLeft size={14} />
+          </button>
+        ) : (
+          <>
+            <div className="px-5 py-4 border-b border-border shrink-0 flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <h3 className="text-sm font-medium">{locked ? 'Documents' : 'Preview'}</h3>
+                <p className="text-xs text-muted-foreground">{locked ? 'Read-only' : 'Synthesized on lock'}</p>
+              </div>
+              <button
+                onClick={() => setDocCollapsed(true)}
+                className="shrink-0 p-0.5 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded transition-colors"
+                title="Hide preview"
+              >
+                <ChevronRight size={13} />
+              </button>
+            </div>
+            {sidebarContent}
+          </>
+        )}
       </div>
     </div>
   )
