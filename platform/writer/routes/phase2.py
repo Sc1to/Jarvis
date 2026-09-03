@@ -15,31 +15,24 @@ log = logging.getLogger(__name__)
 
 router = APIRouter()
 
-CONSOLIDATOR_SYSTEM = """You are the Bible Consolidator. Build a structured JSON entity ledger from a skeleton entity list and approved story content.
+CONSOLIDATOR_SYSTEM = """You are the Bible Consolidator. Enrich a single story entity using the story content provided below.
 
-The skeleton is authoritative: preserve every skeleton entity's ID, name, type, and coreFacts exactly as given. Do not rename, merge, or re-ID skeleton entities.
-
-For every entity — skeleton and newly discovered:
-- aliases: add any name variants found in the story content
-- coreFacts: keep skeleton facts; add new facts from the story content (never remove existing ones)
-- eventLog: extract concrete events from the tier text, tagged to act and chapter number
+Rules:
+- Preserve the entity's type, name, and all existing coreFacts exactly
+- aliases: add name variants found in story content
+- coreFacts: add new facts discovered (never remove existing ones)
+- eventLog: extract concrete events for this entity tagged with act and chapter number
 - lifecycle: list of act numbers where this entity is active
 
-New entities (not in the skeleton): assign IDs following the convention (CHAR_NNN, LOC_NNN, FRAC_NNN, OBJ_NNN), numbering from above the highest existing skeleton ID of that type.
+Return ONLY a valid JSON object for this one entity. No preamble, no fences.
+Structure: {"type": "...", "name": "...", "aliases": [], "coreFacts": {}, "eventLog": [], "lifecycle": []}"""
 
-Output ONLY valid JSON. No preamble, no explanation, no markdown fences. Structure:
-{
-  "ledger": {
-    "ID": {
-      "type": "character|location|faction|object",
-      "name": "canonical name",
-      "aliases": ["variant 1"],
-      "coreFacts": {"key": "value"},
-      "eventLog": [{"act": 1, "chapter": 1, "event": "what happens"}],
-      "lifecycle": [1, 2, 3]
-    }
-  }
-}"""
+CONSOLIDATOR_DISCOVERY_SYSTEM = """You are the Bible Consolidator. Identify named entities in the story content that are NOT already in the known entity list.
+
+Return ONLY a valid JSON object {new_id: {entity_object}}. Return {} if nothing is new.
+No preamble, no fences.
+ID format: CHAR_NNN for characters, LOC_NNN for locations, FRAC_NNN for factions, OBJ_NNN for objects.
+Each entity: {"type": "...", "name": "...", "aliases": [], "coreFacts": {}, "eventLog": [], "lifecycle": []}"""
 
 RESEARCH_SYSTEM = """You are the Research & Completion Agent. You receive a machine-generated JSON entity ledger and must return an enriched version of it.
 
@@ -98,6 +91,63 @@ def _read_tiers(book_dir: str) -> list[dict]:
         return []
     with open(path) as f:
         return json.load(f)
+
+
+def _build_story_context(book_dir: str) -> str:
+    ns_path = os.path.join(book_dir, "north_star.md")
+    north_star = open(ns_path).read() if os.path.exists(ns_path) else ""
+
+    tiers = _read_tiers(book_dir)
+    tier_labels = ["Book", "Acts"]
+    tier_text = "\n\n".join(
+        f"## Tier {i + 1} — {tier_labels[i]}\n\n{t['content']}"
+        for i, t in enumerate(tiers[:2])
+        if t.get("approved") and t.get("content")
+    )
+
+    tier3_dir = os.path.join(book_dir, "tier3")
+    tier3_text = ""
+    if os.path.exists(tier3_dir):
+        act_files = sorted(f for f in os.listdir(tier3_dir) if f.startswith("act_") and f.endswith(".md"))
+        if act_files:
+            tier3_text = "\n\n".join(open(os.path.join(tier3_dir, f)).read() for f in act_files)
+
+    tier4_dir = os.path.join(book_dir, "tier4")
+    tier4_text = ""
+    if os.path.exists(tier4_dir):
+        ch_files = sorted(f for f in os.listdir(tier4_dir) if f.startswith("chapter_") and f.endswith(".md"))
+        if ch_files:
+            tier4_text = "\n\n".join(open(os.path.join(tier4_dir, f)).read() for f in ch_files)
+
+    parts = []
+    if north_star:
+        parts.append(f"## North Star\n\n{north_star}")
+    if tier_text:
+        parts.append(tier_text)
+    if tier3_text:
+        parts.append(f"## Tier 3 — Chapter Summaries\n\n{tier3_text}")
+    if tier4_text:
+        parts.append(f"## Tier 4 — Scene Lists\n\n{tier4_text}")
+    return "\n\n".join(parts)
+
+
+def _merge_entity(skeleton_ent: dict, enriched: dict) -> dict:
+    merged = {**skeleton_ent, **enriched}
+    # Skeleton coreFacts win for existing keys; enriched can add new keys
+    merged["coreFacts"] = {**enriched.get("coreFacts", {}), **skeleton_ent.get("coreFacts", {})}
+    return merged
+
+
+def _next_ids(ledger: dict) -> dict:
+    def max_num(prefix):
+        nums = [int(k[len(prefix):]) for k in ledger if k.startswith(prefix) and k[len(prefix):].isdigit()]
+        return max(nums, default=0)
+    return {
+        "CHAR": max_num("CHAR_") + 1,
+        "LOC": max_num("LOC_") + 1,
+        "FRAC": max_num("FRAC_") + 1,
+        "OBJ": max_num("OBJ_") + 1,
+    }
 
 
 def _bible_path(book_id: str) -> str:
@@ -166,106 +216,72 @@ def consolidate(book_id: str, user: str = Depends(current_user)):
 
         book_dir = db.data_dir(book_id)
 
-        # Skeleton — authoritative entity seed
         skeleton_path = os.path.join(book_dir, "bible_skeleton.json")
         skeleton_entities = []
         if os.path.exists(skeleton_path):
             skeleton = json.load(open(skeleton_path))
             skeleton_entities = skeleton.get("entities", [])
-        skeleton_count = len(skeleton_entities)
-        yield f'data: {json.dumps({"type": "status", "message": f"Seeding from {skeleton_count} skeleton entities…"})}\n\n'
+        total = len(skeleton_entities)
+        yield f'data: {json.dumps({"type": "status", "message": f"Seeding from {total} skeleton entities…"})}\n\n'
 
-        ns_path = os.path.join(book_dir, "north_star.md")
-        north_star = open(ns_path).read() if os.path.exists(ns_path) else ""
+        story_context = _build_story_context(book_dir)
+        entity_system = prompt_store.get("consolidator", CONSOLIDATOR_SYSTEM) + "\n\n## Story Content\n\n" + story_context
+        discovery_system = CONSOLIDATOR_DISCOVERY_SYSTEM + "\n\n## Story Content\n\n" + story_context
 
-        # Tiers 1 & 2
-        tiers = _read_tiers(book_dir)
-        tier_labels = ["Book", "Acts"]
-        tier_text = "\n\n".join(
-            f"## Tier {i + 1} — {tier_labels[i]}\n\n{t['content']}"
-            for i, t in enumerate(tiers[:2])
-            if t.get("approved") and t.get("content")
+        ledger: dict = {}
+
+        # ── Per-entity enrichment ──
+        for idx, ent in enumerate(skeleton_entities):
+            eid = ent.get("id", f"ENT_{idx:03d}")
+            yield f'data: {json.dumps({"type": "status", "message": f"Enriching {eid} ({idx + 1}/{total})…"})}\n\n'
+            user_msg = f"Entity ID: {eid}\n\n{json.dumps(ent, indent=2)}"
+            full_text = ""
+            try:
+                async for token in llm.provider_tokens(provider, model, [{"role": "user", "content": user_msg}], entity_system, user, json_mode=True):
+                    full_text += token
+            except Exception as e:
+                yield f'data: {json.dumps({"type": "status", "message": f"⚠ {eid}: call failed ({e}) — keeping skeleton"})}\n\n'
+                ledger[eid] = ent
+                continue
+            try:
+                ledger[eid] = _merge_entity(ent, _extract_json(full_text))
+            except Exception:
+                yield f'data: {json.dumps({"type": "status", "message": f"⚠ {eid}: parse failed — keeping skeleton"})}\n\n'
+                ledger[eid] = ent
+
+        # ── Discovery pass ──
+        yield f'data: {json.dumps({"type": "status", "message": "Running discovery pass for new entities…"})}\n\n'
+        nids = _next_ids(ledger)
+        discovery_msg = (
+            f"Known entities (do NOT re-add): {json.dumps([e.get('name', k) for k, e in ledger.items()])}\n\n"
+            f"Next available IDs: CHAR_{nids['CHAR']:03d}, LOC_{nids['LOC']:03d}, "
+            f"FRAC_{nids['FRAC']:03d}, OBJ_{nids['OBJ']:03d}"
         )
-
-        # Tier 3 — per-act chapter files
-        tier3_dir = os.path.join(book_dir, "tier3")
-        tier3_text = ""
-        if os.path.exists(tier3_dir):
-            act_files = sorted(f for f in os.listdir(tier3_dir) if f.startswith("act_") and f.endswith(".md"))
-            if act_files:
-                tier3_text = "\n\n".join(open(os.path.join(tier3_dir, f)).read() for f in act_files)
-
-        # Tier 4 — per-chapter scene files
-        tier4_dir = os.path.join(book_dir, "tier4")
-        tier4_text = ""
-        if os.path.exists(tier4_dir):
-            ch_files = sorted(f for f in os.listdir(tier4_dir) if f.startswith("chapter_") and f.endswith(".md"))
-            if ch_files:
-                tier4_text = "\n\n".join(open(os.path.join(tier4_dir, f)).read() for f in ch_files)
-
-        context = f"## North Star\n\n{north_star}"
-        if skeleton_entities:
-            context += f"\n\n## Skeleton Bible — Authoritative Entity List\n\n{json.dumps(skeleton_entities, indent=2)}"
-        if tier_text:
-            context += f"\n\n{tier_text}"
-        if tier3_text:
-            context += f"\n\n## Tier 3 — Chapter Summaries\n\n{tier3_text}"
-        if tier4_text:
-            context += f"\n\n## Tier 4 — Scene Lists\n\n{tier4_text}"
-
-        messages = [{"role": "user", "content": (
-            "Build the entity ledger from the skeleton and story content below. "
-            "Preserve skeleton entity IDs and coreFacts exactly. Add eventLog, lifecycle, "
-            "and any new entities from the story content.\n\n" + context
-        )}]
-
-        yield f'data: {json.dumps({"type": "status", "message": "Running Bible Consolidator…"})}\n\n'
-
-        input_chars = sum(len(m.get("content", "")) for m in messages)
-        log.info("Bible Consolidator: provider=%s model=%s input_chars=%d", provider, model, input_chars)
-
-        full_text = ""
         try:
-            async for token in llm.provider_tokens(provider, model, messages, prompt_store.get("consolidator", CONSOLIDATOR_SYSTEM), user, json_mode=True):
+            full_text = ""
+            async for token in llm.provider_tokens(provider, model, [{"role": "user", "content": discovery_msg}], discovery_system, user, json_mode=True):
                 full_text += token
-                yield f'data: {json.dumps({"type": "token", "content": token})}\n\n'
+            if full_text.strip():
+                for neid, nent in _extract_json(full_text).items():
+                    if neid not in ledger:
+                        ledger[neid] = nent
+                        yield f'data: {json.dumps({"type": "status", "message": f"  ✓ discovered {neid}: {nent.get(\"name\", \"?\")}"})}\n\n'
         except Exception as e:
-            log.error("Bible Consolidator stream error: %s", e)
-            yield f'data: {json.dumps({"type": "error", "message": str(e)})}\n\n'
-            return
+            yield f'data: {json.dumps({"type": "status", "message": f"⚠ Discovery pass skipped ({e})"})}\n\n'
 
-        log.info("Bible Consolidator: received %d chars from model", len(full_text))
-
-        if not full_text.strip():
-            msg = (
-                f"Bible Consolidator returned an empty response (provider={provider}, model={model}). "
-                f"Input was ~{input_chars:,} chars — the model may have hit its context limit. "
-                "Try a model with a larger context window, or reduce tier content."
-            )
-            log.error(msg)
-            yield f'data: {json.dumps({"type": "error", "message": msg})}\n\n'
-            return
-
-        try:
-            bible = _extract_json(full_text)
-        except Exception as e:
-            yield f'data: {json.dumps({"type": "error", "message": f"Could not parse JSON response: {e}"})}\n\n'
-            return
-
-        if "ledger" not in bible:
-            bible = {"ledger": bible}
-
-        bible["metadata"] = {
-            "consolidated_at": datetime.now(timezone.utc).isoformat(),
-            "phase2_status": "consolidated",
-            "phase2_approved": False,
-            "skeleton_entity_count": skeleton_count,
+        # ── Save ──
+        bible = {
+            "ledger": ledger,
+            "metadata": {
+                "consolidated_at": datetime.now(timezone.utc).isoformat(),
+                "phase2_status": "consolidated",
+                "phase2_approved": False,
+                "skeleton_entity_count": total,
+            },
         }
-
         try:
             with open(_bible_path(book_id), "w") as f:
                 json.dump(bible, f, indent=2)
-
             from git import Repo
             repo = Repo(book_dir)
             repo.index.add(["bible.json"])
@@ -274,8 +290,7 @@ def consolidate(book_id: str, user: str = Depends(current_user)):
             yield f'data: {json.dumps({"type": "error", "message": f"Save failed: {e}"})}\n\n'
             return
 
-        entity_count = len(bible.get("ledger", {}))
-        yield f'data: {json.dumps({"type": "saved", "entity_count": entity_count})}\n\n'
+        yield f'data: {json.dumps({"type": "saved", "entity_count": len(ledger)})}\n\n'
 
     return StreamingResponse(
         generate(),
@@ -382,75 +397,64 @@ async def _consolidate_bg(book_id: str, user: str, log_cb) -> None:
         raise RuntimeError("Bible Agent has no model assigned")
 
     book_dir = db.data_dir(book_id)
-
     skeleton_path = os.path.join(book_dir, "bible_skeleton.json")
     skeleton_entities = []
     if os.path.exists(skeleton_path):
         skeleton = json.load(open(skeleton_path))
         skeleton_entities = skeleton.get("entities", [])
-    log_cb(f"Seeding from {len(skeleton_entities)} skeleton entities…")
+    total = len(skeleton_entities)
+    log_cb(f"Seeding from {total} skeleton entities…")
 
-    ns_path = os.path.join(book_dir, "north_star.md")
-    north_star = open(ns_path).read() if os.path.exists(ns_path) else ""
+    story_context = _build_story_context(book_dir)
+    entity_system = prompt_store.get("consolidator", CONSOLIDATOR_SYSTEM) + "\n\n## Story Content\n\n" + story_context
+    discovery_system = CONSOLIDATOR_DISCOVERY_SYSTEM + "\n\n## Story Content\n\n" + story_context
 
-    tiers = _read_tiers(book_dir)
-    tier_labels = ["Book", "Acts"]
-    tier_text = "\n\n".join(
-        f"## Tier {i + 1} — {tier_labels[i]}\n\n{t['content']}"
-        for i, t in enumerate(tiers[:2])
-        if t.get("approved") and t.get("content")
+    ledger: dict = {}
+
+    for idx, ent in enumerate(skeleton_entities):
+        eid = ent.get("id", f"ENT_{idx:03d}")
+        log_cb(f"  Enriching {eid} ({idx + 1}/{total})…")
+        user_msg = f"Entity ID: {eid}\n\n{json.dumps(ent, indent=2)}"
+        try:
+            full_text = await _call(provider, model, [{"role": "user", "content": user_msg}], entity_system, user, json_mode=True)
+            ledger[eid] = _merge_entity(ent, _extract_json(full_text))
+        except Exception as e:
+            log_cb(f"  ⚠ {eid}: failed ({e}) — keeping skeleton")
+            ledger[eid] = ent
+
+    log_cb("Running discovery pass…")
+    nids = _next_ids(ledger)
+    discovery_msg = (
+        f"Known entities (do NOT re-add): {json.dumps([e.get('name', k) for k, e in ledger.items()])}\n\n"
+        f"Next available IDs: CHAR_{nids['CHAR']:03d}, LOC_{nids['LOC']:03d}, "
+        f"FRAC_{nids['FRAC']:03d}, OBJ_{nids['OBJ']:03d}"
     )
+    try:
+        full_text = await _call(provider, model, [{"role": "user", "content": discovery_msg}], discovery_system, user, json_mode=True)
+        if full_text.strip():
+            for neid, nent in _extract_json(full_text).items():
+                if neid not in ledger:
+                    ledger[neid] = nent
+                    log_cb(f"  ✓ discovered {neid}: {nent.get('name', '?')}")
+    except Exception as e:
+        log_cb(f"⚠ Discovery pass skipped ({e})")
 
-    tier3_dir = os.path.join(book_dir, "tier3")
-    tier3_text = ""
-    if os.path.exists(tier3_dir):
-        act_files = sorted(f for f in os.listdir(tier3_dir) if f.startswith("act_") and f.endswith(".md"))
-        if act_files:
-            tier3_text = "\n\n".join(open(os.path.join(tier3_dir, f)).read() for f in act_files)
-
-    tier4_dir = os.path.join(book_dir, "tier4")
-    tier4_text = ""
-    if os.path.exists(tier4_dir):
-        ch_files = sorted(f for f in os.listdir(tier4_dir) if f.startswith("chapter_") and f.endswith(".md"))
-        if ch_files:
-            tier4_text = "\n\n".join(open(os.path.join(tier4_dir, f)).read() for f in ch_files)
-
-    context = f"## North Star\n\n{north_star}"
-    if skeleton_entities:
-        context += f"\n\n## Skeleton Bible — Authoritative Entity List\n\n{json.dumps(skeleton_entities, indent=2)}"
-    if tier_text:
-        context += f"\n\n{tier_text}"
-    if tier3_text:
-        context += f"\n\n## Tier 3 — Chapter Summaries\n\n{tier3_text}"
-    if tier4_text:
-        context += f"\n\n## Tier 4 — Scene Lists\n\n{tier4_text}"
-
-    messages = [{"role": "user", "content": (
-        "Build the entity ledger from the skeleton and story content below. "
-        "Preserve skeleton entity IDs and coreFacts exactly. Add eventLog, lifecycle, "
-        "and any new entities from the story content.\n\n" + context
-    )}]
-
-    full_text = await _call(provider, model, messages, prompt_store.get("consolidator", CONSOLIDATOR_SYSTEM), user, json_mode=True)
-    bible = _extract_json(full_text)
-    if "ledger" not in bible:
-        bible = {"ledger": bible}
-
-    bible["metadata"] = {
-        "consolidated_at": datetime.now(timezone.utc).isoformat(),
-        "phase2_status": "consolidated",
-        "phase2_approved": False,
-        "skeleton_entity_count": len(skeleton_entities),
+    bible = {
+        "ledger": ledger,
+        "metadata": {
+            "consolidated_at": datetime.now(timezone.utc).isoformat(),
+            "phase2_status": "consolidated",
+            "phase2_approved": False,
+            "skeleton_entity_count": total,
+        },
     }
-
     with open(_bible_path(book_id), "w") as f:
         json.dump(bible, f, indent=2)
-
     from git import Repo
     repo = Repo(book_dir)
     repo.index.add(["bible.json"])
     repo.index.commit("Phase 2 — Consolidate entity ledger (seeded from skeleton)")
-    log_cb(f"Consolidation complete — {len(bible.get('ledger', {}))} entities")
+    log_cb(f"Consolidation complete — {len(ledger)} entities")
 
 
 async def _research_run_bg(book_id: str, user: str, log_cb) -> None:
