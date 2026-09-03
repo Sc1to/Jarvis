@@ -64,12 +64,16 @@ def _get_conn() -> sqlite3.Connection:
                 finished_at  TEXT
             );
         """)
-        # Migrate existing books table — ignore error if columns already exist
+        # Migrate existing tables — ignore error if columns already exist
         for col in ("series_id TEXT", "series_order INTEGER"):
             try:
                 _conn.execute(f"ALTER TABLE books ADD COLUMN {col}")
             except Exception:
                 pass
+        try:
+            _conn.execute("ALTER TABLE auto_write_jobs ADD COLUMN step TEXT")
+        except Exception:
+            pass
         _conn.commit()
     return _conn
 
@@ -196,12 +200,12 @@ def ensure_series_data_dir(series_id: str) -> str:
 
 # ── Auto-write jobs ───────────────────────────────────────────────────────────
 
-def create_auto_write_job(book_id: str, user: str) -> str:
+def create_auto_write_job(book_id: str, user: str, step: str = "auto", chapter: int | None = None) -> str:
     job_id = uuid.uuid4().hex[:12]
     now = datetime.now(timezone.utc).isoformat()
     _get_conn().execute(
-        "INSERT INTO auto_write_jobs (id, book_id, user, status, log, started_at) VALUES (?, ?, ?, 'running', '[]', ?)",
-        (job_id, book_id, user, now),
+        "INSERT INTO auto_write_jobs (id, book_id, user, status, current_chapter, step, log, started_at) VALUES (?, ?, ?, 'running', ?, ?, '[]', ?)",
+        (job_id, book_id, user, chapter, step, now),
     )
     _get_conn().commit()
     return job_id
@@ -213,10 +217,26 @@ def get_auto_write_job(job_id: str) -> dict | None:
 
 
 def get_active_auto_write_job(book_id: str) -> dict | None:
+    """Return running auto-write-all job (step='auto' or legacy NULL)."""
     row = _get_conn().execute(
-        "SELECT * FROM auto_write_jobs WHERE book_id = ? AND status = 'running' ORDER BY started_at DESC LIMIT 1",
+        "SELECT * FROM auto_write_jobs WHERE book_id = ? AND (step = 'auto' OR step IS NULL) AND status = 'running' ORDER BY started_at DESC LIMIT 1",
         (book_id,),
     ).fetchone()
+    return dict(row) if row else None
+
+
+def get_active_auto_write_job_for_step(book_id: str, step: str, chapter: int | None = None) -> dict | None:
+    """Return running write/approve chapter job for a specific step (and optionally chapter)."""
+    if chapter is not None:
+        row = _get_conn().execute(
+            "SELECT * FROM auto_write_jobs WHERE book_id = ? AND step = ? AND current_chapter = ? AND status = 'running' ORDER BY started_at DESC LIMIT 1",
+            (book_id, step, chapter),
+        ).fetchone()
+    else:
+        row = _get_conn().execute(
+            "SELECT * FROM auto_write_jobs WHERE book_id = ? AND step = ? AND status = 'running' ORDER BY started_at DESC LIMIT 1",
+            (book_id, step),
+        ).fetchone()
     return dict(row) if row else None
 
 

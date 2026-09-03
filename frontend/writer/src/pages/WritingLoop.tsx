@@ -113,9 +113,11 @@ export default function WritingLoopPage() {
     chapters: ChapterSummary[]
     next_chapter: number | null
     total_planned: number
+    active_chapter_job: { chapter: number; step: 'write' | 'approve'; started_at: string } | null
   }>({
     queryKey: ['phase3-status', bookId],
     queryFn: () => fetch(`${API}/books/${bookId}/phase3/status`).then(r => r.json()),
+    refetchInterval: (query) => query.state.data?.active_chapter_job ? 3000 : false,
   })
 
   const [activeChapter, setActiveChapter] = useState<number | null>(null)
@@ -162,12 +164,26 @@ export default function WritingLoopPage() {
     }
   }, [status])
 
-  // When switching chapters, reset writing state
+  // When switching chapters, reset writing state (but not if background job is for this chapter)
   useEffect(() => {
     setEvents([])
     setChapterDone(false)
     setRewriteScene(null)
   }, [activeChapter])
+
+  // On mount/status change: detect any running chapter write/approve job and sync UI
+  const reconnectRef = useRef(false)
+  useEffect(() => {
+    if (!status?.active_chapter_job || reconnectRef.current) return
+    const aj = status.active_chapter_job
+    reconnectRef.current = true
+    setActiveChapter(aj.chapter)
+    if (aj.step === 'write' && !writing) {
+      runWriteChapter(aj.chapter, true)
+    } else if (aj.step === 'approve' && !approving) {
+      runApproveChapter(aj.chapter, true)
+    }
+  }, [status?.active_chapter_job?.chapter, status?.active_chapter_job?.step])
 
   // Pre-fill scene prose when rewrite panel opens
   useEffect(() => {
@@ -258,10 +274,12 @@ export default function WritingLoopPage() {
     })
   }
 
-  async function writeChapter(chapter: number) {
+  async function runWriteChapter(chapter: number, isReconnect = false) {
     setWriting(true)
-    setEvents([])
-    setChapterDone(false)
+    if (!isReconnect) {
+      setEvents([])
+      setChapterDone(false)
+    }
 
     try {
       const resp = await fetch(`${API}/books/${bookId}/phase3/write-chapter`, {
@@ -271,40 +289,67 @@ export default function WritingLoopPage() {
       })
       for await (const ev of readSSE(resp)) {
         const event = ev as ProgressEvent
+        if (event.type === 'heartbeat') continue
         if (event.type !== 'token') {
           setEvents(prev => [...prev, event])
         }
         if (event.type === 'chapter_done') {
           setChapterDone(true)
+          reconnectRef.current = false
           await refetchStatus()
           await refetchChapter()
         }
       }
+    } catch {
+      // Connection dropped — background task may still be running; refetch to find out
     } finally {
-      setWriting(false)
+      const st = await refetchStatus()
+      if (!st.data?.active_chapter_job) {
+        setWriting(false)
+        reconnectRef.current = false
+      }
+      // else: still running in background, keep writing=true, polling interval handles UI
     }
   }
 
-  async function approveChapter(chapter: number) {
+  function writeChapter(chapter: number) {
+    return runWriteChapter(chapter, false)
+  }
+
+  async function runApproveChapter(chapter: number, isReconnect = false) {
     setApproving(true)
-    setEvents([])
+    if (!isReconnect) {
+      setEvents([])
+    }
 
     try {
       const resp = await fetch(`${API}/books/${bookId}/phase3/chapter/${chapter}/approve`, { method: 'POST' })
       for await (const ev of readSSE(resp)) {
         const event = ev as ProgressEvent
+        if (event.type === 'heartbeat') continue
         if (event.type !== 'token') {
           setEvents(prev => [...prev, event])
         }
         if (event.type === 'saved') {
+          reconnectRef.current = false
           await refetchStatus()
           await refetchChapter()
           qc.invalidateQueries({ queryKey: ['bible', bookId] })
         }
       }
+    } catch {
+      // Connection dropped — background task may still be running
     } finally {
-      setApproving(false)
+      const st = await refetchStatus()
+      if (!st.data?.active_chapter_job) {
+        setApproving(false)
+        reconnectRef.current = false
+      }
     }
+  }
+
+  function approveChapter(chapter: number) {
+    return runApproveChapter(chapter, false)
   }
 
   const jobLocalKey = `aw_job_${bookId}`
