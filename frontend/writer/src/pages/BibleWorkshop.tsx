@@ -67,7 +67,8 @@ export default function BibleWorkshopPage() {
   const { data: phase2Status, refetch: refetchP2Status } = useQuery({
     queryKey: ['phase2-status', bookId],
     queryFn: () => fetch(`${API}/books/${bookId}/phase2/status`).then(r => r.json()),
-    refetchInterval: false,
+    // Poll while a job is running so the UI reflects progress without requiring an open SSE stream
+    refetchInterval: (query) => query.state.data?.active_job ? 2000 : false,
   })
 
   const { data: bible, refetch: refetchBible } = useQuery<Bible>({
@@ -224,12 +225,24 @@ export default function BibleWorkshopPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeChapterNum, bookId, tier4Status])
 
-  // Sync p2Step from server state
+  // Sync p2Step from server state — handles page refresh while a job is running
   useEffect(() => {
     if (!phase2Status) return
     const s = phase2Status.phase2_status
     if (s === 'approved' || s === 'researched' || s === 'consolidated') setP2Step('done')
+    else if (s === 'consolidating') setP2Step('consolidating')
+    else if (s === 'researching') setP2Step('researching')
   }, [phase2Status])
+
+  // Populate log from server when a job is running and we have no local log (e.g. after page refresh)
+  useEffect(() => {
+    const jobLog: string[] = phase2Status?.active_job?.log ?? []
+    if (jobLog.length && !p2Log) {
+      setP2Log(jobLog.join('\n'))
+    }
+  // Only run when active_job changes, not when p2Log changes
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase2Status?.active_job])
 
   // ── Tier 1 & 2 actions ───────────────────────────────────────────────────────
   const tierIdx = activeStage === 'book' ? 0 : activeStage === 'acts' ? 1 : -1
@@ -798,19 +811,30 @@ export default function BibleWorkshopPage() {
     if (p2LogRef.current) p2LogRef.current.scrollTop = p2LogRef.current.scrollHeight
   }, [p2Log])
 
-  async function runP2(endpoint: string, label: string, nextStep: P2Step) {
+  async function runP2(endpoint: string, label: string, nextStep: P2Step, force = false) {
     setP2Step(nextStep)
-    setP2Log('')
+    // Don't wipe the log if we're reconnecting to a running job (p2Log already populated from polling)
+    if (!force) {
+      setP2Log(prev => prev ? prev + '\n— connecting —\n' : '')
+    } else {
+      setP2Log('')
+    }
     setP2LastSaved(null)
+    const url = `${API}/books/${bookId}/phase2/${endpoint}${force ? '?force=true' : ''}`
     try {
-      const resp = await fetch(`${API}/books/${bookId}/phase2/${endpoint}`, { method: 'POST' })
+      const resp = await fetch(url, { method: 'POST' })
       for await (const event of readSSE(resp)) {
-        if (event.type === 'token') setP2Log(prev => prev + event.content)
+        if (event.type === 'heartbeat') continue  // keepalive, ignore
+        else if (event.type === 'token') setP2Log(prev => prev + event.content)
         else if (event.type === 'status') setP2Log(prev => prev + `\n[${event.message}]\n`)
+        else if (event.type === 'entity_done') {
+          setP2Log(prev => prev + `\n  ✓ ${event.eid} done (${event.done}/${event.total})\n`)
+        }
         else if (event.type === 'saved') {
           setP2LastSaved({ step: label, count: event.entity_count as number })
           await refetchP2Status()
           await refetchBible()
+          setP2Step('done')
         } else if (event.type === 'error') {
           setP2Log(prev => prev + `\n⚠ ${event.message}`)
           setP2Step('idle')
@@ -818,8 +842,9 @@ export default function BibleWorkshopPage() {
         }
       }
     } catch {
-      setP2Log(prev => prev + '\n⚠ Connection error')
-      setP2Step('idle')
+      setP2Log(prev => prev + '\n⚠ Connection lost — job may still be running in the background')
+      // Don't reset to idle — the server status will reflect the actual state
+      await refetchP2Status()
     }
   }
 
@@ -1535,19 +1560,31 @@ export default function BibleWorkshopPage() {
                       <span className={cn('flex items-center justify-center w-5 h-5 rounded-full text-xs font-bold',
                         bibleExists ? 'bg-emerald-500/20 text-emerald-500' : 'bg-muted text-muted-foreground')}>1</span>
                       <span className="text-sm font-medium">Consolidate entity ledger</span>
-                      {bibleExists && <CheckCircle size={13} className="text-emerald-500 shrink-0" />}
+                      {bibleExists && p2Step !== 'consolidating' && <CheckCircle size={13} className="text-emerald-500 shrink-0" />}
                     </div>
                     {!p2Approved && (
-                      <Button size="sm" variant={bibleExists ? 'outline' : 'default'}
-                        disabled={p2Step === 'consolidating' || p2Step === 'researching'}
-                        onClick={() => runP2('consolidate', 'Consolidate', 'consolidating')}>
-                        {p2Step === 'consolidating'
-                          ? <><Loader2 size={12} className="animate-spin mr-1" />Running…</>
-                          : bibleExists ? 'Re-run' : 'Run'}
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        <Button size="sm" variant={bibleExists ? 'outline' : 'default'}
+                          disabled={p2Step === 'consolidating' || p2Step === 'researching'}
+                          onClick={() => runP2('consolidate', 'Consolidate', 'consolidating')}>
+                          {p2Step === 'consolidating'
+                            ? <><Loader2 size={12} className="animate-spin mr-1" />Running…</>
+                            : bibleExists ? 'Re-run' : 'Run'}
+                        </Button>
+                        {bibleExists && p2Step !== 'consolidating' && (
+                          <button className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2"
+                            onClick={() => runP2('consolidate', 'Consolidate', 'consolidating', true)}>
+                            re-run all
+                          </button>
+                        )}
+                      </div>
                     )}
                   </div>
-                  {bibleExists && <p className="text-xs text-muted-foreground pl-7">{entityCount} entities in ledger</p>}
+                  {bibleExists && (
+                    <p className="text-xs text-muted-foreground pl-7">
+                      {phase2Status?.consolidated_count ?? entityCount}/{entityCount} entities consolidated
+                    </p>
+                  )}
                 </div>
 
                 <div className="space-y-2">
@@ -1559,18 +1596,31 @@ export default function BibleWorkshopPage() {
                       <span className={cn('text-sm font-medium', !bibleExists && 'text-muted-foreground/40')}>
                         Research &amp; complete entities
                       </span>
-                      {(p2Status === 'researched' || p2Status === 'approved') && <CheckCircle size={13} className="text-emerald-500 shrink-0" />}
+                      {(p2Status === 'researched' || p2Status === 'approved') && p2Step !== 'researching' && <CheckCircle size={13} className="text-emerald-500 shrink-0" />}
                     </div>
                     {!p2Approved && bibleExists && (
-                      <Button size="sm" variant={(p2Status === 'researched') ? 'outline' : 'default'}
-                        disabled={p2Step === 'consolidating' || p2Step === 'researching'}
-                        onClick={() => runP2('run', 'Research', 'researching')}>
-                        {p2Step === 'researching'
-                          ? <><Loader2 size={12} className="animate-spin mr-1" />Running…</>
-                          : (p2Status === 'researched' || p2Status === 'approved') ? 'Re-run' : 'Run'}
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        <Button size="sm" variant={(p2Status === 'researched') ? 'outline' : 'default'}
+                          disabled={p2Step === 'consolidating' || p2Step === 'researching'}
+                          onClick={() => runP2('run', 'Research', 'researching')}>
+                          {p2Step === 'researching'
+                            ? <><Loader2 size={12} className="animate-spin mr-1" />Running…</>
+                            : (p2Status === 'researched' || p2Status === 'approved') ? 'Re-run' : 'Run'}
+                        </Button>
+                        {(p2Status === 'researched' || p2Status === 'approved') && p2Step !== 'researching' && (
+                          <button className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2"
+                            onClick={() => runP2('run', 'Research', 'researching', true)}>
+                            re-run all
+                          </button>
+                        )}
+                      </div>
                     )}
                   </div>
+                  {bibleExists && (p2Status === 'researched' || p2Status === 'approved' || (phase2Status?.researched_count ?? 0) > 0) && (
+                    <p className="text-xs text-muted-foreground pl-7">
+                      {phase2Status?.researched_count ?? 0}/{entityCount} entities researched
+                    </p>
+                  )}
                 </div>
 
                 <div className="flex items-center justify-between">
