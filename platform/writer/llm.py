@@ -184,7 +184,8 @@ def stream_chat(agent_key: str, messages: list[dict], system: str | None = None,
         model = db.get_setting(f"agent_{agent_key}_model")
 
         if not provider or not model:
-            yield f'data: {json.dumps({"type": "error", "message": f"Agent \"{agent_key}\" has no model assigned. Go to Settings."})}\n\n'
+            msg = f"Agent \"{agent_key}\" has no model assigned. Go to Settings."
+            yield f'data: {json.dumps({"type": "error", "message": msg})}\n\n'
             return
         try:
             async for token in provider_tokens(provider, model, messages, system, user_id):
