@@ -59,7 +59,9 @@ CRITICAL OUTPUT RULES — no exceptions:
 
 
 def _extract_json(text: str) -> dict:
-    text = text.strip()
+    from json_repair import repair_json
+    original = text.strip()
+    text = original
     if "```json" in text:
         text = text[text.index("```json") + 7:text.rindex("```")]
     elif "```" in text and text.count("```") >= 2:
@@ -67,17 +69,27 @@ def _extract_json(text: str) -> dict:
     # Scan backward from the last } to find the outermost JSON object.
     # This skips thinking-model prose that appears before the actual JSON response.
     last_close = text.rfind("}")
-    if last_close == -1:
-        raise ValueError("No JSON object found in response")
-    depth = 0
-    for i in range(last_close, -1, -1):
-        if text[i] == "}":
-            depth += 1
-        elif text[i] == "{":
-            depth -= 1
-            if depth == 0:
-                return json.loads(text[i:last_close + 1])
-    raise ValueError("No JSON object found in response")
+    if last_close != -1:
+        depth = 0
+        for i in range(last_close, -1, -1):
+            if text[i] == "}":
+                depth += 1
+            elif text[i] == "{":
+                depth -= 1
+                if depth == 0:
+                    candidate = text[i:last_close + 1]
+                    try:
+                        return json.loads(candidate)
+                    except json.JSONDecodeError:
+                        repaired = repair_json(candidate, return_objects=True)
+                        if isinstance(repaired, dict) and repaired:
+                            return repaired
+                        break
+    # Fallback: let json_repair scan the full raw text
+    repaired = repair_json(original, return_objects=True)
+    if isinstance(repaired, dict) and repaired:
+        return repaired
+    raise ValueError(f"Could not extract valid JSON (response was {len(original)} chars)")
 
 
 def _read_tiers(book_dir: str) -> list[dict]:
