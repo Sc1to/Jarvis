@@ -136,6 +136,28 @@ def _build_story_context(book_dir: str) -> str:
     return "\n\n".join(parts)
 
 
+async def _llm_call_with_json_fallback(
+    provider: str, model: str, messages: list, system: str, user: str
+) -> tuple[str, bool]:
+    """Call the LLM with json_mode=True, falling back to plain mode if the response is empty.
+
+    Returns (full_text, used_json_mode).  An empty response from json_mode usually means
+    the model doesn't support the flag — retrying without it typically succeeds.
+    """
+    full_text = ""
+    async for token in llm.provider_tokens(provider, model, messages, system, user, json_mode=True):
+        full_text += token
+
+    if full_text.strip():
+        return full_text, True
+
+    # Empty response — retry without json_mode
+    full_text = ""
+    async for token in llm.provider_tokens(provider, model, messages, system, user, json_mode=False):
+        full_text += token
+    return full_text, False
+
+
 def _merge_entity(skeleton_ent: dict, enriched: dict) -> dict:
     merged = {**skeleton_ent, **enriched}
     merged["coreFacts"] = {**enriched.get("coreFacts", {}), **skeleton_ent.get("coreFacts", {})}
@@ -320,16 +342,23 @@ async def _consolidate_task(book_id: str, user: str, job_id: str, queue: asyncio
         user_msg = f"Entity ID: {eid}\n\n{json.dumps(ent, indent=2)}"
         full_text = ""
         try:
-            async for token in llm.provider_tokens(
-                provider, model, [{"role": "user", "content": user_msg}], entity_system, user, json_mode=True
-            ):
-                full_text += token
+            full_text, _ = await _llm_call_with_json_fallback(
+                provider, model, [{"role": "user", "content": user_msg}], entity_system, user
+            )
         except Exception as e:
             warn = f"⚠ {eid}: LLM call failed ({e}) — keeping skeleton"
             await queue.put({"type": "status", "message": warn})
             db.append_bible_job_log(job_id, warn)
             ledger[eid] = ent
             # Don't add to done_set — will retry on next run
+            _checkpoint_bible(book_id, ledger, metadata)
+            continue
+
+        if not full_text.strip():
+            warn = f"⚠ {eid}: empty response from model (both json_mode attempts) — keeping skeleton"
+            await queue.put({"type": "status", "message": warn})
+            db.append_bible_job_log(job_id, warn)
+            ledger[eid] = ent
             _checkpoint_bible(book_id, ledger, metadata)
             continue
 
@@ -448,16 +477,21 @@ async def _research_task(book_id: str, user: str, job_id: str, queue: asyncio.Qu
         messages = [{"role": "user", "content": json.dumps({eid: entity}, indent=2)}]
         full_text = ""
         try:
-            async for token in llm.provider_tokens(
-                provider, model, messages, system_prompt, user, json_mode=True
-            ):
-                full_text += token
-                await queue.put({"type": "token", "content": token})
+            full_text, _ = await _llm_call_with_json_fallback(
+                provider, model, messages, system_prompt, user
+            )
         except Exception as e:
             warn = f"⚠ {eid}: LLM call failed ({e}) — keeping original"
             await queue.put({"type": "status", "message": warn})
             db.append_bible_job_log(job_id, warn)
             # Don't add to done_set — will retry on next run
+            _checkpoint_bible(book_id, enriched_ledger, metadata)
+            continue
+
+        if not full_text.strip():
+            warn = f"⚠ {eid}: empty response from model (both json_mode attempts) — keeping original"
+            await queue.put({"type": "status", "message": warn})
+            db.append_bible_job_log(job_id, warn)
             _checkpoint_bible(book_id, enriched_ledger, metadata)
             continue
 
