@@ -338,6 +338,162 @@ def research_run(book_id: str, user: str = Depends(current_user)):
 
 # ── Approve ────────────────────────────────────────────────────────────────────
 
+# ── Background (non-streaming) counterparts ────────────────────────────────────
+
+async def _call(provider: str, model: str, messages: list[dict], system: str, user: str = "local", json_mode: bool = False) -> str:
+    result = ""
+    async for token in llm.provider_tokens(provider, model, messages, system, user, json_mode=json_mode):
+        result += token
+    return result
+
+
+async def _consolidate_bg(book_id: str, user: str, log_cb) -> None:
+    provider = db.get_setting("agent_bible_agent_provider")
+    model = db.get_setting("agent_bible_agent_model")
+    if not provider or not model:
+        raise RuntimeError("Bible Agent has no model assigned")
+
+    book_dir = db.data_dir(book_id)
+
+    skeleton_path = os.path.join(book_dir, "bible_skeleton.json")
+    skeleton_entities = []
+    if os.path.exists(skeleton_path):
+        skeleton = json.load(open(skeleton_path))
+        skeleton_entities = skeleton.get("entities", [])
+    log_cb(f"Seeding from {len(skeleton_entities)} skeleton entities…")
+
+    ns_path = os.path.join(book_dir, "north_star.md")
+    north_star = open(ns_path).read() if os.path.exists(ns_path) else ""
+
+    tiers = _read_tiers(book_dir)
+    tier_labels = ["Book", "Acts"]
+    tier_text = "\n\n".join(
+        f"## Tier {i + 1} — {tier_labels[i]}\n\n{t['content']}"
+        for i, t in enumerate(tiers[:2])
+        if t.get("approved") and t.get("content")
+    )
+
+    tier3_dir = os.path.join(book_dir, "tier3")
+    tier3_text = ""
+    if os.path.exists(tier3_dir):
+        act_files = sorted(f for f in os.listdir(tier3_dir) if f.startswith("act_") and f.endswith(".md"))
+        if act_files:
+            tier3_text = "\n\n".join(open(os.path.join(tier3_dir, f)).read() for f in act_files)
+
+    tier4_dir = os.path.join(book_dir, "tier4")
+    tier4_text = ""
+    if os.path.exists(tier4_dir):
+        ch_files = sorted(f for f in os.listdir(tier4_dir) if f.startswith("chapter_") and f.endswith(".md"))
+        if ch_files:
+            tier4_text = "\n\n".join(open(os.path.join(tier4_dir, f)).read() for f in ch_files)
+
+    context = f"## North Star\n\n{north_star}"
+    if skeleton_entities:
+        context += f"\n\n## Skeleton Bible — Authoritative Entity List\n\n{json.dumps(skeleton_entities, indent=2)}"
+    if tier_text:
+        context += f"\n\n{tier_text}"
+    if tier3_text:
+        context += f"\n\n## Tier 3 — Chapter Summaries\n\n{tier3_text}"
+    if tier4_text:
+        context += f"\n\n## Tier 4 — Scene Lists\n\n{tier4_text}"
+
+    messages = [{"role": "user", "content": (
+        "Build the entity ledger from the skeleton and story content below. "
+        "Preserve skeleton entity IDs and coreFacts exactly. Add eventLog, lifecycle, "
+        "and any new entities from the story content.\n\n" + context
+    )}]
+
+    full_text = await _call(provider, model, messages, prompt_store.get("consolidator", CONSOLIDATOR_SYSTEM), user, json_mode=True)
+    bible = _extract_json(full_text)
+    if "ledger" not in bible:
+        bible = {"ledger": bible}
+
+    bible["metadata"] = {
+        "consolidated_at": datetime.now(timezone.utc).isoformat(),
+        "phase2_status": "consolidated",
+        "phase2_approved": False,
+        "skeleton_entity_count": len(skeleton_entities),
+    }
+
+    with open(_bible_path(book_id), "w") as f:
+        json.dump(bible, f, indent=2)
+
+    from git import Repo
+    repo = Repo(book_dir)
+    repo.index.add(["bible.json"])
+    repo.index.commit("Phase 2 — Consolidate entity ledger (seeded from skeleton)")
+    log_cb(f"Consolidation complete — {len(bible.get('ledger', {}))} entities")
+
+
+async def _research_run_bg(book_id: str, user: str, log_cb) -> None:
+    provider = db.get_setting("agent_research_agent_provider")
+    model = db.get_setting("agent_research_agent_model")
+    if not provider or not model:
+        raise RuntimeError("Research Agent has no model assigned")
+
+    bible = _read_bible(book_id)
+    if not bible:
+        raise RuntimeError("Run consolidation first")
+
+    system_prompt = prompt_store.get("research", RESEARCH_SYSTEM)
+    original_ledger = bible.get("ledger", {})
+    enriched_ledger = {}
+    entities = list(original_ledger.items())
+    total = len(entities)
+
+    for idx, (eid, entity) in enumerate(entities):
+        log_cb(f"Enriching {eid} ({idx + 1}/{total})…")
+        messages = [{"role": "user", "content": json.dumps({eid: entity}, indent=2)}]
+        full_text = await _call(provider, model, messages, system_prompt, user, json_mode=True)
+        try:
+            result = _extract_json(full_text)
+            enriched_ledger[eid] = {**entity, **result.get(eid, result)}
+        except Exception:
+            log_cb(f"⚠ {eid}: parse failed — keeping original")
+            enriched_ledger[eid] = entity
+
+    bible["ledger"] = enriched_ledger
+    bible["metadata"]["phase2_status"] = "researched"
+    bible["metadata"]["researched_at"] = datetime.now(timezone.utc).isoformat()
+
+    book_dir = db.data_dir(book_id)
+    with open(_bible_path(book_id), "w") as f:
+        json.dump(bible, f, indent=2)
+
+    diff_path = os.path.join(book_dir, "bible_diff.json")
+    with open(diff_path, "w") as f:
+        json.dump({
+            "phase": 2,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "added_fields": {
+                eid: [k for k in enriched_ledger.get(eid, {}) if k not in original_ledger.get(eid, {})]
+                for eid in enriched_ledger
+            },
+        }, f, indent=2)
+
+    from git import Repo
+    repo = Repo(book_dir)
+    repo.index.add(["bible.json", "bible_diff.json"])
+    repo.index.commit("Phase 2 — Research & entity completion")
+    log_cb(f"Research complete — {len(enriched_ledger)} entities enriched")
+
+
+def _phase2_approve_sync(book_id: str) -> None:
+    bible = _read_bible(book_id)
+    if not bible:
+        raise RuntimeError("No bible.json found")
+    bible.setdefault("metadata", {})
+    bible["metadata"]["phase2_approved"] = True
+    bible["metadata"]["phase2_approved_at"] = datetime.now(timezone.utc).isoformat()
+    bible["metadata"]["phase2_status"] = "approved"
+    with open(_bible_path(book_id), "w") as f:
+        json.dump(bible, f, indent=2)
+    from git import Repo
+    repo = Repo(db.data_dir(book_id))
+    repo.index.add(["bible.json"])
+    repo.index.commit("Phase 2 approved — Writing Loop unlocked")
+
+
 @router.post("/books/{book_id}/phase2/approve")
 def phase2_approve(book_id: str):
     bible = _read_bible(book_id)

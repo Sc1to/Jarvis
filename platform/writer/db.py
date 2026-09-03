@@ -52,6 +52,17 @@ def _get_conn() -> sqlite3.Connection:
                 started_at      TEXT NOT NULL,
                 finished_at     TEXT
             );
+            CREATE TABLE IF NOT EXISTS auto_bible_jobs (
+                id           TEXT PRIMARY KEY,
+                book_id      TEXT NOT NULL,
+                user         TEXT NOT NULL,
+                status       TEXT NOT NULL DEFAULT 'running',
+                current_step TEXT,
+                log          TEXT NOT NULL DEFAULT '[]',
+                error        TEXT,
+                started_at   TEXT NOT NULL,
+                finished_at  TEXT
+            );
         """)
         # Migrate existing books table — ignore error if columns already exist
         for col in ("series_id TEXT", "series_order INTEGER"):
@@ -226,4 +237,50 @@ def append_job_log(job_id: str, msg: str) -> None:
     log = json.loads(row["log"])
     log.append(msg)
     conn.execute("UPDATE auto_write_jobs SET log = ? WHERE id = ?", (json.dumps(log), job_id))
+    conn.commit()
+
+
+# ── Auto-bible jobs ───────────────────────────────────────────────────────────
+
+def create_bible_job(book_id: str, user: str) -> str:
+    job_id = uuid.uuid4().hex[:12]
+    now = datetime.now(timezone.utc).isoformat()
+    _get_conn().execute(
+        "INSERT INTO auto_bible_jobs (id, book_id, user, status, log, started_at) VALUES (?, ?, ?, 'running', '[]', ?)",
+        (job_id, book_id, user, now),
+    )
+    _get_conn().commit()
+    return job_id
+
+
+def get_bible_job(job_id: str) -> dict | None:
+    row = _get_conn().execute("SELECT * FROM auto_bible_jobs WHERE id = ?", (job_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def get_active_bible_job(book_id: str) -> dict | None:
+    row = _get_conn().execute(
+        "SELECT * FROM auto_bible_jobs WHERE book_id = ? AND status = 'running' ORDER BY started_at DESC LIMIT 1",
+        (book_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def update_bible_job(job_id: str, **kwargs) -> None:
+    if not kwargs:
+        return
+    sets = ", ".join(f"{k} = ?" for k in kwargs)
+    vals = list(kwargs.values()) + [job_id]
+    _get_conn().execute(f"UPDATE auto_bible_jobs SET {sets} WHERE id = ?", vals)
+    _get_conn().commit()
+
+
+def append_bible_job_log(job_id: str, msg: str) -> None:
+    conn = _get_conn()
+    row = conn.execute("SELECT log FROM auto_bible_jobs WHERE id = ?", (job_id,)).fetchone()
+    if not row:
+        return
+    log = json.loads(row["log"])
+    log.append(msg)
+    conn.execute("UPDATE auto_bible_jobs SET log = ? WHERE id = ?", (json.dumps(log), job_id))
     conn.commit()
