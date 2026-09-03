@@ -221,13 +221,29 @@ def consolidate(book_id: str, user: str = Depends(current_user)):
 
         yield f'data: {json.dumps({"type": "status", "message": "Running Bible Consolidator…"})}\n\n'
 
+        input_chars = sum(len(m.get("content", "")) for m in messages)
+        log.info("Bible Consolidator: provider=%s model=%s input_chars=%d", provider, model, input_chars)
+
         full_text = ""
         try:
             async for token in llm.provider_tokens(provider, model, messages, prompt_store.get("consolidator", CONSOLIDATOR_SYSTEM), user, json_mode=True):
                 full_text += token
                 yield f'data: {json.dumps({"type": "token", "content": token})}\n\n'
         except Exception as e:
+            log.error("Bible Consolidator stream error: %s", e)
             yield f'data: {json.dumps({"type": "error", "message": str(e)})}\n\n'
+            return
+
+        log.info("Bible Consolidator: received %d chars from model", len(full_text))
+
+        if not full_text.strip():
+            msg = (
+                f"Bible Consolidator returned an empty response (provider={provider}, model={model}). "
+                f"Input was ~{input_chars:,} chars — the model may have hit its context limit. "
+                "Try a model with a larger context window, or reduce tier content."
+            )
+            log.error(msg)
+            yield f'data: {json.dumps({"type": "error", "message": msg})}\n\n'
             return
 
         try:
