@@ -3,7 +3,9 @@ import os
 import re
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Depends
+import asyncio
+
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -766,12 +768,12 @@ def approve_chapter(book_id: str, chapter: int, user: str = Depends(current_user
 # ── Auto-write job endpoints ───────────────────────────────────────────────────
 
 @router.post("/books/{book_id}/phase3/auto-write")
-async def start_auto_write(book_id: str, background_tasks: BackgroundTasks, user: str = Depends(current_user)):
+async def start_auto_write(book_id: str, user: str = Depends(current_user)):
     existing = db.get_active_auto_write_job(book_id)
     if existing:
         return {"job_id": existing["id"], "resumed": True}
     job_id = db.create_auto_write_job(book_id, user)
-    background_tasks.add_task(_run_auto_write, book_id, job_id, user)
+    asyncio.create_task(_run_auto_write(book_id, job_id, user))
     return {"job_id": job_id, "resumed": False}
 
 @router.get("/books/{book_id}/phase3/auto-write/status")
