@@ -232,6 +232,10 @@ export default function BibleWorkshopPage() {
     if (s === 'approved' || s === 'researched' || s === 'consolidated') setP2Step('done')
     else if (s === 'consolidating') setP2Step('consolidating')
     else if (s === 'researching') setP2Step('researching')
+    else if (s === 'interrupted') {
+      setP2Step('idle')
+      setP2Log(prev => prev ? prev + '\n⚠ Previous run was interrupted (server restart).\n' : '')
+    }
   }, [phase2Status])
 
   // Populate log from server when a job is running and we have no local log (e.g. after page refresh)
@@ -846,6 +850,12 @@ export default function BibleWorkshopPage() {
       // Don't reset to idle — the server status will reflect the actual state
       await refetchP2Status()
     }
+  }
+
+  async function cancelP2() {
+    await fetch(`${API}/books/${bookId}/phase2/cancel`, { method: 'POST' })
+    setP2Log(prev => prev + '\n⛔ Abort requested — stopping after current entity…\n')
+    // Server will update the status; polling will pick it up
   }
 
   async function approveP2() {
@@ -1571,6 +1581,9 @@ export default function BibleWorkshopPage() {
                             ? <><Loader2 size={12} className="animate-spin mr-1" />Running…</>
                             : bibleExists ? 'Re-run' : 'Run'}
                         </Button>
+                        {p2Step === 'consolidating' && (
+                          <Button size="sm" variant="destructive" onClick={cancelP2}>Abort</Button>
+                        )}
                         {bibleExists && p2Step !== 'consolidating' && (
                           <button className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2"
                             onClick={() => runP2('consolidate', 'Consolidate', 'consolidating', true)}>
@@ -1607,6 +1620,9 @@ export default function BibleWorkshopPage() {
                             ? <><Loader2 size={12} className="animate-spin mr-1" />Running…</>
                             : (p2Status === 'researched' || p2Status === 'approved') ? 'Re-run' : 'Run'}
                         </Button>
+                        {p2Step === 'researching' && (
+                          <Button size="sm" variant="destructive" onClick={cancelP2}>Abort</Button>
+                        )}
                         {(p2Status === 'researched' || p2Status === 'approved') && p2Step !== 'researching' && (
                           <button className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2"
                             onClick={() => runP2('run', 'Research', 'researching', true)}>

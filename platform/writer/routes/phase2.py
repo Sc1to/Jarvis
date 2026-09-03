@@ -56,6 +56,13 @@ CRITICAL OUTPUT RULES — no exceptions:
 # Tasks run independently; the queue accumulates messages if no consumer is connected.
 _bg_queues: dict[str, asyncio.Queue] = {}
 
+# Set of job IDs that have been cancelled — tasks check this and stop gracefully.
+_cancelled_jobs: set[str] = set()
+
+
+def _is_cancelled(job_id: str) -> bool:
+    return job_id in _cancelled_jobs
+
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -241,10 +248,18 @@ def phase2_status(book_id: str):
     consolidated_entities = meta.get("consolidated_entities", [])
     researched_entities = meta.get("researched_entities", [])
 
+    # Cross-check transient states against live DB job — prevents stale "consolidating"
+    # or "researching" after server restart kills the background task.
+    raw_status = meta.get("phase2_status", "idle")
+    if raw_status in ("consolidating", "researching") and not active_job:
+        effective_status = "interrupted"
+    else:
+        effective_status = raw_status
+
     return {
         "phase1_complete": phase1_complete,
         "bible_exists": bible_exists,
-        "phase2_status": meta.get("phase2_status", "idle"),
+        "phase2_status": effective_status,
         "phase2_approved": meta.get("phase2_approved", False),
         "entity_count": len(bible.get("ledger", {})) if bible else 0,
         "consolidated_count": len(consolidated_entities),
@@ -331,6 +346,16 @@ async def _consolidate_task(book_id: str, user: str, job_id: str, queue: asyncio
 
     # ── Per-entity enrichment ──────────────────────────────────────────────────
     for idx, ent in enumerate(skeleton_entities):
+        if _is_cancelled(job_id):
+            cancel_msg = "⛔ Cancelled by user."
+            await queue.put({"type": "status", "message": cancel_msg})
+            db.append_bible_job_log(job_id, cancel_msg)
+            db.update_bible_job(job_id, status="cancelled", finished_at=datetime.now(timezone.utc).isoformat())
+            metadata["phase2_status"] = "consolidated" if done_set else "idle"
+            _checkpoint_bible(book_id, ledger, metadata)
+            await queue.put(None)
+            return
+
         eid = ent.get("id", f"ENT_{idx:03d}")
         if eid in done_set:
             continue  # already successfully processed in a prior run
@@ -467,6 +492,16 @@ async def _research_task(book_id: str, user: str, job_id: str, queue: asyncio.Qu
     system_prompt = prompt_store.get("research", RESEARCH_SYSTEM)
 
     for idx, (eid, entity) in enumerate(entities):
+        if _is_cancelled(job_id):
+            cancel_msg = "⛔ Cancelled by user."
+            await queue.put({"type": "status", "message": cancel_msg})
+            db.append_bible_job_log(job_id, cancel_msg)
+            db.update_bible_job(job_id, status="cancelled", finished_at=datetime.now(timezone.utc).isoformat())
+            metadata["phase2_status"] = "researched" if done_set else "consolidated"
+            _checkpoint_bible(book_id, enriched_ledger, metadata)
+            await queue.put(None)
+            return
+
         if eid in done_set:
             continue
 
@@ -618,6 +653,16 @@ def _make_sse_generator(queue: asyncio.Queue):
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
+
+@router.post("/books/{book_id}/phase2/cancel")
+def phase2_cancel(book_id: str, user: str = Depends(current_user)):
+    """Signal the running Phase 2 job to stop after the current entity finishes."""
+    active = db.get_active_bible_job(book_id)
+    if not active:
+        return {"ok": False, "reason": "No running job"}
+    _cancelled_jobs.add(active["id"])
+    return {"ok": True, "job_id": active["id"]}
+
 
 @router.post("/books/{book_id}/phase2/consolidate")
 async def consolidate(book_id: str, force: bool = False, user: str = Depends(current_user)):
