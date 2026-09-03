@@ -3,7 +3,7 @@ import os
 import re
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends
 from fastapi.responses import StreamingResponse
 from git import Repo
 from pydantic import BaseModel
@@ -1293,3 +1293,527 @@ def edit_scene(book_id: str, chapter_num: int, scene_num: int, body: EditSceneBo
 
     return StreamingResponse(generate(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+# ── Auto-Bible background implementation ──────────────────────────────────────
+
+async def _bg_call(provider: str, model: str, messages: list, system: str, user: str, json_mode: bool = False) -> str:
+    result = ""
+    async for token in llm.provider_tokens(provider, model, messages, system, user, json_mode=json_mode):
+        result += token
+    return result
+
+
+async def _bg_run_tier12(book_id: str, tier: int, user: str, log_cb) -> str:
+    """Run Tier 1 or Tier 2 using the same context as the SSE endpoint."""
+    provider = db.get_setting("agent_bible_agent_provider")
+    model = db.get_setting("agent_bible_agent_model")
+
+    book_dir = db.data_dir(book_id)
+    ns_path = os.path.join(book_dir, "north_star.md")
+    north_star = open(ns_path).read() if os.path.exists(ns_path) else "[North Star not yet written]"
+
+    idx = tier - 1
+    tiers = _read_tiers(book_id)
+    context = f"## North Star\n\n{north_star}"
+    for i in range(idx):
+        t = tiers[i]
+        if t.get("approved") and t.get("content"):
+            context += f"\n\n## Approved Tier {i + 1} — {TIER_LABELS[i]}\n\n{t['content']}"
+
+    tier_key = f"tier_{TIER_LABELS[idx].lower()}"
+    messages = [{"role": "user", "content": f"{context}\n\n---\n\n{prompt_store.get(tier_key, TIER_INSTRUCTIONS[idx])}"}]
+    system = prompt_store.get("bible_agent", BIBLE_AGENT_SYSTEM)
+
+    log_cb(f"Running Tier {tier} ({TIER_LABELS[idx]})...")
+    return await _bg_call(provider, model, messages, system, user)
+
+
+def _bg_approve_tier12(book_id: str, tier: int, content: str) -> None:
+    book_dir = db.ensure_data_dir(book_id)
+    tiers = _read_tiers(book_id)
+    tiers[tier - 1] = {"content": content, "approved": True}
+    dp = _draft_path(book_id, tier)
+    if os.path.exists(dp):
+        os.remove(dp)
+    path = os.path.join(book_dir, "tiers.json")
+    with open(path, "w") as f:
+        json.dump(tiers, f, indent=2)
+    try:
+        repo = Repo(book_dir)
+        repo.index.add(["tiers.json"])
+        repo.index.commit(f"Auto-approve Bible Tier {tier} — {TIER_LABELS[tier - 1]}")
+    except Exception:
+        pass
+
+
+async def _bg_mini_consolidate(book_id: str, user: str, log_cb) -> None:
+    """Extract entity skeleton from North Star + Tier 2 (same context as SSE endpoint)."""
+    provider = db.get_setting("agent_bible_agent_provider")
+    model = db.get_setting("agent_bible_agent_model")
+
+    book_dir = db.data_dir(book_id)
+    ns_path = os.path.join(book_dir, "north_star.md")
+    north_star = open(ns_path).read() if os.path.exists(ns_path) else "[North Star not yet written]"
+
+    tiers = _read_tiers(book_id)
+    tier2 = tiers[1].get("content") or ""
+
+    messages = [{"role": "user", "content": (
+        "Fill in the JSON template below using ONLY the source material. "
+        "Output the completed JSON and nothing else — no preamble, no explanation.\n\n"
+        f"## North Star\n\n{north_star}\n\n"
+        f"## Act Breakdown (Tier 2)\n\n{tier2}\n\n"
+        "Fill in this template:\n"
+        '{\n'
+        '  "acts": [{"number": 1, "title": "act title from text"}, ...],\n'
+        '  "entities": [\n'
+        '    {"id": "CHAR_001", "name": "full name", "type": "character", "aliases": [], "coreFacts": {}, "appearsInActs": [1]},\n'
+        '    {"id": "LOC_001", "name": "place name", "type": "location", "aliases": [], "coreFacts": {}, "appearsInActs": [1]}\n'
+        '  ]\n'
+        '}'
+    )}]
+    system = prompt_store.get("mini_consolidator", MINI_CONSOLIDATOR_SYSTEM)
+
+    log_cb("Running mini-consolidate (entity skeleton)...")
+    full_text = await _bg_call(provider, model, messages, system, user)
+
+    try:
+        skeleton = _extract_json_skeleton(full_text)
+    except Exception as e:
+        raise RuntimeError(f"Mini-consolidate JSON parse error: {e}")
+
+    with open(_skeleton_path(book_id), "w") as f:
+        json.dump(skeleton, f, indent=2)
+    log_cb(f"Mini-consolidate done — {len(skeleton.get('entities', []))} entities, {len(skeleton.get('acts', []))} acts.")
+
+
+async def _bg_run_tier3_act(book_id: str, act: int, user: str, log_cb) -> str:
+    """Run Tier 3 for one act using the same context as the SSE endpoint."""
+    provider = db.get_setting("agent_bible_agent_provider")
+    model = db.get_setting("agent_bible_agent_model")
+
+    book_dir = db.data_dir(book_id)
+    ns_path = os.path.join(book_dir, "north_star.md")
+    north_star = open(ns_path).read() if os.path.exists(ns_path) else "[North Star not yet written]"
+
+    tiers = _read_tiers(book_id)
+    tier1 = tiers[0].get("content") or ""
+    tier2 = tiers[1].get("content") or ""
+
+    skeleton = _read_skeleton(book_id)
+    entity_summary = _format_skeleton_for_context(skeleton)
+    current_act = next((a for a in skeleton.get("acts", []) if a["number"] == act), None)
+    act_title = current_act.get("title", f"Act {act}") if current_act else f"Act {act}"
+
+    status = _read_tier3_status(book_id)
+    prior_acts_text = ""
+    for act_info in status.get("acts", []):
+        if act_info["act"] < act and act_info.get("approved"):
+            act_path = _tier3_act_path(book_id, act_info["act"])
+            if os.path.exists(act_path):
+                prior_acts_text += f"\n\n## Approved Act {act_info['act']} — {act_info['title']}\n\n{open(act_path).read()}"
+
+    context = f"## North Star\n\n{north_star}"
+    if tier1:
+        context += f"\n\n## Book Synopsis (Tier 1)\n\n{tier1}"
+    if tier2:
+        context += f"\n\n## Act Breakdown (Tier 2)\n\n{tier2}"
+    if entity_summary:
+        context += f"\n\n## Story Bible — Entities\n\n{entity_summary}"
+    if prior_acts_text:
+        context += prior_acts_text
+    context += f"\n\n## Current Act\n\nAct {act} — {act_title}"
+
+    start_chapter = 1 + sum(
+        len(a.get("chapters", []))
+        for a in status.get("acts", [])
+        if a["act"] < act
+    )
+    context += f"\n\n## Chapter Numbering\n\nChapters are numbered continuously across all acts. This act's first chapter is Chapter {start_chapter}."
+
+    instruction = prompt_store.get("tier_chapters", TIER_INSTRUCTIONS[2])
+    messages = [{"role": "user", "content": f"{context}\n\n---\n\n{instruction}"}]
+    system = prompt_store.get("bible_agent", BIBLE_AGENT_SYSTEM)
+
+    log_cb(f"Running Tier 3 Act {act} (chapter summaries)...")
+    return await _bg_call(provider, model, messages, system, user)
+
+
+def _bg_approve_tier3_act(book_id: str, act: int, content: str) -> list:
+    """Save, update status, commit. Returns parsed chapters list."""
+    os.makedirs(_tier3_dir(book_id), exist_ok=True)
+    with open(_tier3_act_path(book_id, act), "w") as f:
+        f.write(content)
+
+    chapters = _parse_chapters(content)
+    status = _read_tier3_status(book_id)
+    for act_info in status.get("acts", []):
+        if act_info["act"] == act:
+            act_info["approved"] = True
+            act_info["chapters"] = chapters
+            break
+    _save_tier3_status(book_id, status)
+
+    book_dir = db.data_dir(book_id)
+    try:
+        repo = Repo(book_dir)
+        rel_act = os.path.relpath(_tier3_act_path(book_id, act), book_dir)
+        rel_status = os.path.relpath(_tier3_status_path(book_id), book_dir)
+        repo.index.add([rel_act, rel_status])
+        repo.index.commit(f"Auto-approve Tier 3 Act {act} — {len(chapters)} chapters parsed")
+    except Exception:
+        pass
+    return chapters
+
+
+async def _bg_run_tier4_chapter(book_id: str, chapter: int, user: str, log_cb) -> str:
+    """Run Tier 4 for one chapter using the same context as the SSE endpoint."""
+    provider = db.get_setting("agent_bible_agent_provider")
+    model = db.get_setting("agent_bible_agent_model")
+
+    book_dir = db.data_dir(book_id)
+    ns_path = os.path.join(book_dir, "north_star.md")
+    north_star = open(ns_path).read() if os.path.exists(ns_path) else "[North Star not yet written]"
+
+    skeleton = _read_skeleton(book_id)
+    entity_summary = _format_skeleton_for_context(skeleton)
+    chapter_summary = _get_chapter_summary(book_id, chapter)
+    prev_summary = _get_chapter_summary(book_id, chapter - 1) if chapter > 1 else ""
+    next_summary = _get_chapter_summary(book_id, chapter + 1)
+
+    tier4_status = _read_tier4_status(book_id)
+    chapter_info = next((c for c in tier4_status.get("chapters", []) if c["number"] == chapter), None)
+    chapter_title = chapter_info.get("title", f"Chapter {chapter}") if chapter_info else f"Chapter {chapter}"
+
+    context = f"## North Star\n\n{north_star}"
+    if entity_summary:
+        context += f"\n\n## Story Bible — Entities\n\n{entity_summary}"
+    if prev_summary:
+        context += f"\n\n## Previous Chapter (Chapter {chapter - 1}) — for continuity\n\n{prev_summary}"
+    if chapter_summary:
+        context += f"\n\n## Current Chapter\n\n{chapter_summary}"
+    else:
+        context += f"\n\n## Current Chapter\n\nChapter {chapter} — {chapter_title}"
+    if next_summary:
+        context += f"\n\n## Next Chapter (Chapter {chapter + 1}) — forward context\n\n{next_summary}"
+
+    start_scene = 1 + sum(
+        len(ch.get("scenes", []))
+        for ch in tier4_status.get("chapters", [])
+        if ch["number"] < chapter
+    )
+    context += f"\n\n## Scene Numbering\n\nScenes are numbered continuously across the whole novel. This chapter's first scene is Scene {start_scene}."
+
+    instruction = prompt_store.get("tier_scenes", TIER_INSTRUCTIONS[3])
+    messages = [{"role": "user", "content": f"{context}\n\n---\n\n{instruction}"}]
+    system = prompt_store.get("bible_agent", BIBLE_AGENT_SYSTEM)
+
+    log_cb(f"Running Tier 4 Chapter {chapter} (scene list)...")
+    return await _bg_call(provider, model, messages, system, user)
+
+
+def _bg_approve_tier4_chapter(book_id: str, chapter: int, content: str) -> list:
+    """Save plan, parse scenes, update status, commit. Returns scenes list."""
+    os.makedirs(_tier4_dir(book_id), exist_ok=True)
+    with open(_tier4_chapter_path(book_id, chapter), "w") as f:
+        f.write(content)
+
+    scene_pattern = re.compile(r'^### Scene (\d+)\s*[—–:\-]+\s*(.+)', re.MULTILINE)
+    scenes = [
+        {"number": int(m.group(1)), "title": m.group(2).strip(), "approved": False}
+        for m in scene_pattern.finditer(content)
+    ]
+    if not scenes:
+        raise RuntimeError(f"No scene headers found in Tier 4 Chapter {chapter} output — ensure agent uses '### Scene N — Title' format")
+
+    status = _read_tier4_status(book_id)
+    for ch in status.get("chapters", []):
+        if ch["number"] == chapter:
+            ch["scenes"] = scenes
+            break
+    _save_tier4_status(book_id, status)
+
+    book_dir = db.data_dir(book_id)
+    try:
+        repo = Repo(book_dir)
+        rel_chapter = os.path.relpath(_tier4_chapter_path(book_id, chapter), book_dir)
+        rel_status = os.path.relpath(_tier4_status_path(book_id), book_dir)
+        repo.index.add([rel_chapter, rel_status])
+        repo.index.commit(f"Auto-approve scene plan — Chapter {chapter} ({len(scenes)} scenes)")
+    except Exception:
+        pass
+    return scenes
+
+
+async def _bg_run_scene_brief(book_id: str, chapter_num: int, scene_num: int, user: str, log_cb) -> str:
+    """Run a scene brief using the same context as the SSE endpoint."""
+    provider = db.get_setting("agent_bible_agent_provider")
+    model = db.get_setting("agent_bible_agent_model")
+
+    book_dir = db.data_dir(book_id)
+    ns_path = os.path.join(book_dir, "north_star.md")
+    north_star = open(ns_path).read() if os.path.exists(ns_path) else ""
+
+    skeleton = _read_skeleton(book_id)
+    entity_summary = _format_skeleton_for_context(skeleton)
+    chapter_summary = _get_chapter_summary(book_id, chapter_num)
+
+    plan_path = _tier4_chapter_path(book_id, chapter_num)
+    scene_plan_section = ""
+    if os.path.exists(plan_path):
+        plan = open(plan_path).read()
+        m = re.search(
+            r'^(### Scene ' + str(scene_num) + r'\s*[—–:\-].*?)(?=^### Scene \d+|\Z)',
+            plan, re.MULTILINE | re.DOTALL
+        )
+        if m:
+            scene_plan_section = m.group(1).strip()
+
+    prev_scene_tail = ""
+    if scene_num > 1:
+        prev_path = _tier4_scene_path(book_id, chapter_num, scene_num - 1)
+        if os.path.exists(prev_path):
+            text = open(prev_path).read()
+            prev_scene_tail = text[-600:] if len(text) > 600 else text
+
+    context = f"## North Star\n\n{north_star}"
+    if entity_summary:
+        context += f"\n\n## Story Bible — Entities\n\n{entity_summary}"
+    if chapter_summary:
+        context += f"\n\n## Chapter Summary\n\n{chapter_summary}"
+    if prev_scene_tail:
+        context += f"\n\n## Previous Scene (ending)\n\n…{prev_scene_tail}"
+    context += f"\n\n## Scene to Write\n\n{scene_plan_section or f'Scene {scene_num} of Chapter {chapter_num}'}"
+
+    messages = [{"role": "user", "content": context + "\n\nWrite the scene brief now. Use ONLY the 7 section headers from the instructions. Do NOT write prose sentences or paragraphs. Bullets and short phrases only."}]
+
+    log_cb(f"Running scene brief Ch{chapter_num} Sc{scene_num}...")
+    return await _bg_call(provider, model, messages, SCENE_WRITER_SYSTEM, user)
+
+
+async def _bg_approve_scene_brief(book_id: str, chapter_num: int, scene_num: int, content: str, user: str, log_cb) -> None:
+    """Save scene brief, update status, bible sync, commit."""
+    os.makedirs(_tier4_dir(book_id), exist_ok=True)
+    with open(_tier4_scene_path(book_id, chapter_num, scene_num), "w") as f:
+        f.write(content)
+
+    # Update scene status
+    status = _read_tier4_status(book_id)
+    chapter_complete = False
+    for ch in status.get("chapters", []):
+        if ch["number"] == chapter_num:
+            for s in ch.get("scenes", []):
+                if s["number"] == scene_num:
+                    s["approved"] = True
+                    break
+            if all(s.get("approved") for s in ch.get("scenes", [])):
+                ch["approved"] = True
+                chapter_complete = True
+            break
+    _save_tier4_status(book_id, status)
+
+    # Bible sync — extract new entities (2 attempts)
+    provider = db.get_setting("agent_bible_agent_provider")
+    model = db.get_setting("agent_bible_agent_model")
+    book_dir = db.data_dir(book_id)
+    skeleton = _read_skeleton(book_id)
+
+    tier3_status = _read_tier3_status(book_id)
+    act_num = next(
+        (a["act"] for a in tier3_status.get("acts", [])
+         for ch in a.get("chapters", []) if ch["number"] == chapter_num),
+        None
+    )
+
+    sync_messages = [{"role": "user", "content": (
+        f"## Current Entity Skeleton\n\n{json.dumps(skeleton.get('entities', []), indent=2)}\n\n"
+        f"## Approved Scene (Chapter {chapter_num}, Scene {scene_num})\n\n{content}\n\n"
+        "List any new entities in this scene not already in the skeleton."
+    )}]
+
+    new_entity_count = 0
+    for attempt in range(2):
+        log_cb(f"Bible sync Ch{chapter_num} Sc{scene_num} attempt {attempt + 1}...")
+        full_sync = ""
+        try:
+            async for token in llm.provider_tokens(provider, model, sync_messages, SCENE_BIBLE_SYNC_SYSTEM, user):
+                full_sync += token
+            result = _extract_json_skeleton(full_sync)
+            new_entities = result.get("new_entities", [])
+            if new_entities:
+                if act_num is not None:
+                    for e in new_entities:
+                        if act_num not in e.get("appearsInActs", []):
+                            e.setdefault("appearsInActs", []).append(act_num)
+                skeleton.setdefault("entities", []).extend(new_entities)
+                new_entity_count = len(new_entities)
+            log_cb(f"Bible sync Ch{chapter_num} Sc{scene_num} ok (+{new_entity_count} entities)")
+            break
+        except Exception as exc:
+            log_cb(f"Bible sync attempt {attempt + 1} failed: {exc}")
+
+    try:
+        repo = Repo(book_dir)
+        rel_scene = os.path.relpath(_tier4_scene_path(book_id, chapter_num, scene_num), book_dir)
+        rel_status = os.path.relpath(_tier4_status_path(book_id), book_dir)
+        files_to_add = [rel_scene, rel_status]
+        if new_entity_count > 0:
+            with open(_skeleton_path(book_id), "w") as f:
+                json.dump(skeleton, f, indent=2)
+            files_to_add.append(os.path.relpath(_skeleton_path(book_id), book_dir))
+        repo.index.add(files_to_add)
+        repo.index.commit(f"Auto-approve Ch{chapter_num} Sc{scene_num}{f' (+{new_entity_count} entities)' if new_entity_count else ''}")
+    except Exception:
+        pass
+
+
+async def _run_auto_bible(book_id: str, job_id: str, user: str) -> None:
+    def log_cb(msg: str) -> None:
+        db.append_bible_job_log(job_id, msg)
+
+    def is_cancelled() -> bool:
+        job = db.get_bible_job(job_id)
+        return job is None or job.get("status") == "cancelled"
+
+    def step(name: str) -> None:
+        db.update_bible_job(job_id, current_step=name)
+
+    try:
+        # ── Tier 1 ─────────────────────────────────────────────────────────────
+        tiers = _read_tiers(book_id)
+        if not tiers[0].get("approved"):
+            if is_cancelled():
+                return
+            step("tier1")
+            content = await _bg_run_tier12(book_id, 1, user, log_cb)
+            _bg_approve_tier12(book_id, 1, content)
+            log_cb("Tier 1 approved.")
+        else:
+            log_cb("Tier 1 already approved — skipping.")
+
+        # ── Tier 2 ─────────────────────────────────────────────────────────────
+        tiers = _read_tiers(book_id)
+        if not tiers[1].get("approved"):
+            if is_cancelled():
+                return
+            step("tier2")
+            content = await _bg_run_tier12(book_id, 2, user, log_cb)
+            _bg_approve_tier12(book_id, 2, content)
+            log_cb("Tier 2 approved.")
+        else:
+            log_cb("Tier 2 already approved — skipping.")
+
+        # ── Mini-consolidate ───────────────────────────────────────────────────
+        if not os.path.exists(_skeleton_path(book_id)):
+            if is_cancelled():
+                return
+            step("mini_consolidate")
+            await _bg_mini_consolidate(book_id, user, log_cb)
+        else:
+            log_cb("Entity skeleton already exists — skipping mini-consolidate.")
+
+        # ── Tier 3 (per act) ───────────────────────────────────────────────────
+        skeleton = _read_skeleton(book_id)
+        acts = [a["number"] for a in skeleton.get("acts", [])] or [1, 2, 3]
+
+        for act in acts:
+            status = _read_tier3_status(book_id)
+            act_info = next((a for a in status.get("acts", []) if a["act"] == act), None)
+            if act_info and act_info.get("approved"):
+                log_cb(f"Tier 3 Act {act} already approved — skipping.")
+                continue
+            if is_cancelled():
+                return
+            step(f"tier3_act{act}")
+            content = await _bg_run_tier3_act(book_id, act, user, log_cb)
+            chapters = _bg_approve_tier3_act(book_id, act, content)
+            log_cb(f"Tier 3 Act {act} approved — {len(chapters)} chapters.")
+
+        # ── Tier 4 (per chapter) ───────────────────────────────────────────────
+        tier4_status = _read_tier4_status(book_id)
+        all_chapters = [ch["number"] for ch in tier4_status.get("chapters", [])]
+
+        for chapter in all_chapters:
+            tier4_status = _read_tier4_status(book_id)
+            ch_info = next((c for c in tier4_status.get("chapters", []) if c["number"] == chapter), None)
+            # Approved here means scenes have been populated (not all scenes approved)
+            if ch_info and ch_info.get("scenes"):
+                log_cb(f"Tier 4 Chapter {chapter} plan already locked — skipping.")
+                continue
+            if is_cancelled():
+                return
+            step(f"tier4_ch{chapter}")
+            content = await _bg_run_tier4_chapter(book_id, chapter, user, log_cb)
+            try:
+                scenes = _bg_approve_tier4_chapter(book_id, chapter, content)
+                log_cb(f"Tier 4 Chapter {chapter} locked — {len(scenes)} scenes.")
+            except RuntimeError as e:
+                log_cb(f"WARNING: {e} — skipping chapter {chapter}")
+                continue
+
+        # ── Scene briefs (per chapter × scene) ────────────────────────────────
+        tier4_status = _read_tier4_status(book_id)
+        for ch_info in tier4_status.get("chapters", []):
+            chapter = ch_info["number"]
+            for scene_info in ch_info.get("scenes", []):
+                scene_num = scene_info["number"]
+                brief_path = _tier4_scene_path(book_id, chapter, scene_num)
+                if os.path.exists(brief_path):
+                    log_cb(f"Scene brief Ch{chapter} Sc{scene_num} exists — skipping.")
+                    continue
+                if is_cancelled():
+                    return
+                step(f"scene_brief_ch{chapter}_sc{scene_num}")
+                content = await _bg_run_scene_brief(book_id, chapter, scene_num, user, log_cb)
+                await _bg_approve_scene_brief(book_id, chapter, scene_num, content, user, log_cb)
+
+        db.update_bible_job(job_id, status="done", finished_at=datetime.now(timezone.utc).isoformat())
+        log_cb("Auto-bible complete.")
+
+    except Exception as exc:
+        db.update_bible_job(job_id, status="error", error=str(exc),
+                            finished_at=datetime.now(timezone.utc).isoformat())
+        log_cb(f"Error: {exc}")
+
+
+# ── Auto-Bible endpoints ───────────────────────────────────────────────────────
+
+@router.post("/books/{book_id}/phase1/auto-bible", status_code=202)
+async def start_auto_bible(book_id: str, background_tasks: BackgroundTasks, user: str = Depends(current_user)):
+    if not db.get_book(book_id):
+        from fastapi import HTTPException
+        raise HTTPException(404, "Book not found")
+    existing = db.get_active_bible_job(book_id)
+    if existing:
+        return {"job_id": existing["id"], "status": "already_running"}
+    job_id = db.create_bible_job(book_id, user)
+    background_tasks.add_task(_run_auto_bible, book_id, job_id, user)
+    return {"job_id": job_id, "status": "started"}
+
+
+@router.get("/books/{book_id}/phase1/auto-bible/status")
+def get_auto_bible_status(book_id: str, user: str = Depends(current_user)):
+    job = db.get_active_bible_job(book_id)
+    if not job:
+        from fastapi import HTTPException
+        raise HTTPException(404, "No active auto-bible job")
+    return {
+        "job_id": job["id"],
+        "status": job["status"],
+        "current_step": job["current_step"],
+        "log": json.loads(job["log"]),
+        "started_at": job["started_at"],
+        "finished_at": job["finished_at"],
+        "error": job["error"],
+    }
+
+
+@router.post("/books/{book_id}/phase1/auto-bible/cancel")
+def cancel_auto_bible(book_id: str, user: str = Depends(current_user)):
+    job = db.get_active_bible_job(book_id)
+    if not job:
+        from fastapi import HTTPException
+        raise HTTPException(404, "No active auto-bible job")
+    db.update_bible_job(job["id"], status="cancelled", finished_at=datetime.now(timezone.utc).isoformat())
+    return {"ok": True}
