@@ -265,7 +265,8 @@ def consolidate(book_id: str, user: str = Depends(current_user)):
                 for neid, nent in _extract_json(full_text).items():
                     if neid not in ledger:
                         ledger[neid] = nent
-                        yield f'data: {json.dumps({"type": "status", "message": f"  ✓ discovered {neid}: {nent.get(\"name\", \"?\")}"})}\n\n'
+                        ename = nent.get("name", "?")
+                        yield f'data: {json.dumps({"type": "status", "message": f"  ✓ discovered {neid}: {ename}"})}\n\n'
         except Exception as e:
             yield f'data: {json.dumps({"type": "status", "message": f"⚠ Discovery pass skipped ({e})"})}\n\n'
 
