@@ -5,6 +5,7 @@ Each function returns a non-empty string or "" (empty blocks are filtered out
 by assemble_writer_context before joining). This makes it trivial to add or
 remove a block from any agent's context without touching the assembly call.
 """
+import json
 
 
 def block_writing_rules(north_star: str, writing_prefs: str) -> str:
@@ -16,14 +17,39 @@ def block_writing_rules(north_star: str, writing_prefs: str) -> str:
     return "\n\n".join(parts)
 
 
-_LEDGER_CHAR_LIMIT = 80_000  # ~20k tokens — enough for hundreds of entities
+def filter_ledger_for_scene(ledger_json: str, scene_context: str) -> str:
+    """Return a JSON string containing only entities whose name is mentioned in scene_context.
+
+    Matches on any word from the entity name that is 3+ characters long, so
+    "Willem Decker" is included if the context mentions "Willem" or "Decker".
+    Falls back to the full ledger if nothing matches (shouldn't happen in
+    practice since the brief always names the POV character).
+    """
+    if not ledger_json or ledger_json in ("{}", "null", ""):
+        return ledger_json
+    try:
+        ledger = json.loads(ledger_json)
+    except Exception:
+        return ledger_json
+
+    context_lower = scene_context.lower()
+    filtered = {}
+    for eid, entity in ledger.items():
+        name = entity.get("name", "")
+        if not name:
+            continue
+        name_parts = [p for p in name.lower().split() if len(p) >= 3]
+        if any(part in context_lower for part in name_parts):
+            filtered[eid] = entity
+
+    if not filtered:
+        return ledger_json  # nothing matched — send full ledger as safety net
+    return json.dumps(filtered, indent=2)
 
 
 def block_active_entities(ledger_json: str) -> str:
     if not ledger_json or ledger_json in ("{}", "null", ""):
         return ""
-    if len(ledger_json) > _LEDGER_CHAR_LIMIT:
-        ledger_json = ledger_json[:_LEDGER_CHAR_LIMIT] + "\n... [ledger truncated for context length]"
     return f"## Entity Ledger\n\n{ledger_json}"
 
 
@@ -97,9 +123,13 @@ def assemble_writer_context(
     prior_bridge: str = "",
     rewrite_note: str = "",
 ) -> str:
+    # Filter the ledger to only entities referenced in this scene's context
+    scene_context = f"{brief} {entry_state} {exit_state} {prior_text}"
+    filtered_ledger = filter_ledger_for_scene(ledger_json, scene_context)
+
     blocks = [
         block_writing_rules(north_star, writing_prefs),
-        block_active_entities(ledger_json),
+        block_active_entities(filtered_ledger),
         block_story_history(prior_text, prior_bridge),
         block_foreshadowing(),
         block_scene_contract(chapter, scene_num, brief, entry_state, exit_state, rewrite_note),
