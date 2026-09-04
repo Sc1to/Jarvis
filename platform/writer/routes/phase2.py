@@ -143,22 +143,31 @@ def _build_story_context(book_dir: str) -> str:
     return "\n\n".join(parts)
 
 
+def _looks_like_json(text: str) -> bool:
+    """Return True if the response plausibly contains a JSON object worth parsing."""
+    stripped = text.strip()
+    return "{" in stripped and len(stripped) >= 20
+
+
 async def _llm_call_with_json_fallback(
     provider: str, model: str, messages: list, system: str, user: str
 ) -> tuple[str, bool]:
-    """Call the LLM with json_mode=True, falling back to plain mode if the response is empty.
+    """Call the LLM with json_mode=True, falling back to plain mode when needed.
 
-    Returns (full_text, used_json_mode).  An empty response from json_mode usually means
-    the model doesn't support the flag — retrying without it typically succeeds.
+    Falls back when:
+      - The response is empty (model doesn't support json_mode).
+      - The response is too short or contains no '{' — likely a refusal or safety message.
+
+    Returns (full_text, used_json_mode).
     """
     full_text = ""
     async for token in llm.provider_tokens(provider, model, messages, system, user, json_mode=True):
         full_text += token
 
-    if full_text.strip():
+    if full_text.strip() and _looks_like_json(full_text):
         return full_text, True
 
-    # Empty response — retry without json_mode
+    # Empty response OR short/non-JSON refusal — retry without json_mode
     full_text = ""
     async for token in llm.provider_tokens(provider, model, messages, system, user, json_mode=False):
         full_text += token
@@ -394,7 +403,8 @@ async def _consolidate_task(book_id: str, user: str, job_id: str, queue: asyncio
             _checkpoint_bible(book_id, ledger, metadata)
             await queue.put({"type": "entity_done", "eid": eid, "done": len(done_set), "total": total})
         except Exception as ex:
-            warn = f"⚠ {eid}: parse failed ({ex}) — keeping skeleton"
+            preview = full_text.strip()[:120].replace("\n", " ")
+            warn = f"⚠ {eid}: parse failed ({ex}) — model said: «{preview}» — keeping skeleton"
             await queue.put({"type": "status", "message": warn})
             db.append_bible_job_log(job_id, warn)
             ledger[eid] = ent
@@ -539,7 +549,8 @@ async def _research_task(book_id: str, user: str, job_id: str, queue: asyncio.Qu
             _checkpoint_bible(book_id, enriched_ledger, metadata)
             await queue.put({"type": "entity_done", "eid": eid, "done": len(done_set), "total": total})
         except Exception as ex:
-            warn = f"⚠ {eid}: parse failed ({ex}) — keeping original"
+            preview = full_text.strip()[:120].replace("\n", " ")
+            warn = f"⚠ {eid}: parse failed ({ex}) — model said: «{preview}» — keeping original"
             await queue.put({"type": "status", "message": warn})
             db.append_bible_job_log(job_id, warn)
             _checkpoint_bible(book_id, enriched_ledger, metadata)
