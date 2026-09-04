@@ -374,6 +374,16 @@ export default function WritingLoopPage() {
     }, 4000)
   }
 
+  // Clear polling interval on unmount to prevent accumulating intervals across remounts
+  useEffect(() => {
+    return () => {
+      if (jobPollRef.current) {
+        clearInterval(jobPollRef.current)
+        jobPollRef.current = null
+      }
+    }
+  }, [])
+
   // Reconnect to a running job if the tab was closed and reopened
   useEffect(() => {
     const stored = localStorage.getItem(jobLocalKey)
