@@ -49,8 +49,8 @@ async def _openrouter_tokens(model: str, messages: list[dict], system: str | Non
 
     msgs = ([{"role": "system", "content": system}] if system else []) + messages
     body: dict = {"model": model, "stream": True, "messages": msgs}
-    if json_mode:
-        body["response_format"] = {"type": "json_object"}
+    # response_format is not supported by all OpenRouter models;
+    # system prompts already instruct JSON output, so we omit it.
 
     async with httpx.AsyncClient(timeout=120) as client:
         async with client.stream(
