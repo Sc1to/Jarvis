@@ -1,6 +1,7 @@
 import json
 import os
 import sqlite3
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
@@ -11,16 +12,16 @@ DATA_ROOT = os.environ.get(
 )
 DB_PATH = os.path.join(DATA_ROOT, "writer.db")
 
-_conn: sqlite3.Connection | None = None
+_local = threading.local()
 
 
 def _get_conn() -> sqlite3.Connection:
-    global _conn
-    if _conn is None:
+    conn = getattr(_local, 'conn', None)
+    if conn is None:
         os.makedirs(DATA_ROOT, exist_ok=True)
-        _conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-        _conn.row_factory = sqlite3.Row
-        _conn.executescript("""
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        conn.executescript("""
             CREATE TABLE IF NOT EXISTS settings (
                 key   TEXT PRIMARY KEY,
                 value TEXT NOT NULL
@@ -67,15 +68,16 @@ def _get_conn() -> sqlite3.Connection:
         # Migrate existing tables — ignore error if columns already exist
         for col in ("series_id TEXT", "series_order INTEGER"):
             try:
-                _conn.execute(f"ALTER TABLE books ADD COLUMN {col}")
+                conn.execute(f"ALTER TABLE books ADD COLUMN {col}")
             except Exception:
                 pass
         try:
-            _conn.execute("ALTER TABLE auto_write_jobs ADD COLUMN step TEXT")
+            conn.execute("ALTER TABLE auto_write_jobs ADD COLUMN step TEXT")
         except Exception:
             pass
-        _conn.commit()
-    return _conn
+        conn.commit()
+        _local.conn = conn
+    return conn
 
 
 def get_setting(key: str) -> str | None:
