@@ -14,7 +14,7 @@ import db
 from deps import current_user
 import llm
 import prompt_store
-from prompt_blocks import assemble_writer_context
+from prompt_blocks import assemble_writer_context, _truncate_prior_scenes
 
 log = logging.getLogger(__name__)
 
@@ -311,7 +311,7 @@ async def _write_chapter_task(book_id: str, chapter: int, user: str, job_id: str
                 "scene": scene_num, "total": len(scene_plan), "attempt": attempt, "brief": brief,
             })
 
-            prior_text = "\n\n---\n\n".join(completed_scenes) if completed_scenes else "None yet."
+            prior_text = _truncate_prior_scenes(completed_scenes)
             rewrite_note = ""
             if attempt > 1 and qa_result:
                 errors = [i["description"] for i in qa_result.get("issues", []) if i.get("severity") == "error"]
@@ -558,7 +558,7 @@ async def _write_chapter_bg(book_id: str, chapter: int, user: str, log_cb) -> No
             attempt += 1
             log_cb(f"  Scene {scene_num}/{len(scene_plan)} — attempt {attempt}")
 
-            prior_text = "\n\n---\n\n".join(completed_scenes) if completed_scenes else "None yet."
+            prior_text = _truncate_prior_scenes(completed_scenes)
             rewrite_note = ""
             if attempt > 1 and qa_result:
                 errors = [i["description"] for i in qa_result.get("issues", []) if i.get("severity") == "error"]

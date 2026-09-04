@@ -16,9 +16,14 @@ def block_writing_rules(north_star: str, writing_prefs: str) -> str:
     return "\n\n".join(parts)
 
 
+_LEDGER_CHAR_LIMIT = 80_000  # ~20k tokens — enough for hundreds of entities
+
+
 def block_active_entities(ledger_json: str) -> str:
     if not ledger_json or ledger_json in ("{}", "null", ""):
         return ""
+    if len(ledger_json) > _LEDGER_CHAR_LIMIT:
+        ledger_json = ledger_json[:_LEDGER_CHAR_LIMIT] + "\n... [ledger truncated for context length]"
     return f"## Entity Ledger\n\n{ledger_json}"
 
 
@@ -31,6 +36,24 @@ def block_story_history(prior_text: str, prior_bridge: str = "") -> str:
     if prior_bridge:
         parts.append(f"## Prior chapter context\n\n{prior_bridge}")
     return "\n\n".join(parts)
+
+
+def _truncate_prior_scenes(scenes: list[str], max_words: int = 4000) -> str:
+    """Keep the most recent scenes that fit within max_words, oldest first."""
+    if not scenes:
+        return "None yet."
+    included: list[str] = []
+    total = 0
+    for scene in reversed(scenes):
+        wc = len(scene.split())
+        if total + wc > max_words and included:
+            break
+        included.insert(0, scene)
+        total += wc
+    if len(included) < len(scenes):
+        prefix = f"[{len(scenes) - len(included)} earlier scene(s) omitted for context length]\n\n"
+        return prefix + "\n\n---\n\n".join(included)
+    return "\n\n---\n\n".join(included)
 
 
 def block_foreshadowing() -> str:
