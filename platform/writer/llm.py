@@ -158,7 +158,14 @@ async def _ollama_tokens(model: str, messages: list[dict], system: str | None, u
         body["format"] = "json"
     async with httpx.AsyncClient(timeout=600) as client:
         async with client.stream("POST", f"{host}/api/chat", json=body) as r:
-            r.raise_for_status()
+            if r.status_code >= 400:
+                raw = await r.aread()
+                try:
+                    err_obj = json.loads(raw)
+                    err_msg = err_obj.get("error") or raw.decode()
+                except Exception:
+                    err_msg = raw.decode()
+                raise ValueError(f"Ollama {r.status_code}: {err_msg}")
             async for line in r.aiter_lines():
                 if not line.strip():
                     continue
