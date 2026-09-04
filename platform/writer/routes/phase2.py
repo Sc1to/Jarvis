@@ -241,8 +241,23 @@ def phase2_status(book_id: str):
     bible_exists = bible is not None
     meta = bible.get("metadata", {}) if bible else {}
 
-    # Active job info
+    # Active job info — clean up any stale "running" DB record whose asyncio task no longer exists.
+    # _bg_queues is the single source of truth for whether a task is alive.
+    # After a server restart the DB still says "running" but the queue is gone.
     active_job = db.get_active_bible_job(book_id)
+    if active_job:
+        has_live_queue = (
+            f"{book_id}:consolidate" in _bg_queues
+            or f"{book_id}:research" in _bg_queues
+        )
+        if not has_live_queue:
+            db.update_bible_job(
+                active_job["id"],
+                status="interrupted",
+                finished_at=datetime.now(timezone.utc).isoformat(),
+            )
+            active_job = None
+
     active_job_info = None
     if active_job:
         job_log = json.loads(active_job.get("log", "[]"))
@@ -257,8 +272,7 @@ def phase2_status(book_id: str):
     consolidated_entities = meta.get("consolidated_entities", [])
     researched_entities = meta.get("researched_entities", [])
 
-    # Cross-check transient states against live DB job — prevents stale "consolidating"
-    # or "researching" after server restart kills the background task.
+    # Cross-check transient metadata status against live DB job.
     raw_status = meta.get("phase2_status", "idle")
     if raw_status in ("consolidating", "researching") and not active_job:
         effective_status = "interrupted"
