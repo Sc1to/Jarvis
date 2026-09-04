@@ -59,7 +59,14 @@ async def _openrouter_tokens(model: str, messages: list[dict], system: str | Non
             json=body,
             headers={"Authorization": f"Bearer {api_key}", "HTTP-Referer": "http://localhost:8011"},
         ) as r:
-            r.raise_for_status()
+            if r.status_code >= 400:
+                raw = await r.aread()
+                try:
+                    err_obj = json.loads(raw)
+                    err_msg = (err_obj.get("error") or {}).get("message") or err_obj.get("message") or raw.decode()
+                except Exception:
+                    err_msg = raw.decode()
+                raise ValueError(f"OpenRouter {r.status_code}: {err_msg}")
             async for line in r.aiter_lines():
                 if not line.startswith("data: "):
                     continue
