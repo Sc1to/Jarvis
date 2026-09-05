@@ -208,6 +208,37 @@ export default function SequentialWorkflow() {
     finally { setStreaming(false); refetch() }
   }
 
+  // Background-job variant: starts job via POST, polls status — survives tab switches
+  async function runJob(startUrl: string, pollUrl: (id: string) => string, body?: object) {
+    setStreaming(true)
+    setStreamText('')
+    setError(null)
+    try {
+      const startResp = await fetch(startUrl, {
+        method: 'POST',
+        headers: body ? { 'Content-Type': 'application/json' } : {},
+        body: body ? JSON.stringify(body) : undefined,
+      })
+      if (!startResp.ok) {
+        const d = await startResp.json().catch(() => ({}))
+        setError(d.detail ?? 'Request failed')
+        return
+      }
+      const { job_id } = await startResp.json()
+      while (true) {
+        await new Promise(r => setTimeout(r, 1000))
+        const status = await fetch(pollUrl(job_id)).then(r => r.json())
+        if (status.tokens) {
+          setStreamText(status.tokens)
+          streamRef.current?.scrollTo(0, streamRef.current.scrollHeight)
+        }
+        if (status.status === 'done') break
+        if (status.status === 'error') { setError(status.error ?? 'Generation failed'); return }
+      }
+    } catch (e) { setError(String(e)) }
+    finally { setStreaming(false); refetch() }
+  }
+
   async function post(url: string, body?: object) {
     setError(null)
     try {
@@ -303,7 +334,7 @@ export default function SequentialWorkflow() {
               <p className="text-sm text-muted-foreground">Generate the scene list for Chapter {chapter}.</p>
               {streaming
                 ? <StreamDisplay ref={streamRef} text={streamText} />
-                : <Button onClick={() => runSSE(`${base}/phase1/tier4/run-chapter`, { chapter })}>Generate scene list</Button>
+                : <Button onClick={() => runJob(`${base}/phase1/tier4/run-chapter`, id => `${base}/phase1/tier4/chapter-job/${id}`, { chapter })}>Generate scene list</Button>
               }
             </div>
           )}

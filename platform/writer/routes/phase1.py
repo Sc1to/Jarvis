@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import uuid
 from datetime import datetime, timezone
 
 import asyncio
@@ -850,6 +851,9 @@ def edit_tier3_act(book_id: str, body: EditActBody, user: str = Depends(current_
 
 # ── Tier 4 — per-chapter scene lists ──────────────────────────────────────────
 
+_tier4_chapter_jobs: dict[str, dict] = {}
+
+
 def _tier4_dir(book_id: str) -> str:
     return os.path.join(db.data_dir(book_id), "tier4")
 
@@ -923,9 +927,15 @@ class RunChapterBody(BaseModel):
 
 
 @router.post("/books/{book_id}/phase1/tier4/run-chapter")
-def run_tier4_chapter(book_id: str, body: RunChapterBody, user: str = Depends(current_user)):
-    book_dir = db.data_dir(book_id)
+async def run_tier4_chapter(book_id: str, body: RunChapterBody, user: str = Depends(current_user)):
+    from fastapi import HTTPException
 
+    provider = db.get_setting("agent_bible_agent_provider")
+    model = db.get_setting("agent_bible_agent_model")
+    if not provider or not model:
+        raise HTTPException(400, "Bible Agent has no model assigned — go to Settings.")
+
+    book_dir = db.data_dir(book_id)
     ns_path = os.path.join(book_dir, "north_star.md")
     north_star = open(ns_path).read() if os.path.exists(ns_path) else "[North Star not yet written]"
 
@@ -952,8 +962,6 @@ def run_tier4_chapter(book_id: str, body: RunChapterBody, user: str = Depends(cu
     if next_summary:
         context += f"\n\n## Next Chapter (Chapter {body.chapter + 1}) — forward context\n\n{next_summary}"
 
-    # Continuous scene numbering: count all scenes in earlier chapters
-    tier4_status = _read_tier4_status(book_id)
     start_scene = 1 + sum(
         len(ch.get("scenes", []))
         for ch in tier4_status.get("chapters", [])
@@ -963,30 +971,43 @@ def run_tier4_chapter(book_id: str, body: RunChapterBody, user: str = Depends(cu
 
     instruction = prompt_store.get("tier_scenes", TIER_INSTRUCTIONS[3])
     messages = [{"role": "user", "content": f"{context}\n\n---\n\n{instruction}"}]
-
-    provider = db.get_setting("agent_bible_agent_provider")
-    model = db.get_setting("agent_bible_agent_model")
     system = prompt_store.get("bible_agent", BIBLE_AGENT_SYSTEM)
 
-    async def generate():
-        if not provider or not model:
-            yield f'data: {json.dumps({"type": "error", "message": "Bible Agent has no model assigned — go to Settings."})}\n\n'
-            return
+    job_id = uuid.uuid4().hex[:12]
+    _tier4_chapter_jobs[job_id] = {"status": "running", "tokens": "", "result": None, "error": None}
+
+    async def _bg() -> None:
+        job = _tier4_chapter_jobs[job_id]
         full_text = ""
         try:
             async for token in llm.provider_tokens(provider, model, messages, system, user):
                 full_text += token
-                yield f'data: {json.dumps({"type": "token", "content": token})}\n\n'
+                job["tokens"] += token
+            os.makedirs(_tier4_dir(book_id), exist_ok=True)
+            with open(_tier4_chapter_path(book_id, body.chapter), "w") as f:
+                f.write(full_text)
+            job["status"] = "done"
+            job["result"] = full_text
         except Exception as e:
-            yield f'data: {json.dumps({"type": "error", "message": str(e) or type(e).__name__})}\n\n'
-            return
-        os.makedirs(_tier4_dir(book_id), exist_ok=True)
-        with open(_tier4_chapter_path(book_id, body.chapter), "w") as f:
-            f.write(full_text)
-        yield f'data: {json.dumps({"type": "done"})}\n\n'
+            job["status"] = "error"
+            job["error"] = str(e) or type(e).__name__
 
-    return StreamingResponse(generate(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    asyncio.create_task(_bg())
+    return {"job_id": job_id}
+
+
+@router.get("/books/{book_id}/phase1/tier4/chapter-job/{job_id}")
+def get_tier4_chapter_job(book_id: str, job_id: str):
+    from fastapi import HTTPException
+    job = _tier4_chapter_jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found — server may have restarted")
+    return {
+        "status": job["status"],
+        "tokens": job["tokens"],
+        "result": job["result"],
+        "error": job["error"],
+    }
 
 
 @router.get("/books/{book_id}/phase1/tier4/chapter/{chapter_num}/scene/{scene_num}")
