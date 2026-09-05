@@ -6,8 +6,8 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
-import { readSSE } from '@/lib/sse'
 import { API } from '@/lib/api'
+import { runJob, sleep } from '@/lib/jobs'
 import { ChevronRight, Play, CheckCircle, Lock, Loader2, BookOpen, MapPin, Users, Plus, ListOrdered, Layers } from 'lucide-react'
 
 type Stage = 'book' | 'acts' | 'consolidate' | 'chapters' | 'scenes'
@@ -256,22 +256,17 @@ export default function BibleWorkshopPage() {
     setContents(prev => { const n = [...prev]; n[idx] = ''; return n })
     setStreaming(true)
     try {
-      const resp = await fetch(`${API}/books/${bookId}/phase1/bible/run-tier`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tier: idx + 1 }),
-      })
-      let text = ''
-      for await (const event of readSSE(resp)) {
-        if (event.type === 'token' && event.content) {
-          text += event.content
-          setContents(prev => { const n = [...prev]; n[idx] = text; return n })
-        } else if (event.type === 'error') {
-          setContents(prev => { const n = [...prev]; n[idx] = `⚠ ${event.message}`; return n })
-          break
-        }
+      const state = await runJob(
+        `${API}/books/${bookId}/phase1/bible/run-tier`,
+        { tier: idx + 1 },
+        (_, acc) => setContents(prev => { const n = [...prev]; n[idx] = acc; return n }),
+      )
+      if (state.status === 'error') {
+        setContents(prev => { const n = [...prev]; n[idx] = `⚠ ${state.error}`; return n })
+        setStatuses(prev => { const n = [...prev]; n[idx] = 'active'; return n })
+      } else {
+        setStatuses(prev => { const n = [...prev]; n[idx] = 'review'; return n })
       }
-      setStatuses(prev => { const n = [...prev]; n[idx] = 'review'; return n })
     } catch {
       setContents(prev => { const n = [...prev]; n[idx] = '⚠ Connection error — is the server running?'; return n })
       setStatuses(prev => { const n = [...prev]; n[idx] = 'active'; return n })
@@ -306,20 +301,13 @@ export default function BibleWorkshopPage() {
     setContents(prev => { const n = [...prev]; n[idx] = ''; return n })
     setStreaming(true)
     try {
-      const resp = await fetch(`${API}/books/${bookId}/phase1/bible/edit-tier`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tier: idx + 1, directive: d }),
-      })
-      let text = ''
-      for await (const event of readSSE(resp)) {
-        if (event.type === 'token' && event.content) {
-          text += event.content
-          setContents(prev => { const n = [...prev]; n[idx] = text; return n })
-        } else if (event.type === 'error') {
-          setContents(prev => { const n = [...prev]; n[idx] = `⚠ ${event.message}`; return n })
-          break
-        }
+      const state = await runJob(
+        `${API}/books/${bookId}/phase1/bible/edit-tier`,
+        { tier: idx + 1, directive: d },
+        (_, acc) => setContents(prev => { const n = [...prev]; n[idx] = acc; return n }),
+      )
+      if (state.status === 'error') {
+        setContents(prev => { const n = [...prev]; n[idx] = `⚠ ${state.error}`; return n })
       }
       setStatuses(prev => { const n = [...prev]; n[idx] = 'review'; return n })
     } catch {
@@ -346,15 +334,12 @@ export default function BibleWorkshopPage() {
     setMiniConsolRunning(true)
     setMiniConsolError(null)
     try {
-      const resp = await fetch(`${API}/books/${bookId}/phase1/mini-consolidate`, { method: 'POST' })
-      for await (const event of readSSE(resp)) {
-        if (event.type === 'saved') {
-          await refetchSkeleton()
-          await refetchTier3()
-        } else if (event.type === 'error') {
-          setMiniConsolError(event.message ?? 'Unknown error')
-          break
-        }
+      const state = await runJob(`${API}/books/${bookId}/phase1/mini-consolidate`, {})
+      if (state.status === 'error') {
+        setMiniConsolError(state.error ?? 'Unknown error')
+      } else {
+        await refetchSkeleton()
+        await refetchTier3()
       }
     } catch {
       setMiniConsolError('Connection error — is the server running?')
@@ -368,20 +353,13 @@ export default function BibleWorkshopPage() {
     setActRunning(actNum)
     setActContents(prev => ({ ...prev, [actNum]: '' }))
     try {
-      const resp = await fetch(`${API}/books/${bookId}/phase1/tier3/run-act`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ act: actNum }),
-      })
-      let text = ''
-      for await (const event of readSSE(resp)) {
-        if (event.type === 'token' && event.content) {
-          text += event.content
-          setActContents(prev => ({ ...prev, [actNum]: text }))
-        } else if (event.type === 'error') {
-          setActContents(prev => ({ ...prev, [actNum]: `⚠ ${event.message}` }))
-          break
-        }
+      const state = await runJob(
+        `${API}/books/${bookId}/phase1/tier3/run-act`,
+        { act: actNum },
+        (_, acc) => setActContents(prev => ({ ...prev, [actNum]: acc })),
+      )
+      if (state.status === 'error') {
+        setActContents(prev => ({ ...prev, [actNum]: `⚠ ${state.error}` }))
       }
     } catch {
       setActContents(prev => ({ ...prev, [actNum]: '⚠ Connection error — is the server running?' }))
@@ -409,20 +387,13 @@ export default function BibleWorkshopPage() {
     setActRunning(actNum)
     setActContents(prev => ({ ...prev, [actNum]: '' }))
     try {
-      const resp = await fetch(`${API}/books/${bookId}/phase1/tier3/edit-act`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ act: actNum, directive: d }),
-      })
-      let text = ''
-      for await (const event of readSSE(resp)) {
-        if (event.type === 'token' && event.content) {
-          text += event.content
-          setActContents(prev => ({ ...prev, [actNum]: text }))
-        } else if (event.type === 'error') {
-          setActContents(prev => ({ ...prev, [actNum]: `⚠ ${event.message}` }))
-          break
-        }
+      const state = await runJob(
+        `${API}/books/${bookId}/phase1/tier3/edit-act`,
+        { act: actNum, directive: d },
+        (_, acc) => setActContents(prev => ({ ...prev, [actNum]: acc })),
+      )
+      if (state.status === 'error') {
+        setActContents(prev => ({ ...prev, [actNum]: `⚠ ${state.error}` }))
       }
     } catch {
       setActContents(prev => ({ ...prev, [actNum]: '⚠ Connection error' }))
@@ -485,20 +456,13 @@ export default function BibleWorkshopPage() {
     setChapterRunning(chapterNum)
     setChapterContents(prev => ({ ...prev, [chapterNum]: '' }))
     try {
-      const resp = await fetch(`${API}/books/${bookId}/phase1/tier4/run-chapter`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chapter: chapterNum }),
-      })
-      let text = ''
-      for await (const event of readSSE(resp)) {
-        if (event.type === 'token' && event.content) {
-          text += event.content
-          setChapterContents(prev => ({ ...prev, [chapterNum]: text }))
-        } else if (event.type === 'error') {
-          setChapterContents(prev => ({ ...prev, [chapterNum]: `⚠ ${event.message}` }))
-          break
-        }
+      const state = await runJob(
+        `${API}/books/${bookId}/phase1/tier4/run-chapter`,
+        { chapter: chapterNum },
+        (_, acc) => setChapterContents(prev => ({ ...prev, [chapterNum]: acc })),
+      )
+      if (state.status === 'error') {
+        setChapterContents(prev => ({ ...prev, [chapterNum]: `⚠ ${state.error}` }))
       }
     } catch {
       setChapterContents(prev => ({ ...prev, [chapterNum]: '⚠ Connection error — is the server running?' }))
@@ -547,20 +511,13 @@ export default function BibleWorkshopPage() {
     setChapterRunning(chapterNum)
     setChapterContents(prev => ({ ...prev, [chapterNum]: '' }))
     try {
-      const resp = await fetch(`${API}/books/${bookId}/phase1/tier4/edit-chapter`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chapter: chapterNum, directive: d }),
-      })
-      let text = ''
-      for await (const event of readSSE(resp)) {
-        if (event.type === 'token' && event.content) {
-          text += event.content
-          setChapterContents(prev => ({ ...prev, [chapterNum]: text }))
-        } else if (event.type === 'error') {
-          setChapterContents(prev => ({ ...prev, [chapterNum]: `⚠ ${event.message}` }))
-          break
-        }
+      const state = await runJob(
+        `${API}/books/${bookId}/phase1/tier4/edit-chapter`,
+        { chapter: chapterNum, directive: d },
+        (_, acc) => setChapterContents(prev => ({ ...prev, [chapterNum]: acc })),
+      )
+      if (state.status === 'error') {
+        setChapterContents(prev => ({ ...prev, [chapterNum]: `⚠ ${state.error}` }))
       }
     } catch {
       setChapterContents(prev => ({ ...prev, [chapterNum]: '⚠ Connection error' }))
@@ -577,20 +534,13 @@ export default function BibleWorkshopPage() {
     setSceneRunning(key)
     setSceneContents(prev => ({ ...prev, [key]: '' }))
     try {
-      const resp = await fetch(`${API}/books/${bookId}/phase1/tier4/chapter/${chapterNum}/run-scene`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scene: sceneNum }),
-      })
-      let text = ''
-      for await (const event of readSSE(resp)) {
-        if (event.type === 'token' && event.content) {
-          text += event.content
-          setSceneContents(prev => ({ ...prev, [key]: text }))
-        } else if (event.type === 'error') {
-          setSceneContents(prev => ({ ...prev, [key]: `⚠ ${event.message}` }))
-          break
-        }
+      const state = await runJob(
+        `${API}/books/${bookId}/phase1/tier4/chapter/${chapterNum}/run-scene`,
+        { scene: sceneNum },
+        (_, acc) => setSceneContents(prev => ({ ...prev, [key]: acc })),
+      )
+      if (state.status === 'error') {
+        setSceneContents(prev => ({ ...prev, [key]: `⚠ ${state.error}` }))
       }
     } catch {
       setSceneContents(prev => ({ ...prev, [key]: '⚠ Connection error' }))
@@ -605,15 +555,10 @@ export default function BibleWorkshopPage() {
     const content = sceneContents[key] ?? ''
     setSceneSyncing(key)
     try {
-      const resp = await fetch(
+      await runJob(
         `${API}/books/${bookId}/phase1/tier4/chapter/${chapterNum}/scene/${sceneNum}/approve`,
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content }) }
+        { content },
       )
-      for await (const event of readSSE(resp)) {
-        if (event.type === 'saved' || event.type === 'syncing_bible' || event.type === 'bible_synced' || event.type === 'bible_sync_error') {
-          // events consumed — UI shows syncing badge
-        }
-      }
     } catch { /* ignore */ } finally {
       setSceneSyncing(null)
       await refetchTier4()
@@ -629,19 +574,13 @@ export default function BibleWorkshopPage() {
     setSceneRunning(key)
     setSceneContents(prev => ({ ...prev, [key]: '' }))
     try {
-      const resp = await fetch(
+      const state = await runJob(
         `${API}/books/${bookId}/phase1/tier4/chapter/${chapterNum}/scene/${sceneNum}/edit`,
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ directive: d }) }
+        { directive: d },
+        (_, acc) => setSceneContents(prev => ({ ...prev, [key]: acc })),
       )
-      let text = ''
-      for await (const event of readSSE(resp)) {
-        if (event.type === 'token' && event.content) {
-          text += event.content
-          setSceneContents(prev => ({ ...prev, [key]: text }))
-        } else if (event.type === 'error') {
-          setSceneContents(prev => ({ ...prev, [key]: `⚠ ${event.message}` }))
-          break
-        }
+      if (state.status === 'error') {
+        setSceneContents(prev => ({ ...prev, [key]: `⚠ ${state.error}` }))
       }
     } catch {
       setSceneContents(prev => ({ ...prev, [key]: '⚠ Connection error' }))
@@ -665,21 +604,14 @@ export default function BibleWorkshopPage() {
         log(`Generating Act ${actInfo.act}…`)
         setActRunning(actInfo.act)
         setActContents(prev => ({ ...prev, [actInfo.act]: '' }))
-        let text = ''
-        const resp = await fetch(`${API}/books/${bookId}/phase1/tier3/run-act`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ act: actInfo.act }),
-        })
-        for await (const event of readSSE(resp)) {
-          if (event.type === 'token' && event.content) {
-            text += event.content
-            setActContents(prev => ({ ...prev, [actInfo.act]: text }))
-          } else if (event.type === 'error') {
-            setActRunning(null)
-            throw new Error(`Act ${actInfo.act}: ${event.message ?? 'Generation failed'}`)
-          }
-        }
+        const actState = await runJob(
+          `${API}/books/${bookId}/phase1/tier3/run-act`,
+          { act: actInfo.act },
+          (_, acc) => setActContents(prev => ({ ...prev, [actInfo.act]: acc })),
+        )
         setActRunning(null)
+        if (actState.status === 'error') throw new Error(`Act ${actInfo.act}: ${actState.error ?? 'Generation failed'}`)
+        const text = actState.result ?? ''
         if (!text) throw new Error(`Act ${actInfo.act}: no content generated`)
         if (autoCancelT3.current) { log('Stopped.'); break }
         log(`Approving Act ${actInfo.act}…`)
@@ -718,21 +650,14 @@ export default function BibleWorkshopPage() {
           log(`Planning scenes for Chapter ${chInfo.number}…`)
           setChapterRunning(chInfo.number)
           setChapterContents(prev => ({ ...prev, [chInfo.number]: '' }))
-          let planText = ''
-          const planResp = await fetch(`${API}/books/${bookId}/phase1/tier4/run-chapter`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ chapter: chInfo.number }),
-          })
-          for await (const event of readSSE(planResp)) {
-            if (event.type === 'token' && event.content) {
-              planText += event.content
-              setChapterContents(prev => ({ ...prev, [chInfo.number]: planText }))
-            } else if (event.type === 'error') {
-              setChapterRunning(null)
-              throw new Error(`Chapter ${chInfo.number} plan: ${event.message ?? 'Failed'}`)
-            }
-          }
+          const planState = await runJob(
+            `${API}/books/${bookId}/phase1/tier4/run-chapter`,
+            { chapter: chInfo.number },
+            (_, acc) => setChapterContents(prev => ({ ...prev, [chInfo.number]: acc })),
+          )
           setChapterRunning(null)
+          if (planState.status === 'error') throw new Error(`Chapter ${chInfo.number} plan: ${planState.error ?? 'Failed'}`)
+          const planText = planState.result ?? ''
           if (!planText) throw new Error(`Chapter ${chInfo.number}: no scene plan generated`)
           if (autoCancelT4.current) { log('Stopped.'); break }
           log(`Locking plan for Chapter ${chInfo.number}…`)
@@ -763,36 +688,26 @@ export default function BibleWorkshopPage() {
           log(`Writing brief Ch${chInfo.number} Sc${scInfo.number}…`)
           setSceneRunning(key)
           setSceneContents(prev => ({ ...prev, [key]: '' }))
-          let scText = ''
-          const scResp = await fetch(`${API}/books/${bookId}/phase1/tier4/chapter/${chInfo.number}/run-scene`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ scene: scInfo.number }),
-          })
-          for await (const event of readSSE(scResp)) {
-            if (event.type === 'token' && event.content) {
-              scText += event.content
-              setSceneContents(prev => ({ ...prev, [key]: scText }))
-            } else if (event.type === 'error') {
-              setSceneRunning(null)
-              throw new Error(`Ch${chInfo.number} Sc${scInfo.number}: ${event.message ?? 'Failed'}`)
-            }
-          }
+          const scState = await runJob(
+            `${API}/books/${bookId}/phase1/tier4/chapter/${chInfo.number}/run-scene`,
+            { scene: scInfo.number },
+            (_, acc) => setSceneContents(prev => ({ ...prev, [key]: acc })),
+          )
           setSceneRunning(null)
+          if (scState.status === 'error') throw new Error(`Ch${chInfo.number} Sc${scInfo.number}: ${scState.error ?? 'Failed'}`)
+          const scText = scState.result ?? ''
           if (!scText) throw new Error(`Ch${chInfo.number} Sc${scInfo.number}: no content generated`)
           if (autoCancelT4.current) { log('Stopped.'); break }
           log(`Approving brief Ch${chInfo.number} Sc${scInfo.number} (bible sync)…`)
           setSceneSyncing(key)
-          const approveResp = await fetch(
+          const approveState = await runJob(
             `${API}/books/${bookId}/phase1/tier4/chapter/${chInfo.number}/scene/${scInfo.number}/approve`,
-            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: scText }) }
+            { content: scText },
           )
-          for await (const event of readSSE(approveResp)) {
-            if (event.type === 'bible_sync_error') {
-              setSceneSyncing(null)
-              throw new Error(`Ch${chInfo.number} Sc${scInfo.number} bible sync: ${event.message ?? 'Failed'}`)
-            }
-          }
           setSceneSyncing(null)
+          if (approveState.status === 'error') {
+            throw new Error(`Ch${chInfo.number} Sc${scInfo.number} bible sync: ${approveState.error ?? 'Failed'}`)
+          }
           await refetchTier4()
           await refetchSkeleton()
         }
@@ -815,39 +730,27 @@ export default function BibleWorkshopPage() {
     if (p2LogRef.current) p2LogRef.current.scrollTop = p2LogRef.current.scrollHeight
   }, [p2Log])
 
-  async function runP2(endpoint: string, label: string, nextStep: P2Step, force = false) {
+  async function runP2(endpoint: string, _label: string, nextStep: P2Step, force = false) {
     setP2Step(nextStep)
-    // Don't wipe the log if we're reconnecting to a running job (p2Log already populated from polling)
-    if (!force) {
-      setP2Log(prev => prev ? prev + '\n— connecting —\n' : '')
-    } else {
-      setP2Log('')
-    }
+    setP2Log(prev => force ? '' : (prev ? prev + '\n— starting —\n' : ''))
     setP2LastSaved(null)
     const url = `${API}/books/${bookId}/phase2/${endpoint}${force ? '?force=true' : ''}`
     try {
-      const resp = await fetch(url, { method: 'POST' })
-      for await (const event of readSSE(resp)) {
-        if (event.type === 'heartbeat') continue  // keepalive, ignore
-        else if (event.type === 'token') setP2Log(prev => prev + event.content)
-        else if (event.type === 'status') setP2Log(prev => prev + `\n[${event.message}]\n`)
-        else if (event.type === 'entity_done') {
-          setP2Log(prev => prev + `\n  ✓ ${event.eid} done (${event.done}/${event.total})\n`)
-        }
-        else if (event.type === 'saved') {
-          setP2LastSaved({ step: label, count: event.entity_count as number })
-          await refetchP2Status()
+      await fetch(url, { method: 'POST' })
+      // Phase2 jobs are tracked in the DB; refetchInterval on phase2Status polls every 2s.
+      // Poll here until the job finishes so we can set p2Step('done').
+      let attempts = 0
+      while (attempts++ < 300) {
+        await sleep(2000)
+        const status = await refetchP2Status()
+        if (!status.data?.active_job) {
           await refetchBible()
           setP2Step('done')
-        } else if (event.type === 'error') {
-          setP2Log(prev => prev + `\n⚠ ${event.message}`)
-          setP2Step('idle')
-          return
+          break
         }
       }
     } catch {
       setP2Log(prev => prev + '\n⚠ Connection lost — job may still be running in the background')
-      // Don't reset to idle — the server status will reflect the actual state
       await refetchP2Status()
     }
   }

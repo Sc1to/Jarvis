@@ -6,11 +6,11 @@ from datetime import datetime, timezone
 import asyncio
 
 from fastapi import APIRouter, Depends
-from fastapi.responses import StreamingResponse
 from git import Repo
 from pydantic import BaseModel
 
 import db
+import jobs as job_store
 import llm
 import prompt_store
 from deps import current_user
@@ -280,9 +280,29 @@ def _series_system(book_id: str, base_system: str) -> str:
 
 
 @router.post("/books/{book_id}/phase1/north-star/reply")
-def north_star_reply(book_id: str, body: ReplyBody, user: str = Depends(current_user)):
+async def north_star_reply(book_id: str, body: ReplyBody, user: str = Depends(current_user)):
+    from fastapi import HTTPException
+    provider = db.get_setting("agent_story_architect_provider")
+    model = db.get_setting("agent_story_architect_model")
+    if not provider or not model:
+        raise HTTPException(400, "Story Architect has no model assigned — go to Settings.")
     system = _series_system(book_id, prompt_store.get("story_architect", STORY_ARCHITECT_SYSTEM))
-    return llm.stream_chat("story_architect", body.messages, system, user)
+    job_id, job = job_store.create()
+
+    async def _bg():
+        full_text = ""
+        try:
+            async for token in llm.provider_tokens(provider, model, body.messages, system, user):
+                full_text += token
+                job["tokens"] += token
+            job["status"] = "done"
+            job["result"] = full_text
+        except Exception as e:
+            job["status"] = "error"
+            job["error"] = str(e) or type(e).__name__
+
+    asyncio.create_task(_bg())
+    return {"job_id": job_id}
 
 
 class LockBody(BaseModel):
@@ -337,7 +357,13 @@ class RunTierBody(BaseModel):
 
 
 @router.post("/books/{book_id}/phase1/bible/run-tier")
-def run_tier(book_id: str, body: RunTierBody, user: str = Depends(current_user)):
+async def run_tier(book_id: str, body: RunTierBody, user: str = Depends(current_user)):
+    from fastapi import HTTPException
+    provider = db.get_setting("agent_bible_agent_provider")
+    model = db.get_setting("agent_bible_agent_model")
+    if not provider or not model:
+        raise HTTPException(400, "Bible Agent has no model assigned — go to Settings.")
+
     idx = body.tier - 1
     book_dir = db.data_dir(book_id)
 
@@ -357,30 +383,26 @@ def run_tier(book_id: str, body: RunTierBody, user: str = Depends(current_user))
 
     tier_key = f"tier_{TIER_LABELS[idx].lower()}"
     messages = [{"role": "user", "content": f"{context}\n\n---\n\n{prompt_store.get(tier_key, TIER_INSTRUCTIONS[idx])}"}]
-
-    provider = db.get_setting("agent_bible_agent_provider")
-    model = db.get_setting("agent_bible_agent_model")
     system = prompt_store.get("bible_agent", BIBLE_AGENT_SYSTEM)
 
-    async def generate():
-        if not provider or not model:
-            yield f'data: {json.dumps({"type": "error", "message": "Bible Agent has no model assigned — go to Settings."})}\n\n'
-            return
+    job_id, job = job_store.create()
+
+    async def _bg():
         full_text = ""
         try:
             async for token in llm.provider_tokens(provider, model, messages, system, user):
                 full_text += token
-                yield f'data: {json.dumps({"type": "token", "content": token})}\n\n'
+                job["tokens"] += token
+            with open(_draft_path(book_id, body.tier), "w") as f:
+                f.write(full_text)
+            job["status"] = "done"
+            job["result"] = full_text
         except Exception as e:
-            msg = str(e) or type(e).__name__
-            yield f'data: {json.dumps({"type": "error", "message": msg})}\n\n'
-            return
-        with open(_draft_path(book_id, body.tier), "w") as f:
-            f.write(full_text)
-        yield f'data: {json.dumps({"type": "done"})}\n\n'
+            job["status"] = "error"
+            job["error"] = str(e) or type(e).__name__
 
-    return StreamingResponse(generate(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    asyncio.create_task(_bg())
+    return {"job_id": job_id}
 
 
 class ApproveTierBody(BaseModel):
@@ -415,16 +437,18 @@ class EditTierBody(BaseModel):
 
 
 @router.post("/books/{book_id}/phase1/bible/edit-tier")
-def edit_tier(book_id: str, body: EditTierBody, user: str = Depends(current_user)):
+async def edit_tier(book_id: str, body: EditTierBody, user: str = Depends(current_user)):
+    from fastapi import HTTPException
     idx = body.tier - 1
     tiers = _read_tiers(book_id)
     current = tiers[idx].get("content") or tiers[idx].get("draft") or ""
     if not current:
-        from fastapi import HTTPException
         raise HTTPException(400, "No tier content to edit — run the agent first")
 
     provider = db.get_setting("agent_bible_agent_provider")
     model = db.get_setting("agent_bible_agent_model")
+    if not provider or not model:
+        raise HTTPException(400, "Bible Agent has no model assigned — go to Settings.")
     system = prompt_store.get("tier_editor", TIER_EDITOR_SYSTEM)
     messages = [{"role": "user", "content": (
         f"Make only this change to the document below: {body.directive}\n\n"
@@ -432,25 +456,24 @@ def edit_tier(book_id: str, body: EditTierBody, user: str = Depends(current_user
         f"## Document\n\n{current}"
     )}]
 
-    async def generate():
-        if not provider or not model:
-            yield f'data: {json.dumps({"type": "error", "message": "Bible Agent has no model assigned — go to Settings."})}\n\n'
-            return
+    job_id, job = job_store.create()
+
+    async def _bg():
         full_text = ""
         try:
             async for token in llm.provider_tokens(provider, model, messages, system, user):
                 full_text += token
-                yield f'data: {json.dumps({"type": "token", "content": token})}\n\n'
+                job["tokens"] += token
+            with open(_draft_path(book_id, body.tier), "w") as f:
+                f.write(full_text)
+            job["status"] = "done"
+            job["result"] = full_text
         except Exception as e:
-            msg = str(e) or type(e).__name__
-            yield f'data: {json.dumps({"type": "error", "message": msg})}\n\n'
-            return
-        with open(_draft_path(book_id, body.tier), "w") as f:
-            f.write(full_text)
-        yield f'data: {json.dumps({"type": "done"})}\n\n'
+            job["status"] = "error"
+            job["error"] = str(e) or type(e).__name__
 
-    return StreamingResponse(generate(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    asyncio.create_task(_bg())
+    return {"job_id": job_id}
 
 
 class DirectiveBody(BaseModel):
@@ -502,7 +525,9 @@ def get_bible_skeleton(book_id: str):
 
 
 @router.post("/books/{book_id}/phase1/mini-consolidate")
-def mini_consolidate(book_id: str, user: str = Depends(current_user)):
+async def mini_consolidate(book_id: str, user: str = Depends(current_user)):
+    from fastapi import HTTPException
+    import logging as _logging
     book_dir = db.data_dir(book_id)
 
     ns_path = os.path.join(book_dir, "north_star.md")
@@ -511,8 +536,12 @@ def mini_consolidate(book_id: str, user: str = Depends(current_user)):
     tiers = _read_tiers(book_id)
     tier2 = tiers[1].get("content") or ""
     if not tier2:
-        from fastapi import HTTPException
         raise HTTPException(400, "Tier 2 (Acts) must be approved before mini-consolidation")
+
+    provider = db.get_setting("agent_bible_agent_provider")
+    model = db.get_setting("agent_bible_agent_model")
+    if not provider or not model:
+        raise HTTPException(400, "Bible Agent has no model assigned — go to Settings.")
 
     messages = [
         {"role": "user", "content": (
@@ -530,41 +559,35 @@ def mini_consolidate(book_id: str, user: str = Depends(current_user)):
             '}'
         )},
     ]
-
-    provider = db.get_setting("agent_bible_agent_provider")
-    model = db.get_setting("agent_bible_agent_model")
     system = prompt_store.get("mini_consolidator", MINI_CONSOLIDATOR_SYSTEM)
 
-    async def generate():
-        if not provider or not model:
-            yield f'data: {json.dumps({"type": "error", "message": "Bible Agent has no model assigned — go to Settings."})}\n\n'
-            return
+    job_id, job = job_store.create()
+
+    async def _bg():
         full_text = ""
         try:
             async for token in llm.provider_tokens(provider, model, messages, system, user):
                 full_text += token
-                yield f'data: {json.dumps({"type": "token", "content": token})}\n\n'
-        except Exception as e:
-            yield f'data: {json.dumps({"type": "error", "message": str(e) or type(e).__name__})}\n\n'
-            return
-
-        try:
+                job["tokens"] += token
             skeleton = _extract_json_skeleton(full_text)
+            with open(_skeleton_path(book_id), "w") as f:
+                json.dump(skeleton, f, indent=2)
+            job["status"] = "done"
+            job["result"] = full_text
+            job["meta"] = {
+                "entity_count": len(skeleton.get("entities", [])),
+                "act_count": len(skeleton.get("acts", [])),
+            }
+        except ValueError as e:
+            _logging.getLogger(__name__).error("mini-consolidate parse fail:\n%s", full_text[:500])
+            job["status"] = "error"
+            job["error"] = f"JSON parse error: {e}"
         except Exception as e:
-            import logging
-            logging.getLogger(__name__).error("mini-consolidate parse fail:\n%s", full_text[:500])
-            yield f'data: {json.dumps({"type": "error", "message": f"JSON parse error: {e}"})}\n\n'
-            return
+            job["status"] = "error"
+            job["error"] = str(e) or type(e).__name__
 
-        with open(_skeleton_path(book_id), "w") as f:
-            json.dump(skeleton, f, indent=2)
-
-        entity_count = len(skeleton.get("entities", []))
-        act_count = len(skeleton.get("acts", []))
-        yield f'data: {json.dumps({"type": "saved", "entity_count": entity_count, "act_count": act_count})}\n\n'
-
-    return StreamingResponse(generate(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    asyncio.create_task(_bg())
+    return {"job_id": job_id}
 
 
 class SkeletonEntityBody(BaseModel):
@@ -700,7 +723,13 @@ class RunActBody(BaseModel):
 
 
 @router.post("/books/{book_id}/phase1/tier3/run-act")
-def run_tier3_act(book_id: str, body: RunActBody, user: str = Depends(current_user)):
+async def run_tier3_act(book_id: str, body: RunActBody, user: str = Depends(current_user)):
+    from fastapi import HTTPException
+    provider = db.get_setting("agent_bible_agent_provider")
+    model = db.get_setting("agent_bible_agent_model")
+    if not provider or not model:
+        raise HTTPException(400, "Bible Agent has no model assigned — go to Settings.")
+
     book_dir = db.data_dir(book_id)
 
     ns_path = os.path.join(book_dir, "north_star.md")
@@ -734,7 +763,6 @@ def run_tier3_act(book_id: str, body: RunActBody, user: str = Depends(current_us
         context += prior_acts_text
     context += f"\n\n## Current Act\n\nAct {body.act} — {act_title}"
 
-    # Continuous chapter numbering across acts
     start_chapter = 1 + sum(
         len(a.get("chapters", []))
         for a in status.get("acts", [])
@@ -748,30 +776,27 @@ def run_tier3_act(book_id: str, body: RunActBody, user: str = Depends(current_us
 
     instruction = prompt_store.get("tier_chapters", TIER_INSTRUCTIONS[2])
     messages = [{"role": "user", "content": f"{context}\n\n---\n\n{instruction}"}]
-
-    provider = db.get_setting("agent_bible_agent_provider")
-    model = db.get_setting("agent_bible_agent_model")
     system = prompt_store.get("bible_agent", BIBLE_AGENT_SYSTEM)
 
-    async def generate():
-        if not provider or not model:
-            yield f'data: {json.dumps({"type": "error", "message": "Bible Agent has no model assigned — go to Settings."})}\n\n'
-            return
+    job_id, job = job_store.create()
+
+    async def _bg():
         full_text = ""
         try:
             async for token in llm.provider_tokens(provider, model, messages, system, user):
                 full_text += token
-                yield f'data: {json.dumps({"type": "token", "content": token})}\n\n'
+                job["tokens"] += token
+            os.makedirs(_tier3_dir(book_id), exist_ok=True)
+            with open(_tier3_act_path(book_id, body.act), "w") as f:
+                f.write(full_text)
+            job["status"] = "done"
+            job["result"] = full_text
         except Exception as e:
-            yield f'data: {json.dumps({"type": "error", "message": str(e) or type(e).__name__})}\n\n'
-            return
-        os.makedirs(_tier3_dir(book_id), exist_ok=True)
-        with open(_tier3_act_path(book_id, body.act), "w") as f:
-            f.write(full_text)
-        yield f'data: {json.dumps({"type": "done"})}\n\n'
+            job["status"] = "error"
+            job["error"] = str(e) or type(e).__name__
 
-    return StreamingResponse(generate(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    asyncio.create_task(_bg())
+    return {"job_id": job_id}
 
 
 class ApproveActBody(BaseModel):
@@ -812,15 +837,17 @@ class EditActBody(BaseModel):
 
 
 @router.post("/books/{book_id}/phase1/tier3/edit-act")
-def edit_tier3_act(book_id: str, body: EditActBody, user: str = Depends(current_user)):
+async def edit_tier3_act(book_id: str, body: EditActBody, user: str = Depends(current_user)):
+    from fastapi import HTTPException
     act_path = _tier3_act_path(book_id, body.act)
     if not os.path.exists(act_path):
-        from fastapi import HTTPException
         raise HTTPException(400, "No content for this act — run the agent first")
 
     current = open(act_path).read()
     provider = db.get_setting("agent_bible_agent_provider")
     model = db.get_setting("agent_bible_agent_model")
+    if not provider or not model:
+        raise HTTPException(400, "Bible Agent has no model assigned — go to Settings.")
     system = prompt_store.get("tier_editor", TIER_EDITOR_SYSTEM)
     messages = [{"role": "user", "content": (
         f"Make only this change to the document below: {body.directive}\n\n"
@@ -828,27 +855,28 @@ def edit_tier3_act(book_id: str, body: EditActBody, user: str = Depends(current_
         f"## Document\n\n{current}"
     )}]
 
-    async def generate():
-        if not provider or not model:
-            yield f'data: {json.dumps({"type": "error", "message": "Bible Agent has no model assigned — go to Settings."})}\n\n'
-            return
+    job_id, job = job_store.create()
+
+    async def _bg():
         full_text = ""
         try:
             async for token in llm.provider_tokens(provider, model, messages, system, user):
                 full_text += token
-                yield f'data: {json.dumps({"type": "token", "content": token})}\n\n'
+                job["tokens"] += token
+            with open(act_path, "w") as f:
+                f.write(full_text)
+            job["status"] = "done"
+            job["result"] = full_text
         except Exception as e:
-            yield f'data: {json.dumps({"type": "error", "message": str(e) or type(e).__name__})}\n\n'
-            return
-        with open(act_path, "w") as f:
-            f.write(full_text)
-        yield f'data: {json.dumps({"type": "done"})}\n\n'
+            job["status"] = "error"
+            job["error"] = str(e) or type(e).__name__
 
-    return StreamingResponse(generate(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    asyncio.create_task(_bg())
+    return {"job_id": job_id}
 
 
 # ── Tier 4 — per-chapter scene lists ──────────────────────────────────────────
+
 
 def _tier4_dir(book_id: str) -> str:
     return os.path.join(db.data_dir(book_id), "tier4")
@@ -923,9 +951,15 @@ class RunChapterBody(BaseModel):
 
 
 @router.post("/books/{book_id}/phase1/tier4/run-chapter")
-def run_tier4_chapter(book_id: str, body: RunChapterBody, user: str = Depends(current_user)):
-    book_dir = db.data_dir(book_id)
+async def run_tier4_chapter(book_id: str, body: RunChapterBody, user: str = Depends(current_user)):
+    from fastapi import HTTPException
 
+    provider = db.get_setting("agent_bible_agent_provider")
+    model = db.get_setting("agent_bible_agent_model")
+    if not provider or not model:
+        raise HTTPException(400, "Bible Agent has no model assigned — go to Settings.")
+
+    book_dir = db.data_dir(book_id)
     ns_path = os.path.join(book_dir, "north_star.md")
     north_star = open(ns_path).read() if os.path.exists(ns_path) else "[North Star not yet written]"
 
@@ -952,8 +986,6 @@ def run_tier4_chapter(book_id: str, body: RunChapterBody, user: str = Depends(cu
     if next_summary:
         context += f"\n\n## Next Chapter (Chapter {body.chapter + 1}) — forward context\n\n{next_summary}"
 
-    # Continuous scene numbering: count all scenes in earlier chapters
-    tier4_status = _read_tier4_status(book_id)
     start_scene = 1 + sum(
         len(ch.get("scenes", []))
         for ch in tier4_status.get("chapters", [])
@@ -963,30 +995,28 @@ def run_tier4_chapter(book_id: str, body: RunChapterBody, user: str = Depends(cu
 
     instruction = prompt_store.get("tier_scenes", TIER_INSTRUCTIONS[3])
     messages = [{"role": "user", "content": f"{context}\n\n---\n\n{instruction}"}]
-
-    provider = db.get_setting("agent_bible_agent_provider")
-    model = db.get_setting("agent_bible_agent_model")
     system = prompt_store.get("bible_agent", BIBLE_AGENT_SYSTEM)
 
-    async def generate():
-        if not provider or not model:
-            yield f'data: {json.dumps({"type": "error", "message": "Bible Agent has no model assigned — go to Settings."})}\n\n'
-            return
+    job_id, job = job_store.create()
+
+    async def _bg() -> None:
         full_text = ""
         try:
             async for token in llm.provider_tokens(provider, model, messages, system, user):
                 full_text += token
-                yield f'data: {json.dumps({"type": "token", "content": token})}\n\n'
+                job["tokens"] += token
+            os.makedirs(_tier4_dir(book_id), exist_ok=True)
+            with open(_tier4_chapter_path(book_id, body.chapter), "w") as f:
+                f.write(full_text)
+            job["status"] = "done"
+            job["result"] = full_text
         except Exception as e:
-            yield f'data: {json.dumps({"type": "error", "message": str(e) or type(e).__name__})}\n\n'
-            return
-        os.makedirs(_tier4_dir(book_id), exist_ok=True)
-        with open(_tier4_chapter_path(book_id, body.chapter), "w") as f:
-            f.write(full_text)
-        yield f'data: {json.dumps({"type": "done"})}\n\n'
+            job["status"] = "error"
+            job["error"] = str(e) or type(e).__name__
 
-    return StreamingResponse(generate(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    asyncio.create_task(_bg())
+    return {"job_id": job_id}
+
 
 
 @router.get("/books/{book_id}/phase1/tier4/chapter/{chapter_num}/scene/{scene_num}")
@@ -1055,15 +1085,17 @@ class EditChapterBody(BaseModel):
 
 
 @router.post("/books/{book_id}/phase1/tier4/edit-chapter")
-def edit_tier4_chapter(book_id: str, body: EditChapterBody, user: str = Depends(current_user)):
+async def edit_tier4_chapter(book_id: str, body: EditChapterBody, user: str = Depends(current_user)):
+    from fastapi import HTTPException
     chapter_path = _tier4_chapter_path(book_id, body.chapter)
     if not os.path.exists(chapter_path):
-        from fastapi import HTTPException
         raise HTTPException(400, "No content for this chapter — run the agent first")
 
     current = open(chapter_path).read()
     provider = db.get_setting("agent_bible_agent_provider")
     model = db.get_setting("agent_bible_agent_model")
+    if not provider or not model:
+        raise HTTPException(400, "Bible Agent has no model assigned — go to Settings.")
     system = prompt_store.get("tier_editor", TIER_EDITOR_SYSTEM)
     messages = [{"role": "user", "content": (
         f"Make only this change to the document below: {body.directive}\n\n"
@@ -1071,24 +1103,24 @@ def edit_tier4_chapter(book_id: str, body: EditChapterBody, user: str = Depends(
         f"## Document\n\n{current}"
     )}]
 
-    async def generate():
-        if not provider or not model:
-            yield f'data: {json.dumps({"type": "error", "message": "Bible Agent has no model assigned — go to Settings."})}\n\n'
-            return
+    job_id, job = job_store.create()
+
+    async def _bg():
         full_text = ""
         try:
             async for token in llm.provider_tokens(provider, model, messages, system, user):
                 full_text += token
-                yield f'data: {json.dumps({"type": "token", "content": token})}\n\n'
+                job["tokens"] += token
+            with open(chapter_path, "w") as f:
+                f.write(full_text)
+            job["status"] = "done"
+            job["result"] = full_text
         except Exception as e:
-            yield f'data: {json.dumps({"type": "error", "message": str(e) or type(e).__name__})}\n\n'
-            return
-        with open(chapter_path, "w") as f:
-            f.write(full_text)
-        yield f'data: {json.dumps({"type": "done"})}\n\n'
+            job["status"] = "error"
+            job["error"] = str(e) or type(e).__name__
 
-    return StreamingResponse(generate(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    asyncio.create_task(_bg())
+    return {"job_id": job_id}
 
 
 # ── Individual scene endpoints ─────────────────────────────────────────────────
@@ -1099,7 +1131,13 @@ class RunSceneBody(BaseModel):
 
 
 @router.post("/books/{book_id}/phase1/tier4/chapter/{chapter_num}/run-scene")
-def run_scene(book_id: str, chapter_num: int, body: RunSceneBody, user: str = Depends(current_user)):
+async def run_scene(book_id: str, chapter_num: int, body: RunSceneBody, user: str = Depends(current_user)):
+    from fastapi import HTTPException
+    provider = db.get_setting("agent_bible_agent_provider")
+    model = db.get_setting("agent_bible_agent_model")
+    if not provider or not model:
+        raise HTTPException(400, "Bible Agent has no model assigned — go to Settings.")
+
     book_dir = db.data_dir(book_id)
     ns_path = os.path.join(book_dir, "north_star.md")
     north_star = open(ns_path).read() if os.path.exists(ns_path) else ""
@@ -1107,7 +1145,6 @@ def run_scene(book_id: str, chapter_num: int, body: RunSceneBody, user: str = De
     entity_summary = _format_skeleton_for_context(skeleton)
     chapter_summary = _get_chapter_summary(book_id, chapter_num)
 
-    # Extract this scene's section from the plan
     plan_path = _tier4_chapter_path(book_id, chapter_num)
     scene_plan_section = ""
     if os.path.exists(plan_path):
@@ -1119,7 +1156,6 @@ def run_scene(book_id: str, chapter_num: int, body: RunSceneBody, user: str = De
         if m:
             scene_plan_section = m.group(1).strip()
 
-    # Tail of previous scene for continuity
     prev_scene_tail = ""
     if body.scene > 1:
         prev_path = _tier4_scene_path(book_id, chapter_num, body.scene - 1)
@@ -1139,28 +1175,26 @@ def run_scene(book_id: str, chapter_num: int, body: RunSceneBody, user: str = De
         context += f"\n\n## Author directive\n\n{body.directive}"
 
     messages = [{"role": "user", "content": context + "\n\nWrite the scene brief now. Use ONLY the 7 section headers from the instructions. Do NOT write prose sentences or paragraphs. Bullets and short phrases only."}]
-    provider = db.get_setting("agent_bible_agent_provider")
-    model = db.get_setting("agent_bible_agent_model")
 
-    async def generate():
-        if not provider or not model:
-            yield f'data: {json.dumps({"type": "error", "message": "Bible Agent has no model assigned."})}\n\n'
-            return
+    job_id, job = job_store.create()
+
+    async def _bg():
         full_text = ""
         try:
             async for token in llm.provider_tokens(provider, model, messages, SCENE_WRITER_SYSTEM, user):
                 full_text += token
-                yield f'data: {json.dumps({"type": "token", "content": token})}\n\n'
+                job["tokens"] += token
+            os.makedirs(_tier4_dir(book_id), exist_ok=True)
+            with open(_tier4_scene_path(book_id, chapter_num, body.scene), "w") as f:
+                f.write(full_text)
+            job["status"] = "done"
+            job["result"] = full_text
         except Exception as e:
-            yield f'data: {json.dumps({"type": "error", "message": str(e) or type(e).__name__})}\n\n'
-            return
-        os.makedirs(_tier4_dir(book_id), exist_ok=True)
-        with open(_tier4_scene_path(book_id, chapter_num, body.scene), "w") as f:
-            f.write(full_text)
-        yield f'data: {json.dumps({"type": "done"})}\n\n'
+            job["status"] = "error"
+            job["error"] = str(e) or type(e).__name__
 
-    return StreamingResponse(generate(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    asyncio.create_task(_bg())
+    return {"job_id": job_id}
 
 
 class ApproveSceneBody(BaseModel):
@@ -1168,95 +1202,106 @@ class ApproveSceneBody(BaseModel):
 
 
 @router.post("/books/{book_id}/phase1/tier4/chapter/{chapter_num}/scene/{scene_num}/approve")
-def approve_scene(book_id: str, chapter_num: int, scene_num: int, body: ApproveSceneBody, user: str = Depends(current_user)):
-    async def generate():
-        os.makedirs(_tier4_dir(book_id), exist_ok=True)
-        with open(_tier4_scene_path(book_id, chapter_num, scene_num), "w") as f:
-            f.write(body.content)
+async def approve_scene(book_id: str, chapter_num: int, scene_num: int, body: ApproveSceneBody, user: str = Depends(current_user)):
+    job_id, job = job_store.create()
 
-        status = _read_tier4_status(book_id)
-        chapter_complete = False
-        for ch in status.get("chapters", []):
-            if ch["number"] == chapter_num:
-                for s in ch.get("scenes", []):
-                    if s["number"] == scene_num:
-                        s["approved"] = True
-                        break
-                if all(s.get("approved") for s in ch.get("scenes", [])):
-                    ch["approved"] = True
-                    chapter_complete = True
-                break
-        _save_tier4_status(book_id, status)
+    async def _bg():
+        try:
+            os.makedirs(_tier4_dir(book_id), exist_ok=True)
+            with open(_tier4_scene_path(book_id, chapter_num, scene_num), "w") as f:
+                f.write(body.content)
 
-        book_dir = db.data_dir(book_id)
-        repo = Repo(book_dir)
-        rel_scene = os.path.relpath(_tier4_scene_path(book_id, chapter_num, scene_num), book_dir)
-        rel_status = os.path.relpath(_tier4_status_path(book_id), book_dir)
-        repo.index.add([rel_scene, rel_status])
-        repo.index.commit(f"Approve Chapter {chapter_num} Scene {scene_num}")
+            status = _read_tier4_status(book_id)
+            chapter_complete = False
+            for ch in status.get("chapters", []):
+                if ch["number"] == chapter_num:
+                    for s in ch.get("scenes", []):
+                        if s["number"] == scene_num:
+                            s["approved"] = True
+                            break
+                    if all(s.get("approved") for s in ch.get("scenes", [])):
+                        ch["approved"] = True
+                        chapter_complete = True
+                    break
+            _save_tier4_status(book_id, status)
 
-        yield f'data: {json.dumps({"type": "saved", "chapter_complete": chapter_complete})}\n\n'
+            book_dir = db.data_dir(book_id)
+            repo = Repo(book_dir)
+            rel_scene = os.path.relpath(_tier4_scene_path(book_id, chapter_num, scene_num), book_dir)
+            rel_status = os.path.relpath(_tier4_status_path(book_id), book_dir)
+            repo.index.add([rel_scene, rel_status])
+            repo.index.commit(f"Approve Chapter {chapter_num} Scene {scene_num}")
 
-        # Bible sync — extract new entities from this scene
-        yield f'data: {json.dumps({"type": "syncing_bible"})}\n\n'
+            job["meta"]["chapter_complete"] = chapter_complete
 
-        provider = db.get_setting("agent_bible_agent_provider")
-        model = db.get_setting("agent_bible_agent_model")
-        if not provider or not model:
-            yield f'data: {json.dumps({"type": "bible_synced", "new_entities": 0})}\n\n'
-            return
-
-        skeleton = _read_skeleton(book_id)
-        tier3_status = _read_tier3_status(book_id)
-        act_num = next(
-            (a["act"] for a in tier3_status.get("acts", [])
-             for ch in a.get("chapters", []) if ch["number"] == chapter_num),
-            None
-        )
-
-        sync_messages = [{"role": "user", "content": (
-            f"## Current Entity Skeleton\n\n{json.dumps(skeleton.get('entities', []), indent=2)}\n\n"
-            f"## Approved Scene (Chapter {chapter_num}, Scene {scene_num})\n\n{body.content}\n\n"
-            "List any new entities in this scene not already in the skeleton."
-        )}]
-
-        last_error = None
-        result = None
-        for attempt in range(2):
-            full_sync = ""
-            try:
-                async for token in llm.provider_tokens(provider, model, sync_messages, SCENE_BIBLE_SYNC_SYSTEM, user):
-                    full_sync += token
-            except Exception as e:
-                yield f'data: {json.dumps({"type": "bible_sync_error", "message": str(e)})}\n\n'
+            # Bible sync
+            provider = db.get_setting("agent_bible_agent_provider")
+            model = db.get_setting("agent_bible_agent_model")
+            if not provider or not model:
+                job["meta"]["new_entities"] = 0
+                job["status"] = "done"
+                job["result"] = "saved"
                 return
-            try:
-                result = _extract_json_skeleton(full_sync)
-                last_error = None
-                break
-            except Exception as e:
-                last_error = e
 
-        if last_error is not None:
-            yield f'data: {json.dumps({"type": "bible_sync_error", "message": str(last_error)})}\n\n'
-            return
+            skeleton = _read_skeleton(book_id)
+            tier3_status = _read_tier3_status(book_id)
+            act_num = next(
+                (a["act"] for a in tier3_status.get("acts", [])
+                 for ch in a.get("chapters", []) if ch["number"] == chapter_num),
+                None
+            )
 
-        new_entities = result.get("new_entities", [])
-        if new_entities:
-            if act_num is not None:
-                for e in new_entities:
-                    if act_num not in e.get("appearsInActs", []):
-                        e.setdefault("appearsInActs", []).append(act_num)
-            skeleton.setdefault("entities", []).extend(new_entities)
-            with open(_skeleton_path(book_id), "w") as f:
-                json.dump(skeleton, f, indent=2)
-            rel_skel = os.path.relpath(_skeleton_path(book_id), book_dir)
-            repo.index.add([rel_skel])
-            repo.index.commit(f"Bible sync — Ch{chapter_num} Sc{scene_num} (+{len(new_entities)} entities)")
-        yield f'data: {json.dumps({"type": "bible_synced", "new_entities": len(new_entities)})}\n\n'
+            sync_messages = [{"role": "user", "content": (
+                f"## Current Entity Skeleton\n\n{json.dumps(skeleton.get('entities', []), indent=2)}\n\n"
+                f"## Approved Scene (Chapter {chapter_num}, Scene {scene_num})\n\n{body.content}\n\n"
+                "List any new entities in this scene not already in the skeleton."
+            )}]
 
-    return StreamingResponse(generate(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+            last_error = None
+            result = None
+            for _attempt in range(2):
+                full_sync = ""
+                try:
+                    async for token in llm.provider_tokens(provider, model, sync_messages, SCENE_BIBLE_SYNC_SYSTEM, user):
+                        full_sync += token
+                except Exception as e:
+                    job["status"] = "error"
+                    job["error"] = str(e) or type(e).__name__
+                    return
+                try:
+                    result = _extract_json_skeleton(full_sync)
+                    last_error = None
+                    break
+                except Exception as e:
+                    last_error = e
+
+            if last_error is not None:
+                job["status"] = "error"
+                job["error"] = str(last_error)
+                return
+
+            new_entities = result.get("new_entities", [])
+            if new_entities:
+                if act_num is not None:
+                    for e in new_entities:
+                        if act_num not in e.get("appearsInActs", []):
+                            e.setdefault("appearsInActs", []).append(act_num)
+                skeleton.setdefault("entities", []).extend(new_entities)
+                with open(_skeleton_path(book_id), "w") as f:
+                    json.dump(skeleton, f, indent=2)
+                rel_skel = os.path.relpath(_skeleton_path(book_id), book_dir)
+                repo.index.add([rel_skel])
+                repo.index.commit(f"Bible sync — Ch{chapter_num} Sc{scene_num} (+{len(new_entities)} entities)")
+
+            job["meta"]["new_entities"] = len(new_entities)
+            job["status"] = "done"
+            job["result"] = "saved"
+        except Exception as e:
+            job["status"] = "error"
+            job["error"] = str(e) or type(e).__name__
+
+    asyncio.create_task(_bg())
+    return {"job_id": job_id}
 
 
 class EditSceneBody(BaseModel):
@@ -1264,37 +1309,39 @@ class EditSceneBody(BaseModel):
 
 
 @router.post("/books/{book_id}/phase1/tier4/chapter/{chapter_num}/scene/{scene_num}/edit")
-def edit_scene(book_id: str, chapter_num: int, scene_num: int, body: EditSceneBody, user: str = Depends(current_user)):
+async def edit_scene(book_id: str, chapter_num: int, scene_num: int, body: EditSceneBody, user: str = Depends(current_user)):
+    from fastapi import HTTPException
     scene_path = _tier4_scene_path(book_id, chapter_num, scene_num)
     if not os.path.exists(scene_path):
-        from fastapi import HTTPException
         raise HTTPException(400, "No scene content yet — run the agent first")
-    current = open(scene_path).read()
     provider = db.get_setting("agent_bible_agent_provider")
     model = db.get_setting("agent_bible_agent_model")
+    if not provider or not model:
+        raise HTTPException(400, "Bible Agent has no model assigned — go to Settings.")
+    current = open(scene_path).read()
     messages = [{"role": "user", "content": (
         f"Make only this change to the scene below: {body.directive}\n\n"
         f"Copy everything else verbatim.\n\n## Scene\n\n{current}"
     )}]
 
-    async def generate():
-        if not provider or not model:
-            yield f'data: {json.dumps({"type": "error", "message": "No model assigned."})}\n\n'
-            return
+    job_id, job = job_store.create()
+
+    async def _bg():
         full_text = ""
         try:
             async for token in llm.provider_tokens(provider, model, messages, TIER_EDITOR_SYSTEM, user):
                 full_text += token
-                yield f'data: {json.dumps({"type": "token", "content": token})}\n\n'
+                job["tokens"] += token
+            with open(scene_path, "w") as f:
+                f.write(full_text)
+            job["status"] = "done"
+            job["result"] = full_text
         except Exception as e:
-            yield f'data: {json.dumps({"type": "error", "message": str(e) or type(e).__name__})}\n\n'
-            return
-        with open(scene_path, "w") as f:
-            f.write(full_text)
-        yield f'data: {json.dumps({"type": "done"})}\n\n'
+            job["status"] = "error"
+            job["error"] = str(e) or type(e).__name__
 
-    return StreamingResponse(generate(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    asyncio.create_task(_bg())
+    return {"job_id": job_id}
 
 
 # ── Auto-Bible background implementation ──────────────────────────────────────

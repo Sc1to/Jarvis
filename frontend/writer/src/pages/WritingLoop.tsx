@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
-import { readSSE } from '@/lib/sse'
+import { runJob, startJob, pollJob, sleep } from '@/lib/jobs'
 import { API } from '@/lib/api'
 import { Play, CheckCircle, Loader2, Lock, AlertTriangle, Expand, RotateCcw, FileText, Zap, ChevronLeft, ChevronRight } from 'lucide-react'
 
@@ -212,17 +212,8 @@ export default function WritingLoopPage() {
     if (!sceneProse.trim() || !bookId) return
     setTextOpRunning(true)
     try {
-      const resp = await fetch(`${API}/books/${bookId}/text-ops/expand`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scene_prose: sceneProse }),
-      })
-      let result = ''
-      for await (const ev of readSSE(resp)) {
-        const event = ev as { type: string; content?: string }
-        if (event.type === 'token' && event.content) result += event.content
-      }
-      if (result) setSceneProse(result)
+      const state = await runJob(`${API}/books/${bookId}/text-ops/expand`, { scene_prose: sceneProse })
+      if (state.status === 'done' && state.result) setSceneProse(state.result)
     } finally {
       setTextOpRunning(false)
     }
@@ -232,17 +223,8 @@ export default function WritingLoopPage() {
     if (!sceneProse.trim() || !rephraseInstruction.trim() || !bookId) return
     setTextOpRunning(true)
     try {
-      const resp = await fetch(`${API}/books/${bookId}/text-ops/rephrase`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scene_prose: sceneProse, instruction: rephraseInstruction }),
-      })
-      let result = ''
-      for await (const ev of readSSE(resp)) {
-        const event = ev as { type: string; content?: string }
-        if (event.type === 'token' && event.content) result += event.content
-      }
-      if (result) setSceneProse(result)
+      const state = await runJob(`${API}/books/${bookId}/text-ops/rephrase`, { scene_prose: sceneProse, instruction: rephraseInstruction })
+      if (state.status === 'done' && state.result) setSceneProse(state.result)
       setShowRephrase(false)
       setRephraseInstruction('')
     } finally {
@@ -287,28 +269,36 @@ export default function WritingLoopPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chapter }),
       })
-      for await (const ev of readSSE(resp)) {
-        const event = ev as ProgressEvent
-        if (event.type === 'heartbeat') continue
-        if (event.type !== 'token') {
-          setEvents(prev => [...prev, event])
+      if (!resp.ok) return
+      const { job_id } = await resp.json()
+
+      let shownCount = 0
+      while (true) {
+        await sleep(2000)
+        const state = await pollJob(job_id)
+        const evts = (state.meta?.events as ProgressEvent[] | undefined) ?? []
+        if (evts.length > shownCount) {
+          setEvents(evts)
+          shownCount = evts.length
         }
-        if (event.type === 'chapter_done') {
-          setChapterDone(true)
-          reconnectRef.current = false
-          await refetchStatus()
-          await refetchChapter()
+        if (state.status !== 'running') {
+          if (state.status === 'done') {
+            setChapterDone(true)
+            reconnectRef.current = false
+            await refetchStatus()
+            await refetchChapter()
+          }
+          break
         }
       }
     } catch {
-      // Connection dropped — background task may still be running; refetch to find out
+      // Connection dropped — background task continues on server
     } finally {
       const st = await refetchStatus()
       if (!st.data?.active_chapter_job) {
         setWriting(false)
         reconnectRef.current = false
       }
-      // else: still running in background, keep writing=true, polling interval handles UI
     }
   }
 
@@ -324,21 +314,30 @@ export default function WritingLoopPage() {
 
     try {
       const resp = await fetch(`${API}/books/${bookId}/phase3/chapter/${chapter}/approve`, { method: 'POST' })
-      for await (const ev of readSSE(resp)) {
-        const event = ev as ProgressEvent
-        if (event.type === 'heartbeat') continue
-        if (event.type !== 'token') {
-          setEvents(prev => [...prev, event])
+      if (!resp.ok) return
+      const { job_id } = await resp.json()
+
+      let shownCount = 0
+      while (true) {
+        await sleep(2000)
+        const state = await pollJob(job_id)
+        const evts = (state.meta?.events as ProgressEvent[] | undefined) ?? []
+        if (evts.length > shownCount) {
+          setEvents(evts)
+          shownCount = evts.length
         }
-        if (event.type === 'saved') {
-          reconnectRef.current = false
-          await refetchStatus()
-          await refetchChapter()
-          qc.invalidateQueries({ queryKey: ['bible', bookId] })
+        if (state.status !== 'running') {
+          if (state.status === 'done') {
+            reconnectRef.current = false
+            await refetchStatus()
+            await refetchChapter()
+            qc.invalidateQueries({ queryKey: ['bible', bookId] })
+          }
+          break
         }
       }
     } catch {
-      // Connection dropped — background task may still be running
+      // Connection dropped — background task continues on server
     } finally {
       const st = await refetchStatus()
       if (!st.data?.active_chapter_job) {
@@ -434,20 +433,23 @@ export default function WritingLoopPage() {
       : `${API}/books/${bookId}/phase3/chapter/${chapter}/scene/${scene}/rewrite`
 
     try {
-      const resp = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ directive: rewriteDirective }),
-      })
-      for await (const ev of readSSE(resp)) {
-        const event = ev as ProgressEvent
-        if (event.type !== 'token') {
-          setEvents(prev => [...prev, event])
+      const jobId = await startJob(endpoint, { directive: rewriteDirective })
+      let shownCount = 0
+      while (true) {
+        await sleep(1000)
+        const state = await pollJob(jobId)
+        const evts = (state.meta?.events as ProgressEvent[] | undefined) ?? []
+        if (evts.length > shownCount) {
+          setEvents(evts)
+          shownCount = evts.length
         }
-        if (event.type === 'saved') {
-          setRewriteScene(null)
-          setRewriteDirective('')
-          await refetchChapter()
+        if (state.status !== 'running') {
+          if (state.status === 'done') {
+            setRewriteScene(null)
+            setRewriteDirective('')
+            await refetchChapter()
+          }
+          break
         }
       }
     } finally {

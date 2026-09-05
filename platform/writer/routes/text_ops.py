@@ -5,13 +5,14 @@ These endpoints are stateless — they receive only the selected prose text plus
 novel.genre and novel.language extracted from writing_prefs.md. No bible, no ledger.
 """
 
+import asyncio
 import os
 
 from fastapi import APIRouter, Depends
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 import db
+import jobs as job_store
 from deps import current_user
 import llm
 import prompt_store
@@ -74,10 +75,6 @@ def _extract_prefs(book_id: str) -> tuple[str, str]:
     return genre, language
 
 
-def _sse(event: dict) -> str:
-    import json
-    return f"data: {json.dumps(event)}\n\n"
-
 
 class ExpandBody(BaseModel):
     scene_prose: str
@@ -93,15 +90,18 @@ class EditorialNotesBody(BaseModel):
 
 
 @router.post("/books/{book_id}/text-ops/expand")
-def expand_selection(book_id: str, body: ExpandBody, user: str = Depends(current_user)):
-    async def generate():
-        provider = db.get_setting("agent_text_op_expand_provider") or db.get_setting("agent_writer_agent_provider")
-        model = db.get_setting("agent_text_op_expand_model") or db.get_setting("agent_writer_agent_model")
-        if not provider or not model:
-            yield _sse({"type": "error", "message": "No model configured — assign one in Settings or configure the Writer agent."})
-            return
+async def expand_selection(book_id: str, body: ExpandBody, user: str = Depends(current_user)):
+    from fastapi import HTTPException
+    provider = db.get_setting("agent_text_op_expand_provider") or db.get_setting("agent_writer_agent_provider")
+    model = db.get_setting("agent_text_op_expand_model") or db.get_setting("agent_writer_agent_model")
+    if not provider or not model:
+        raise HTTPException(400, "No model configured — assign one in Settings or configure the Writer agent.")
 
-        system = prompt_store.get("text_op_expand", TEXT_OP_EXPAND_SYSTEM)
+    system = prompt_store.get("text_op_expand", TEXT_OP_EXPAND_SYSTEM)
+    job_id, job = job_store.create()
+
+    async def _bg():
+        full_text = ""
         try:
             async for token in llm.provider_tokens(
                 provider, model,
@@ -109,27 +109,32 @@ def expand_selection(book_id: str, body: ExpandBody, user: str = Depends(current
                 system,
                 user,
             ):
-                yield _sse({"type": "token", "content": token})
+                full_text += token
+                job["tokens"] += token
+            job["status"] = "done"
+            job["result"] = full_text
         except Exception as e:
-            yield _sse({"type": "error", "message": str(e)})
-            return
-        yield _sse({"type": "done"})
+            job["status"] = "error"
+            job["error"] = str(e) or type(e).__name__
 
-    return StreamingResponse(generate(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    asyncio.create_task(_bg())
+    return {"job_id": job_id}
 
 
 @router.post("/books/{book_id}/text-ops/rephrase")
-def rephrase_selection(book_id: str, body: RephraseBody, user: str = Depends(current_user)):
-    async def generate():
-        provider = db.get_setting("agent_text_op_rephrase_provider") or db.get_setting("agent_writer_agent_provider")
-        model = db.get_setting("agent_text_op_rephrase_model") or db.get_setting("agent_writer_agent_model")
-        if not provider or not model:
-            yield _sse({"type": "error", "message": "No model configured — assign one in Settings or configure the Writer agent."})
-            return
+async def rephrase_selection(book_id: str, body: RephraseBody, user: str = Depends(current_user)):
+    from fastapi import HTTPException
+    provider = db.get_setting("agent_text_op_rephrase_provider") or db.get_setting("agent_writer_agent_provider")
+    model = db.get_setting("agent_text_op_rephrase_model") or db.get_setting("agent_writer_agent_model")
+    if not provider or not model:
+        raise HTTPException(400, "No model configured — assign one in Settings or configure the Writer agent.")
 
-        system = prompt_store.get("text_op_rephrase", TEXT_OP_REPHRASE_SYSTEM)
-        user_msg = f"Instruction: {body.instruction}\n\nText to rephrase:\n\n{body.scene_prose}"
+    system = prompt_store.get("text_op_rephrase", TEXT_OP_REPHRASE_SYSTEM)
+    user_msg = f"Instruction: {body.instruction}\n\nText to rephrase:\n\n{body.scene_prose}"
+    job_id, job = job_store.create()
+
+    async def _bg():
+        full_text = ""
         try:
             async for token in llm.provider_tokens(
                 provider, model,
@@ -137,14 +142,16 @@ def rephrase_selection(book_id: str, body: RephraseBody, user: str = Depends(cur
                 system,
                 user,
             ):
-                yield _sse({"type": "token", "content": token})
+                full_text += token
+                job["tokens"] += token
+            job["status"] = "done"
+            job["result"] = full_text
         except Exception as e:
-            yield _sse({"type": "error", "message": str(e)})
-            return
-        yield _sse({"type": "done"})
+            job["status"] = "error"
+            job["error"] = str(e) or type(e).__name__
 
-    return StreamingResponse(generate(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    asyncio.create_task(_bg())
+    return {"job_id": job_id}
 
 
 @router.post("/books/{book_id}/text-ops/editorial-notes")

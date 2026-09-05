@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Lock, Send, Loader2, FileText, X, ChevronLeft, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { readSSE } from '@/lib/sse'
+import { runJob } from '@/lib/jobs'
 import { API } from '@/lib/api'
 
 interface Message { role: 'user' | 'assistant'; content: string }
@@ -60,32 +60,25 @@ export default function NorthStarPage() {
     setStreaming(true)
 
     try {
-      const resp = await fetch(`${API}/books/${bookId}/phase1/north-star/reply`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: history }),
-      })
-
-      let text = ''
-      for await (const event of readSSE(resp)) {
-        if (event.type === 'token' && event.content) {
-          text += event.content
+      const state = await runJob(
+        `${API}/books/${bookId}/phase1/north-star/reply`,
+        { messages: history },
+        (_, accumulated) => {
           setMessages(prev => {
             const next = [...prev]
-            next[next.length - 1] = { role: 'assistant', content: text }
+            next[next.length - 1] = { role: 'assistant', content: accumulated }
             return next
           })
-        } else if (event.type === 'error') {
-          setMessages(prev => {
-            const next = [...prev]
-            next[next.length - 1] = { role: 'assistant', content: `⚠ ${event.message}` }
-            return next
-          })
-          break
-        }
-      }
-      if (text) {
-        const saved = [...history, { role: 'assistant' as const, content: text }]
+        },
+      )
+      if (state.status === 'error') {
+        setMessages(prev => {
+          const next = [...prev]
+          next[next.length - 1] = { role: 'assistant', content: `⚠ ${state.error ?? 'Generation failed'}` }
+          return next
+        })
+      } else if (state.result) {
+        const saved = [...history, { role: 'assistant' as const, content: state.result }]
         fetch(`${API}/books/${bookId}/phase1/north-star/messages`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },

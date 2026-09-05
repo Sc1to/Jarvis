@@ -3,7 +3,6 @@ import logging
 from typing import AsyncGenerator
 
 import httpx
-from fastapi.responses import StreamingResponse
 
 import db
 
@@ -191,30 +190,6 @@ def provider_tokens(provider: str, model: str, messages: list[dict], system: str
         return _ollama_tokens(model, messages, system, user_id, json_mode=json_mode)
     raise ValueError(f"Unknown provider: {provider}")
 
-
-def stream_chat(agent_key: str, messages: list[dict], system: str | None = None, user_id: str = "local") -> StreamingResponse:
-    async def generate():
-        provider = db.get_setting(f"agent_{agent_key}_provider")
-        model = db.get_setting(f"agent_{agent_key}_model")
-
-        if not provider or not model:
-            msg = f"Agent \"{agent_key}\" has no model assigned. Go to Settings."
-            yield f'data: {json.dumps({"type": "error", "message": msg})}\n\n'
-            return
-        try:
-            async for token in provider_tokens(provider, model, messages, system, user_id):
-                yield f'data: {json.dumps({"type": "token", "content": token})}\n\n'
-            yield f'data: {json.dumps({"type": "done"})}\n\n'
-        except Exception as e:
-            msg = str(e) or f"{type(e).__name__}"
-            logger.error("LLM stream error: %s", msg)
-            yield f'data: {json.dumps({"type": "error", "message": msg})}\n\n'
-
-    return StreamingResponse(
-        generate(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
 
 
 async def call_llm(agent_key: str, messages: list[dict], system: str | None = None, user_id: str = "local") -> str:
