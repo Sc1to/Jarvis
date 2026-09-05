@@ -187,7 +187,7 @@ export default function SequentialWorkflow() {
   const refetch = () => qc.invalidateQueries({ queryKey: ['seq-progress', bookId] })
 
   // Run a background job, streaming tokens to the stream display.
-  async function runBackgroundJob(url: string, body?: object) {
+  async function runBackgroundJob(url: string, body?: Record<string, unknown>) {
     setStreaming(true)
     setStreamText('')
     setError(null)
@@ -202,7 +202,7 @@ export default function SequentialWorkflow() {
   }
 
   // Run a background job with no token streaming (e.g. approve operations).
-  async function runSilentJob(url: string, body?: object) {
+  async function runSilentJob(url: string, body?: Record<string, unknown>) {
     setStreaming(true)
     setError(null)
     try {
