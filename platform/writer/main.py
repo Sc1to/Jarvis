@@ -29,6 +29,7 @@ from routes.phase3 import router as phase3_router
 from routes.text_ops import (TEXT_OP_EXPAND_SYSTEM, TEXT_OP_REPHRASE_SYSTEM, TEXT_OP_NOTES_SYSTEM,
                               router as text_ops_router)
 from routes.exports import router as exports_router
+from routes.jobs_router import router as jobs_router
 
 logging.basicConfig(level=logging.INFO)
 VERSION = "1.0.0"
@@ -50,6 +51,7 @@ app.include_router(phase2_router, prefix="/api")
 app.include_router(phase3_router, prefix="/api")
 app.include_router(text_ops_router, prefix="/api")
 app.include_router(exports_router, prefix="/api")
+app.include_router(jobs_router, prefix="/api")
 
 
 _WRITER_DEFAULTS = {

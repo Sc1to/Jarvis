@@ -5,7 +5,6 @@ import os
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
-from fastapi.responses import StreamingResponse
 
 import db
 import llm
@@ -691,22 +690,14 @@ def phase2_cancel(book_id: str, user: str = Depends(current_user)):
 
 @router.post("/books/{book_id}/phase2/consolidate")
 async def consolidate(book_id: str, force: bool = False, user: str = Depends(current_user)):
-    _job_id, queue, _is_new = _launch_job(book_id, "consolidate", user, force, _consolidate_task)
-    return StreamingResponse(
-        _make_sse_generator(queue),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    job_id, _queue, _is_new = _launch_job(book_id, "consolidate", user, force, _consolidate_task)
+    return {"job_id": job_id, "started": True}
 
 
 @router.post("/books/{book_id}/phase2/run")
 async def research_run(book_id: str, force: bool = False, user: str = Depends(current_user)):
-    _job_id, queue, _is_new = _launch_job(book_id, "research", user, force, _research_task)
-    return StreamingResponse(
-        _make_sse_generator(queue),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    job_id, _queue, _is_new = _launch_job(book_id, "research", user, force, _research_task)
+    return {"job_id": job_id, "started": True}
 
 
 # ── Approve ────────────────────────────────────────────────────────────────────

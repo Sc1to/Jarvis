@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, forwardRef } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { API } from '@/lib/api'
-import { readSSE } from '@/lib/sse'
+import { runJob as doRunJob, sleep } from '@/lib/jobs'
 import { Button } from '@/components/ui/button'
 import { ChevronDown, ChevronRight, AlertCircle } from 'lucide-react'
 
@@ -186,57 +186,50 @@ export default function SequentialWorkflow() {
 
   const refetch = () => qc.invalidateQueries({ queryKey: ['seq-progress', bookId] })
 
-  async function runSSE(url: string, body?: object) {
+  // Run a background job, streaming tokens to the stream display.
+  async function runBackgroundJob(url: string, body?: object) {
     setStreaming(true)
     setStreamText('')
     setError(null)
     try {
-      const resp = await fetch(url, {
-        method: 'POST',
-        headers: body ? { 'Content-Type': 'application/json' } : {},
-        body: body ? JSON.stringify(body) : undefined,
+      const state = await doRunJob(url, body ?? {}, (_, acc) => {
+        setStreamText(acc)
+        streamRef.current?.scrollTo(0, streamRef.current.scrollHeight)
       })
-      for await (const ev of readSSE(resp)) {
-        if (ev.type === 'token' && ev.content) {
-          setStreamText(t => t + (ev.content as string))
-          streamRef.current?.scrollTo(0, streamRef.current.scrollHeight)
-        } else if (ev.type === 'error') {
-          setError(ev.message as string ?? 'Unknown error')
-        }
-      }
+      if (state.status === 'error') setError(state.error ?? 'Generation failed')
     } catch (e) { setError(String(e)) }
     finally { setStreaming(false); refetch() }
   }
 
-  // Background-job variant: starts job via POST, polls status — survives tab switches
-  async function runJob(startUrl: string, pollUrl: (id: string) => string, body?: object) {
+  // Run a background job with no token streaming (e.g. approve operations).
+  async function runSilentJob(url: string, body?: object) {
+    setStreaming(true)
+    setError(null)
+    try {
+      const state = await doRunJob(url, body ?? {})
+      if (state.status === 'error') setError(state.error ?? 'Operation failed')
+      else refetch()
+    } catch (e) { setError(String(e)) }
+    finally { setStreaming(false) }
+  }
+
+  // Post to a phase2 endpoint and poll phase2/status until the job finishes.
+  async function runPhase2Step(endpoint: string, nextStep: 'consolidated' | 'run_done') {
     setStreaming(true)
     setStreamText('')
     setError(null)
     try {
-      const startResp = await fetch(startUrl, {
-        method: 'POST',
-        headers: body ? { 'Content-Type': 'application/json' } : {},
-        body: body ? JSON.stringify(body) : undefined,
-      })
-      if (!startResp.ok) {
-        const d = await startResp.json().catch(() => ({}))
-        setError(d.detail ?? 'Request failed')
-        return
+      const resp = await fetch(`${base}/phase2/${endpoint}`, { method: 'POST' })
+      if (!resp.ok) { const d = await resp.json().catch(() => ({})); setError(d.detail ?? 'Request failed'); return }
+      let attempts = 0
+      while (attempts++ < 150) {
+        await sleep(2000)
+        const status = await fetch(`${base}/phase2/status`).then(r => r.json())
+        if (!status.active_job) break
       }
-      const { job_id } = await startResp.json()
-      while (true) {
-        await new Promise(r => setTimeout(r, 1000))
-        const status = await fetch(pollUrl(job_id)).then(r => r.json())
-        if (status.tokens) {
-          setStreamText(status.tokens)
-          streamRef.current?.scrollTo(0, streamRef.current.scrollHeight)
-        }
-        if (status.status === 'done') break
-        if (status.status === 'error') { setError(status.error ?? 'Generation failed'); return }
-      }
+      setPhase2Step(nextStep)
     } catch (e) { setError(String(e)) }
-    finally { setStreaming(false); refetch() }
+    finally { setStreaming(false) }
   }
 
   async function post(url: string, body?: object) {
@@ -308,7 +301,7 @@ export default function SequentialWorkflow() {
               <p className="text-sm text-muted-foreground">Generate the chapter breakdown for Act {act}.</p>
               {streaming
                 ? <StreamDisplay ref={streamRef} text={streamText} />
-                : <Button onClick={() => runSSE(`${base}/phase1/tier3/run-act`, { act })}>Generate chapters</Button>
+                : <Button onClick={() => runBackgroundJob(`${base}/phase1/tier3/run-act`, { act })}>Generate chapters</Button>
               }
             </div>
           )}
@@ -334,7 +327,7 @@ export default function SequentialWorkflow() {
               <p className="text-sm text-muted-foreground">Generate the scene list for Chapter {chapter}.</p>
               {streaming
                 ? <StreamDisplay ref={streamRef} text={streamText} />
-                : <Button onClick={() => runJob(`${base}/phase1/tier4/run-chapter`, id => `${base}/phase1/tier4/chapter-job/${id}`, { chapter })}>Generate scene list</Button>
+                : <Button onClick={() => runBackgroundJob(`${base}/phase1/tier4/run-chapter`, { chapter })}>Generate scene list</Button>
               }
             </div>
           )}
@@ -370,7 +363,7 @@ export default function SequentialWorkflow() {
                       placeholder="Optional directive — e.g. 'raise tension', 'keep it brief', 'focus on character reaction'…"
                       className="w-full h-20 p-3 text-sm rounded-md border border-input bg-background resize-y placeholder:text-muted-foreground/50"
                     />
-                    <Button onClick={() => runSSE(`${base}/phase1/tier4/chapter/${chapter}/run-scene`, directive.trim() ? { scene, directive } : { scene })}>
+                    <Button onClick={() => runBackgroundJob(`${base}/phase1/tier4/chapter/${chapter}/run-scene`, directive.trim() ? { scene, directive } : { scene })}>
                       Generate brief
                     </Button>
                   </div>
@@ -390,22 +383,10 @@ export default function SequentialWorkflow() {
               />
               <Button
                 disabled={streaming}
-                onClick={async () => {
-                  setStreaming(true)
-                  setError(null)
-                  try {
-                    const resp = await fetch(`${base}/phase1/tier4/chapter/${chapter}/scene/${scene}/approve`, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ content: editContent }),
-                    })
-                    for await (const ev of readSSE(resp)) {
-                      if (ev.type === 'error') setError(ev.message as string ?? 'Error')
-                    }
-                    refetch()
-                  } catch (e) { setError(String(e)) }
-                  finally { setStreaming(false) }
-                }}
+                onClick={() => runSilentJob(
+                  `${base}/phase1/tier4/chapter/${chapter}/scene/${scene}/approve`,
+                  { content: editContent },
+                )}
               >
                 {streaming ? 'Approving…' : 'Approve brief & sync bible'}
               </Button>
@@ -432,7 +413,7 @@ export default function SequentialWorkflow() {
                       placeholder="Optional directive — e.g. 'make it tense', 'focus on subtext', 'cut the preamble'…"
                       className="w-full h-20 p-3 text-sm rounded-md border border-input bg-background resize-y placeholder:text-muted-foreground/50"
                     />
-                    <Button onClick={() => runSSE(`${base}/phase3/chapter/${chapter}/scene/${scene}/write`, directive.trim() ? { directive } : undefined)}>
+                    <Button onClick={() => runBackgroundJob(`${base}/phase3/chapter/${chapter}/scene/${scene}/write`, directive.trim() ? { directive } : {})}>
                       Write scene
                     </Button>
                   </div>
@@ -466,16 +447,13 @@ export default function SequentialWorkflow() {
               {/* Step 1: consolidate */}
               <div className="space-y-2">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Step 1 — Consolidate</p>
-                {phase2Step === 'idle' && streamText && (
+                {phase2Step === 'idle' && streaming && (
                   <StreamDisplay ref={streamRef} text={streamText} />
                 )}
                 <Button
                   disabled={streaming || phase2Step !== 'idle'}
                   variant={phase2Step !== 'idle' ? 'secondary' : 'default'}
-                  onClick={async () => {
-                    await runSSE(`${base}/phase2/consolidate`)
-                    setPhase2Step('consolidated')
-                  }}
+                  onClick={() => runPhase2Step('consolidate', 'consolidated')}
                 >
                   {streaming && phase2Step === 'idle' ? 'Consolidating…' : phase2Step !== 'idle' ? '✓ Consolidated' : 'Consolidate entities'}
                 </Button>
@@ -490,11 +468,7 @@ export default function SequentialWorkflow() {
                 <Button
                   disabled={streaming || phase2Step === 'idle' || phase2Step === 'run_done'}
                   variant={phase2Step === 'run_done' ? 'secondary' : 'default'}
-                  onClick={async () => {
-                    setStreamText('')
-                    await runSSE(`${base}/phase2/run`)
-                    setPhase2Step('run_done')
-                  }}
+                  onClick={() => { setStreamText(''); runPhase2Step('run', 'run_done') }}
                 >
                   {streaming && phase2Step === 'consolidated' ? 'Enriching…' : phase2Step === 'run_done' ? '✓ Enriched' : 'Enrich entities'}
                 </Button>
