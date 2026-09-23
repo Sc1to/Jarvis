@@ -112,6 +112,10 @@ def _chapter_meta_path(book_id: str, chapter: int) -> str:
 def _chapter_plan_path(book_id: str, chapter: int) -> str:
     return os.path.join(db.data_dir(book_id), f"chapter_{chapter:02d}_plan.json")
 
+def _manual_qa_max_attempts() -> int:
+    """Writer attempts per scene for a manual (non auto-write) chapter write."""
+    return 3 if db.get_setting("qa_retry_manual") == "true" else 1
+
 def _read_meta(book_id: str, chapter: int) -> dict | None:
     p = _chapter_meta_path(book_id, chapter)
     if not os.path.exists(p):
@@ -292,6 +296,10 @@ async def _write_chapter_task(book_id: str, chapter: int, user: str, job_id: str
     completed_scenes: list[str] = list(resume_completed_scenes)
     scene_results: list[dict] = list(resume_scene_results)
 
+    # Manual writes stop after one QA-failed draft so the author can review what QA
+    # flagged, unless they opted into auto-retry. Auto-write always retries.
+    max_attempts = _manual_qa_max_attempts()
+
     for scene_idx, scene_def in enumerate(scene_plan):
         scene_num = scene_def.get("scene", len(completed_scenes) + 1)
         if scene_num in done_scene_nums:
@@ -306,7 +314,7 @@ async def _write_chapter_task(book_id: str, chapter: int, user: str, job_id: str
         qa_result: dict | None = None
         attempt = 0
 
-        while attempt < 3:
+        while attempt < max_attempts:
             attempt += 1
             await queue.put({
                 "type": "scene_start" if attempt == 1 else "rewrite_start",
@@ -371,7 +379,9 @@ async def _write_chapter_task(book_id: str, chapter: int, user: str, job_id: str
                 "pass": passed, "issues": qa_result.get("issues", []), "notes": qa_result.get("notes", ""),
             })
 
-            if passed or attempt >= 3:
+            if passed or attempt >= max_attempts:
+                if not passed and max_attempts == 1:
+                    await queue.put({"type": "qa_held", "scene": scene_num})
                 break
 
         completed_scenes.append(scene_text)
@@ -381,6 +391,7 @@ async def _write_chapter_task(book_id: str, chapter: int, user: str, job_id: str
             "attempts": attempt,
             "qa_pass": qa_result.get("pass", True) if qa_result else True,
             "qa_notes": qa_result.get("notes", "") if qa_result else "",
+            "qa_issues": qa_result.get("issues", []) if qa_result else [],
             "word_count": len(scene_text.split()),
         })
 
@@ -627,6 +638,7 @@ async def _write_chapter_bg(book_id: str, chapter: int, user: str, log_cb) -> No
             "attempts": attempt,
             "qa_pass": qa_result.get("pass", True) if qa_result else True,
             "qa_notes": qa_result.get("notes", "") if qa_result else "",
+            "qa_issues": qa_result.get("issues", []) if qa_result else [],
             "word_count": len(scene_text.split()),
         })
 
@@ -1004,7 +1016,7 @@ async def rewrite_scene(book_id: str, chapter: int, scene: int, body: RewriteBod
             meta = _read_meta(book_id, chapter) or {}
             for s in meta.get("scenes", []):
                 if s["scene"] == scene:
-                    s.update({"qa_pass": qa_result.get("pass", True), "qa_notes": qa_result.get("notes", ""), "word_count": len(scene_text.split()), "author_edited": False})
+                    s.update({"qa_pass": qa_result.get("pass", True), "qa_notes": qa_result.get("notes", ""), "qa_issues": qa_result.get("issues", []), "attempts": 1, "word_count": len(scene_text.split()), "author_edited": False})
             meta["status"] = "written"
             with open(_chapter_meta_path(book_id, chapter), "w") as f:
                 json.dump(meta, f, indent=2)

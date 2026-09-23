@@ -19,6 +19,12 @@ interface ChapterSummary {
   bible_updated: boolean
 }
 
+interface QaIssue {
+  type: string
+  description: string
+  severity: string
+}
+
 interface SceneResult {
   scene: number
   brief: string
@@ -27,6 +33,7 @@ interface SceneResult {
   attempts: number
   qa_pass: boolean
   qa_notes: string
+  qa_issues?: QaIssue[]
   author_edited?: boolean
   word_count: number
 }
@@ -48,7 +55,7 @@ interface ProgressEvent {
   brief?: string
   pass?: boolean
   notes?: string
-  issues?: { type: string; description: string; severity: string }[]
+  issues?: QaIssue[]
   word_count?: number
   scene_count?: number
   message?: string
@@ -81,9 +88,17 @@ function EventFeed({ events }: { events: ProgressEvent[] }) {
           <p key={i} className="text-muted-foreground">QA checking…</p>
         )
         if (ev.type === 'qa_result') return (
-          <p key={i} className={ev.pass ? 'text-emerald-500' : 'text-red-500'}>
-            QA {ev.pass ? 'pass' : 'fail'} — {ev.notes}
-          </p>
+          <div key={i}>
+            <p className={ev.pass ? 'text-emerald-500' : 'text-red-500'}>
+              QA {ev.pass ? 'pass' : 'fail'} — {ev.notes}
+            </p>
+            {!ev.pass && (ev.issues ?? []).map((iss, j) => (
+              <p key={j} className="pl-4 text-muted-foreground">· [{iss.severity}] {iss.description}</p>
+            ))}
+          </div>
+        )
+        if (ev.type === 'qa_held') return (
+          <p key={i} className="text-amber-500">⏸ Scene {ev.scene} kept for your review — no automatic retry</p>
         )
         if (ev.type === 'chapter_done') return (
           <p key={i} className="text-emerald-500 font-medium mt-2">
@@ -102,6 +117,44 @@ function EventFeed({ events }: { events: ProgressEvent[] }) {
         return null
       })}
       <div ref={bottomRef} />
+    </div>
+  )
+}
+
+function QaFindings({ scene, onUseAsDirective }: { scene: SceneResult; onUseAsDirective: (text: string) => void }) {
+  const issues = scene.qa_issues ?? []
+  const directive = [
+    'Address the QA findings:',
+    ...issues.map(i => `- ${i.description}`),
+    ...(issues.length === 0 && scene.qa_notes ? [`- ${scene.qa_notes}`] : []),
+  ].join('\n')
+
+  return (
+    <div className="rounded-md border border-amber-400/50 bg-amber-50/50 dark:bg-amber-950/20 px-3 py-2 space-y-1.5">
+      <div className="flex items-center gap-1.5 text-xs font-medium text-amber-600 dark:text-amber-400">
+        <AlertTriangle size={12} />
+        QA flagged this scene{scene.attempts > 1 ? ` (after ${scene.attempts} attempts)` : ''}
+        {scene.author_edited && <span className="font-normal text-muted-foreground">— on the agent draft, before your edits</span>}
+      </div>
+      {scene.qa_notes && <p className="text-xs text-muted-foreground">{scene.qa_notes}</p>}
+      {issues.length > 0 && (
+        <ul className="space-y-0.5">
+          {issues.map((iss, i) => (
+            <li key={i} className="text-xs">
+              <span className={cn('font-mono text-[10px] uppercase mr-1', iss.severity === 'error' ? 'text-red-500' : 'text-muted-foreground')}>
+                {iss.severity}
+              </span>
+              {iss.description}
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="text-[11px] text-muted-foreground pt-0.5">
+        Keep it as is, edit it below, or{' '}
+        <button onClick={() => onUseAsDirective(directive)} className="underline hover:text-foreground">
+          send these findings to the Writer agent
+        </button>.
+      </p>
     </div>
   )
 }
@@ -458,6 +511,8 @@ export default function WritingLoopPage() {
   const scenes = meta?.scenes ?? []
   const isWritten = !!chapterData?.content
   const isApproved = meta?.status === 'approved'
+  const flaggedScenes = scenes.filter(s => !s.qa_pass)
+  const editingSceneMeta = rewriteScene !== null ? scenes.find(s => s.scene === rewriteScene) : undefined
   const autoWriting = jobStatus === 'running'
   const busy = writing || approving || rewriting || autoWriting
 
@@ -666,6 +721,10 @@ export default function WritingLoopPage() {
                     <span className="text-sm font-medium">Scene {rewriteScene}</span>
                   </div>
 
+                  {editingSceneMeta && !editingSceneMeta.qa_pass && (
+                    <QaFindings scene={editingSceneMeta} onUseAsDirective={setRewriteDirective} />
+                  )}
+
                   {/* Hand-editable prose + text op toolbar */}
                   <ProseEditor
                     key={`${activeChapter}-${rewriteScene}`}
@@ -729,9 +788,28 @@ export default function WritingLoopPage() {
                   </div>
                 </div>
               ) : (
+                <>
+                {flaggedScenes.length > 0 && !isApproved && (
+                  <div className="mb-6 rounded-md border border-amber-400/50 bg-amber-50/50 dark:bg-amber-950/20 px-3 py-2 flex items-center gap-2 flex-wrap text-xs">
+                    <AlertTriangle size={12} className="text-amber-500 shrink-0" />
+                    <span className="text-amber-600 dark:text-amber-400 font-medium">
+                      QA flagged {flaggedScenes.length === 1 ? '1 scene' : `${flaggedScenes.length} scenes`} — review before approving:
+                    </span>
+                    {flaggedScenes.map(s => (
+                      <button
+                        key={s.scene}
+                        onClick={() => { setRewriteScene(s.scene); setRewriteDirective('') }}
+                        className="px-2 py-0.5 rounded border border-amber-400/60 hover:bg-amber-100 dark:hover:bg-amber-900/30 transition-colors"
+                      >
+                        Scene {s.scene}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <pre className="whitespace-pre-wrap font-serif text-base leading-relaxed text-foreground">
                   {chapterData?.content}
                 </pre>
+                </>
               )}
             </div>
           </div>
