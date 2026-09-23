@@ -1004,7 +1004,7 @@ async def rewrite_scene(book_id: str, chapter: int, scene: int, body: RewriteBod
             meta = _read_meta(book_id, chapter) or {}
             for s in meta.get("scenes", []):
                 if s["scene"] == scene:
-                    s.update({"qa_pass": qa_result.get("pass", True), "qa_notes": qa_result.get("notes", ""), "word_count": len(scene_text.split())})
+                    s.update({"qa_pass": qa_result.get("pass", True), "qa_notes": qa_result.get("notes", ""), "word_count": len(scene_text.split()), "author_edited": False})
             meta["status"] = "written"
             with open(_chapter_meta_path(book_id, chapter), "w") as f:
                 json.dump(meta, f, indent=2)
@@ -1023,6 +1023,62 @@ async def rewrite_scene(book_id: str, chapter: int, scene: int, body: RewriteBod
 
     asyncio.create_task(_bg())
     return {"job_id": job_id}
+
+# ── Save author-edited scene prose ─────────────────────────────────────────────
+
+class SceneProseBody(BaseModel):
+    content: str
+
+@router.put("/books/{book_id}/phase3/chapter/{chapter}/scene/{scene}/prose")
+def save_scene_prose(book_id: str, chapter: int, scene: int, body: SceneProseBody):
+    """Replace a scene's prose with the author's hand-edited text.
+
+    Locked once the chapter is approved — the Bible Updater has already
+    consumed the approved text, so edits would silently diverge from it.
+    """
+    from fastapi import HTTPException
+    text = body.content.strip()
+    if not text:
+        raise HTTPException(400, "Scene prose cannot be empty.")
+
+    chapter_path = _chapter_path(book_id, chapter)
+    if not os.path.exists(chapter_path):
+        raise HTTPException(404, "Chapter not found.")
+
+    meta = _read_meta(book_id, chapter) or {}
+    if meta.get("status") == "approved":
+        raise HTTPException(409, "Chapter is approved — edits are locked.")
+
+    content = open(chapter_path).read()
+    pattern = rf"(## Scene {scene}\n\n)(.*?)(?=\n\n---\n\n## Scene |\Z)"
+    match = re.search(pattern, content, flags=re.DOTALL)
+    if not match:
+        raise HTTPException(404, f"Scene {scene} not found in Chapter {chapter}.")
+    if match.group(2).strip() == text:
+        return {"data": {"saved": False, "word_count": len(text.split())}, "status": "ok"}
+
+    # Splice by match offsets rather than re.sub so backslashes in the author's text aren't treated as escapes
+    new_content = content[:match.start()] + f"## Scene {scene}\n\n{text}" + content[match.end():]
+    with open(chapter_path, "w") as f:
+        f.write(new_content)
+
+    word_count = len(text.split())
+    for s in meta.get("scenes", []):
+        if s.get("scene") == scene:
+            s.update({"word_count": word_count, "author_edited": True})
+    meta_path = _chapter_meta_path(book_id, chapter)
+    files = [f"chapter_{chapter:02d}.md"]
+    if meta:
+        with open(meta_path, "w") as f:
+            json.dump(meta, f, indent=2)
+        files.append(f"chapter_{chapter:02d}_meta.json")
+
+    from git import Repo
+    repo = Repo(db.data_dir(book_id))
+    repo.index.add(files)
+    repo.index.commit(f"Author edit: Chapter {chapter} Scene {scene}")
+
+    return {"data": {"saved": True, "word_count": word_count}, "status": "ok"}
 
 # ── Sequential mode ────────────────────────────────────────────────────────────
 
@@ -1297,7 +1353,7 @@ async def write_scene_sequential(book_id: str, chapter: int, scene: int, body: W
             meta["status"] = "written"
             existing = next((s for s in meta["scenes"] if s.get("scene") == scene), None)
             if existing:
-                existing.update({"status": "written", "word_count": len(scene_text.split())})
+                existing.update({"status": "written", "word_count": len(scene_text.split()), "author_edited": False})
             else:
                 meta["scenes"].append({"scene": scene, "status": "written", "word_count": len(scene_text.split())})
             meta["scene_count"] = len(meta["scenes"])
@@ -1484,7 +1540,7 @@ async def write_scene_with_beats(book_id: str, chapter: int, scene: int, body: W
             meta["status"] = "written"
             existing_scene = next((s for s in meta["scenes"] if s.get("scene") == scene), None)
             if existing_scene:
-                existing_scene.update({"status": "written", "word_count": len(scene_text.split())})
+                existing_scene.update({"status": "written", "word_count": len(scene_text.split()), "author_edited": False})
             else:
                 meta["scenes"].append({"scene": scene, "status": "written", "word_count": len(scene_text.split())})
             meta["scene_count"] = len(meta["scenes"])

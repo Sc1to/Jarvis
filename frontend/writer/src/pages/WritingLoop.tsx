@@ -6,9 +6,10 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
-import { runJob, startJob, pollJob, sleep } from '@/lib/jobs'
+import { startJob, pollJob, sleep } from '@/lib/jobs'
 import { API } from '@/lib/api'
-import { Play, CheckCircle, Loader2, Lock, AlertTriangle, Expand, RotateCcw, FileText, Zap, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Play, CheckCircle, Loader2, Lock, AlertTriangle, Zap, ChevronLeft, ChevronRight, Save, PenLine } from 'lucide-react'
+import ProseEditor from '@/components/ProseEditor'
 
 interface ChapterSummary {
   chapter: number
@@ -26,6 +27,7 @@ interface SceneResult {
   attempts: number
   qa_pass: boolean
   qa_notes: string
+  author_edited?: boolean
   word_count: number
 }
 
@@ -130,10 +132,9 @@ export default function WritingLoopPage() {
   const [rewriting, setRewriting] = useState(false)
   // Text op panel state
   const [sceneProse, setSceneProse] = useState('')
-  const [textOpRunning, setTextOpRunning] = useState(false)
-  const [editorialNotes, setEditorialNotes] = useState('')
-  const [rephraseInstruction, setRephraseInstruction] = useState('')
-  const [showRephrase, setShowRephrase] = useState(false)
+  const [savedProse, setSavedProse] = useState('')
+  const [savingProse, setSavingProse] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
   // Beats mode: scenes that should use beat-based expansion on rewrite
   const [beatScenes, setBeatScenes] = useState<Set<number>>(new Set())
   const [leftCollapsed, setLeftCollapsed] = useState(false)
@@ -185,15 +186,17 @@ export default function WritingLoopPage() {
     }
   }, [status?.active_chapter_job?.chapter, status?.active_chapter_job?.step])
 
-  // Pre-fill scene prose when rewrite panel opens
+  // Pre-fill scene prose when the edit panel opens (or the chapter reloads after a save/rewrite)
   useEffect(() => {
     if (rewriteScene !== null && chapterData?.content) {
-      setSceneProse(extractSceneProse(chapterData.content, rewriteScene))
-      setEditorialNotes('')
-      setRephraseInstruction('')
-      setShowRephrase(false)
+      const prose = extractSceneProse(chapterData.content, rewriteScene)
+      setSceneProse(prose)
+      setSavedProse(prose)
+      setSaveError(null)
     }
   }, [rewriteScene, chapterData?.content])
+
+  const proseDirty = rewriteScene !== null && sceneProse !== savedProse
 
   function extractSceneProse(content: string, scene: number): string {
     const parts = content.split('## Scene ')
@@ -208,44 +211,33 @@ export default function WritingLoopPage() {
     return ''
   }
 
-  async function doExpand() {
-    if (!sceneProse.trim() || !bookId) return
-    setTextOpRunning(true)
+  async function saveSceneProse(chapter: number, scene: number) {
+    if (!sceneProse.trim()) return
+    setSavingProse(true)
+    setSaveError(null)
     try {
-      const state = await runJob(`${API}/books/${bookId}/text-ops/expand`, { scene_prose: sceneProse })
-      if (state.status === 'done' && state.result) setSceneProse(state.result)
-    } finally {
-      setTextOpRunning(false)
-    }
-  }
-
-  async function doRephrase() {
-    if (!sceneProse.trim() || !rephraseInstruction.trim() || !bookId) return
-    setTextOpRunning(true)
-    try {
-      const state = await runJob(`${API}/books/${bookId}/text-ops/rephrase`, { scene_prose: sceneProse, instruction: rephraseInstruction })
-      if (state.status === 'done' && state.result) setSceneProse(state.result)
-      setShowRephrase(false)
-      setRephraseInstruction('')
-    } finally {
-      setTextOpRunning(false)
-    }
-  }
-
-  async function doEditorialNotes() {
-    if (!sceneProse.trim() || !bookId) return
-    setTextOpRunning(true)
-    try {
-      const resp = await fetch(`${API}/books/${bookId}/text-ops/editorial-notes`, {
-        method: 'POST',
+      const resp = await fetch(`${API}/books/${bookId}/phase3/chapter/${chapter}/scene/${scene}/prose`, {
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scene_prose: sceneProse }),
+        body: JSON.stringify({ content: sceneProse }),
       })
-      const data = await resp.json()
-      setEditorialNotes(data.notes || '')
+      if (!resp.ok) {
+        const d = await resp.json().catch(() => ({}))
+        setSaveError(d.detail ?? 'Save failed')
+        return
+      }
+      setSavedProse(sceneProse)
+      await refetchChapter()
+    } catch (e) {
+      setSaveError(String(e))
     } finally {
-      setTextOpRunning(false)
+      setSavingProse(false)
     }
+  }
+
+  function closeSceneEditor() {
+    if (proseDirty && !window.confirm('Discard unsaved edits to this scene?')) return
+    setRewriteScene(null)
   }
 
   function toggleBeats(scene: number) {
@@ -670,81 +662,41 @@ export default function WritingLoopPage() {
               {rewriteScene !== null ? (
                 <div className="space-y-4">
                   <div className="flex items-center gap-2">
-                    <Button variant="ghost" size="sm" onClick={() => setRewriteScene(null)}>← Back</Button>
+                    <Button variant="ghost" size="sm" onClick={closeSceneEditor}>← Back</Button>
                     <span className="text-sm font-medium">Scene {rewriteScene}</span>
                   </div>
 
-                  {/* Prose textarea + text op toolbar */}
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-1 flex-wrap">
-                      <span className="text-xs text-muted-foreground mr-1">Edit prose:</span>
-                      <Button
-                        variant="outline" size="sm"
-                        onClick={doExpand}
-                        disabled={textOpRunning || !sceneProse.trim()}
-                        className="h-6 px-2 text-xs gap-1"
-                      >
-                        {textOpRunning ? <Loader2 size={10} className="animate-spin" /> : <Expand size={10} />}
-                        Expand
-                      </Button>
-                      <Button
-                        variant="outline" size="sm"
-                        onClick={() => setShowRephrase(v => !v)}
-                        disabled={textOpRunning}
-                        className="h-6 px-2 text-xs gap-1"
-                      >
-                        <RotateCcw size={10} />Rephrase
-                      </Button>
-                      <Button
-                        variant="outline" size="sm"
-                        onClick={doEditorialNotes}
-                        disabled={textOpRunning || !sceneProse.trim()}
-                        className="h-6 px-2 text-xs gap-1"
-                      >
-                        {textOpRunning ? <Loader2 size={10} className="animate-spin" /> : <FileText size={10} />}
-                        Notes
-                      </Button>
-                    </div>
-
-                    {showRephrase && (
-                      <div className="flex gap-2">
-                        <input
-                          value={rephraseInstruction}
-                          onChange={e => setRephraseInstruction(e.target.value)}
-                          placeholder="e.g. more tense, cut by half, more physical detail…"
-                          className="flex-1 rounded-md border border-input bg-transparent px-2 py-1 text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                          onKeyDown={e => e.key === 'Enter' && doRephrase()}
-                        />
-                        <Button
-                          size="sm" variant="outline"
-                          onClick={doRephrase}
-                          disabled={!rephraseInstruction.trim() || textOpRunning}
-                          className="h-7 px-2 text-xs"
-                        >
-                          {textOpRunning ? <Loader2 size={10} className="animate-spin" /> : 'Apply'}
-                        </Button>
-                      </div>
+                  {/* Hand-editable prose + text op toolbar */}
+                  <ProseEditor
+                    key={`${activeChapter}-${rewriteScene}`}
+                    bookId={bookId!}
+                    value={sceneProse}
+                    onChange={setSceneProse}
+                    disabled={savingProse || rewriting}
+                  />
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Button
+                      size="sm"
+                      onClick={() => saveSceneProse(activeChapter, rewriteScene)}
+                      disabled={!proseDirty || !sceneProse.trim() || savingProse || rewriting}
+                      className="gap-2"
+                    >
+                      {savingProse ? <><Loader2 size={12} className="animate-spin" />Saving…</> : <><Save size={12} />Save edits</>}
+                    </Button>
+                    {proseDirty && !savingProse && (
+                      <>
+                        <Button variant="ghost" size="sm" onClick={() => setSceneProse(savedProse)}>Revert</Button>
+                        <span className="text-xs text-amber-500">Unsaved changes</span>
+                      </>
                     )}
-
-                    <textarea
-                      value={sceneProse}
-                      onChange={e => setSceneProse(e.target.value)}
-                      rows={10}
-                      className="w-full resize-y rounded-md border border-input bg-transparent px-3 py-2 text-sm font-serif leading-relaxed placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                    />
-
-                    {editorialNotes && (
-                      <div className="rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground whitespace-pre-wrap">
-                        {editorialNotes}
-                      </div>
-                    )}
+                    {saveError && <span className="text-xs text-destructive">{saveError}</span>}
                   </div>
 
                   <Separator />
 
                   {/* Writer-agent rewrite */}
                   <div className="space-y-2">
-                    <p className="text-xs text-muted-foreground">Or rewrite via Writer agent:</p>
+                    <p className="text-xs text-muted-foreground">Or rewrite via Writer agent{proseDirty && ' (replaces your unsaved edits)'}:</p>
                     <textarea
                       value={rewriteDirective}
                       onChange={e => setRewriteDirective(e.target.value)}
@@ -826,6 +778,9 @@ export default function WritingLoopPage() {
                     <div className="flex items-center justify-between gap-1">
                       <span className="text-xs font-medium">Scene {s.scene}</span>
                       <div className="flex items-center gap-1">
+                        {s.author_edited && (
+                          <span title="Edited by author — not re-checked by QA"><PenLine size={11} className="text-sky-500" /></span>
+                        )}
                         {s.qa_pass
                           ? <CheckCircle size={11} className="text-emerald-500" />
                           : <AlertTriangle size={11} className="text-amber-400" />
@@ -843,10 +798,14 @@ export default function WritingLoopPage() {
                       <span className="text-[10px] text-muted-foreground">{s.word_count.toLocaleString()} words</span>
                       {isWritten && !isApproved && (
                         <button
-                          onClick={() => { setRewriteScene(s.scene); setRewriteDirective('') }}
+                          onClick={() => {
+                            if (s.scene === rewriteScene) return
+                            if (proseDirty && !window.confirm('Discard unsaved edits to this scene?')) return
+                            setRewriteScene(s.scene); setRewriteDirective('')
+                          }}
                           className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
                         >
-                          Rewrite
+                          Edit
                         </button>
                       )}
                     </div>

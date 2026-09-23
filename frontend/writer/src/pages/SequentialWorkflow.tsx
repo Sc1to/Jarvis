@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { API } from '@/lib/api'
 import { runJob as doRunJob, sleep } from '@/lib/jobs'
 import { Button } from '@/components/ui/button'
+import ProseEditor from '@/components/ProseEditor'
 import { ChevronDown, ChevronRight, AlertCircle } from 'lucide-react'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -161,6 +162,7 @@ export default function SequentialWorkflow() {
   // For consolidate_act: 'idle' | 'consolidated' | 'run_done'
   const [phase2Step, setPhase2Step] = useState<'idle' | 'consolidated' | 'run_done'>('idle')
   const [directive, setDirective] = useState('')
+  const [savingProse, setSavingProse] = useState(false)
   const streamRef = useRef<HTMLDivElement>(null)
   const prevStepKey = useRef<string>('')
 
@@ -243,6 +245,27 @@ export default function SequentialWorkflow() {
       if (!resp.ok) { const d = await resp.json().catch(() => ({})); setError(d.detail ?? 'Request failed'); return false }
       refetch(); return true
     } catch (e) { setError(String(e)); return false }
+  }
+
+  // Persist hand-edited scene prose. Returns false (with error set) if the save failed.
+  async function saveProse(chapter: number, scene: number) {
+    setSavingProse(true)
+    setError(null)
+    try {
+      const resp = await fetch(`${base}/phase3/chapter/${chapter}/scene/${scene}/prose`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: editContent }),
+      })
+      if (!resp.ok) { const d = await resp.json().catch(() => ({})); setError(d.detail ?? 'Save failed'); return false }
+      refetch(); return true
+    } catch (e) { setError(String(e)); return false }
+    finally { setSavingProse(false) }
+  }
+
+  async function saveAndApproveProse(chapter: number, scene: number, dirty: boolean) {
+    if (dirty && !(await saveProse(chapter, scene))) return
+    await post(`${base}/sequential/chapter/${chapter}/scene/${scene}/approve-prose`)
   }
 
   if (isLoading) return <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">Loading…</div>
@@ -423,19 +446,44 @@ export default function SequentialWorkflow() {
           )}
 
           {/* ── Approve scene prose ── */}
-          {step === 'approve_prose' && (
-            <div className="space-y-3">
-              <p className="text-sm text-muted-foreground">
-                Review the prose for Scene {scene}. Use Writing Loop to rewrite if needed.
-              </p>
-              <pre className="p-4 bg-muted rounded-md text-sm whitespace-pre-wrap overflow-auto max-h-96 border border-border">
-                {c.content || <span className="italic text-muted-foreground">No content yet</span>}
-              </pre>
-              <Button onClick={() => post(`${base}/sequential/chapter/${chapter}/scene/${scene}/approve-prose`)}>
-                Approve prose
-              </Button>
-            </div>
-          )}
+          {step === 'approve_prose' && (() => {
+            const proseDirty = editContent.trim() !== (c.content ?? '').trim()
+            return (
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  Review the prose for Scene {scene}. Edit it directly, refine it with the tools below, or use Writing Loop to rewrite it via the Writer agent.
+                </p>
+                <ProseEditor
+                  key={stepKey}
+                  bookId={bookId!}
+                  value={editContent}
+                  onChange={setEditContent}
+                  disabled={savingProse}
+                />
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Button
+                    variant="outline"
+                    disabled={!proseDirty || !editContent.trim() || savingProse}
+                    onClick={() => saveProse(chapter!, scene!)}
+                  >
+                    {savingProse ? 'Saving…' : 'Save edits'}
+                  </Button>
+                  <Button
+                    disabled={!editContent.trim() || savingProse}
+                    onClick={() => saveAndApproveProse(chapter!, scene!, proseDirty)}
+                  >
+                    {proseDirty ? 'Save & approve prose' : 'Approve prose'}
+                  </Button>
+                  {proseDirty && !savingProse && (
+                    <>
+                      <Button variant="ghost" onClick={() => setEditContent(c.content ?? '')}>Revert</Button>
+                      <span className="text-xs text-amber-500">Unsaved changes</span>
+                    </>
+                  )}
+                </div>
+              </div>
+            )
+          })()}
 
           {/* ── Consolidate act ── */}
           {step === 'consolidate_act' && (
