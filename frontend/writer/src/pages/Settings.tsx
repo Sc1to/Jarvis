@@ -79,7 +79,6 @@ export default function SettingsPage() {
   const [anthropicKey, setAnthropicKey]     = useState('')
   const [openaiKey, setOpenaiKey]           = useState('')
   const [ollamaHost, setOllamaHost]         = useState('http://localhost:11434')
-  const [autoMode, setAutoMode]         = useState(false)
   const [qaRetryManual, setQaRetryManual] = useState(false)
   const [agents, setAgents] = useState<Record<string, AgentAssignment>>(() =>
     Object.fromEntries(AGENTS.map(a => [a.key, { provider: '' as Provider, model: '' }]))
@@ -91,7 +90,6 @@ export default function SettingsPage() {
     if (saved.anthropic_api_key)  setAnthropicKey(saved.anthropic_api_key)
     if (saved.openai_api_key)     setOpenaiKey(saved.openai_api_key)
     if (saved.ollama_host)        setOllamaHost(saved.ollama_host)
-    if (saved.auto_mode)          setAutoMode(saved.auto_mode === 'true')
     if (saved.qa_retry_manual)    setQaRetryManual(saved.qa_retry_manual === 'true')
     // Restore agent assignments from saved settings
     setAgents(prev => {
@@ -173,7 +171,6 @@ export default function SettingsPage() {
       anthropic_api_key:   anthropicKey,
       openai_api_key:      openaiKey,
       ollama_host:         ollamaHost,
-      auto_mode:           String(autoMode),
       qa_retry_manual:     String(qaRetryManual),
       ...agentSettings,
     })
@@ -407,17 +404,9 @@ export default function SettingsPage() {
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base">Writing Loop</CardTitle>
-          <CardDescription>Controls how Phase 3 advances between scenes.</CardDescription>
+          <CardDescription>Controls how Phase 3 handles scenes that fail QA.</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium">Automatic mode</p>
-              <p className="text-xs text-muted-foreground">When QA passes, advance to the next scene without approval.</p>
-            </div>
-            <Switch checked={autoMode} onCheckedChange={setAutoMode} />
-          </div>
-          <Separator className="my-4" />
           <div className="flex items-center justify-between gap-4">
             <div>
               <p className="text-sm font-medium">Retry failed QA on manual writes</p>
