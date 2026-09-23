@@ -44,6 +44,7 @@ Update this section at the start of each session to reflect current reality.
 ```
 Current phase:     Phase 13 — Trading System
 Last completed:    Phase 13.19 — Paper trading validation tooling; Phase DEV — Docker, deploy scripts, test suite
+                   Writer app enhancements (2026-09-23) — author scene-prose editing, manual-mode QA hold, first writer tests
 Currently working: Phase 13.20 — Live trading activation (manual user decision)
 Blocked on:        Infra phases (1, 2) are hardware setup; 3-6 months paper trading runtime
 Remaining:         Phase 13.20 (manual user decision)
