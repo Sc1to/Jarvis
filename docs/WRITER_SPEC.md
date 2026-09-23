@@ -105,7 +105,7 @@ Each agent has an independent model assignment. The author selects a provider, t
 
 ### 3.3 Automatic Mode
 
-Automatic mode can be toggled in Settings at any time, including mid-novel. See section 6.5 for full behaviour.
+Automatic mode is chosen per run from the Writing Loop view: **Auto-write all** runs the pipeline unattended; **Write Chapter** is manual mode. There is no Settings toggle for it. Settings does hold one related option — *Retry failed QA on manual writes* (setting key `qa_retry_manual`, default off). See section 6.5 for full behaviour.
 
 ### 3.4 Remote Access (Tailscale)
 
@@ -336,13 +336,15 @@ For a long novel, QA context will grow scene by scene and will hit model context
 | Attempt 2 | Negative constraint injection — summary of what failed in attempt 1 is prepended to the Writer's prompt as a hard constraint list |
 | Attempt 3 | Always escalates to author, regardless of automatic mode setting |
 
+> **As implemented:** automatic QA retries (up to 3 attempts, with attempt-2+ issue injection) happen only in automatic mode (Auto-write all). In manual mode (Write Chapter) a scene that fails QA is kept after attempt 1 and held for author review — no automatic relaunch — unless `qa_retry_manual` is enabled in Settings. QA findings are stored per scene in `chapter_NN_meta.json` (`qa_pass`, `qa_notes`, `qa_issues`, `attempts`).
+
 > The exit state is fixed — set in Phase 1, it is the destination the Writer must reach. QA does not renegotiate it; it verifies arrival.
 
 > **Model selection note:** QA carries the largest and fastest-growing context of any agent in the system. Prioritise context window size and long-context reliability when choosing the QA model. As the novel grows, this may mean reassigning QA to a more capable model mid-project. See section 6.1.
 
 ### 6.5 Automatic Mode
 
-Automatic mode can be enabled or disabled in Settings at any time, including mid-novel.
+Automatic mode is selected per run in the Writing Loop (Auto-write all vs. Write Chapter), not in Settings.
 
 - **Enabled:** if QA passes on attempt 1 or 2, the scene is committed and the next scene begins without author involvement. The pipeline runs unattended — overnight if desired.
 - **Disabled:** every QA-passed scene waits for explicit author approval before proceeding.
@@ -365,6 +367,8 @@ The author can:
 - **Approve** — scene proceeds to Bible Update unchanged.
 - **Reject with notes** — Writer gets one final attempt with author guidance added to the prompt.
 - **Edit directly** — if the Writer's final attempt still fails, or at any point the author prefers to take over, an inline text editor opens on the Writing Loop view. The author edits the scene draft in place and approves the result.
+
+**As implemented (manual review of QA-flagged scenes):** after Write Chapter, the Writing Loop shows a banner listing scenes that failed QA. Opening a scene shows QA's notes and issues; the author can keep the draft, hand-edit it, or send the findings to the Writer agent as a rewrite directive (reject with notes). Hand edits are saved via `PUT /books/{id}/phase3/chapter/{ch}/scene/{sc}/prose` — this replaces only that scene's section, marks the scene `author_edited` in `chapter_NN_meta.json`, and commits `Author edit: Chapter N Scene M`. Edits are locked once the chapter is approved. The Sequential Workflow's approve-prose step offers the same editor (Save edits / Save & approve). The shared editor also exposes the Expand / Rephrase / Notes text operations.
 
 In all cases — Writer-generated, revised, or author-edited — the approved scene passes through the Bible Updater before being committed. The Bible Updater must run to keep the ledger consistent. The scene's provenance (writer-generated, revised, or author-edited) is recorded in `scenes/NNN_meta.json`.
 
@@ -405,11 +409,11 @@ The application is a web app served locally, accessible from any browser on the 
 
 | View | Purpose |
 |---|---|
-| Settings | Model provider configuration, API keys, agent assignment, automatic mode toggle, optional Tailscale setup |
+| Settings | Model provider configuration, API keys, agent assignment, manual-mode QA retry toggle, optional Tailscale setup |
 | North Star | Phase 1A — conversation interface to create and lock the North Star document |
 | Bible Workshop | Phase 1B — tiered bible loop; shows completed tier output for author review, author injection panel, entity ledger sidebar, diff from previous pass |
 | Bible Viewer | Read-only view of current `bible.json` with search, filter, and ledger entity lookup including alias list |
-| Writing Loop | Active scene display with entry/exit state, QA status, automatic mode indicator, inline editor for direct author edits, approval controls |
+| Writing Loop | Active scene display with entry/exit state, QA status and flagged-scene findings, Auto-write all (automatic mode) control, inline editor for direct author edits, approval controls |
 | History | Git log visualiser — browse all scenes and bible states by commit |
 
 > Settings is the first screen shown on first launch. The app does not proceed to any other view until at least one agent has a model assigned.
@@ -460,7 +464,7 @@ The Novel AI Pipeline v6.0 guides a novel from first idea to completed manuscrip
 - **Writer context is bounded by design; QA context is unbounded by necessity** — the ledger is the Writer's memory system. QA needs everything and will hit model limits first. QA model selection matters most.
 - **Every unit has a fixed exit state** — set in Phase 1, verified in Phase 3. Not renegotiated.
 - **Foreshadowing is tracked mechanically** — seeds have IDs, planting windows, and statuses. QA checks against them; payoff references are hidden from the Writer.
-- **QA escalates at attempt 3, always** — attempt 2 gets negative constraint injection; attempt 3 goes to the author regardless of automatic mode.
+- **QA escalates at attempt 3, always** — attempt 2 gets negative constraint injection; attempt 3 goes to the author regardless of automatic mode. In manual mode, a QA failure goes to the author after attempt 1 unless manual retries are enabled.
 - **Author edits flow through the Bible Updater** — whether the scene was writer-generated or author-edited, the ledger always stays consistent.
 - **Automatic mode lets the pipeline run unattended** — QA passes, the story advances. The author wakes to finished scenes.
 - **The system is built to grow** — more novels, more users, better hardware, all additive.
