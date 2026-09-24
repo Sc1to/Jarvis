@@ -80,6 +80,7 @@ export default function SettingsPage() {
   const [openaiKey, setOpenaiKey]           = useState('')
   const [ollamaHost, setOllamaHost]         = useState('http://localhost:11434')
   const [qaRetryManual, setQaRetryManual] = useState(false)
+  const [qaStyleCheckEvery, setQaStyleCheckEvery] = useState('3')
   const [agents, setAgents] = useState<Record<string, AgentAssignment>>(() =>
     Object.fromEntries(AGENTS.map(a => [a.key, { provider: '' as Provider, model: '' }]))
   )
@@ -91,6 +92,7 @@ export default function SettingsPage() {
     if (saved.openai_api_key)     setOpenaiKey(saved.openai_api_key)
     if (saved.ollama_host)        setOllamaHost(saved.ollama_host)
     if (saved.qa_retry_manual)    setQaRetryManual(saved.qa_retry_manual === 'true')
+    if (saved.qa_style_check_every_n_scenes) setQaStyleCheckEvery(saved.qa_style_check_every_n_scenes)
     // Restore agent assignments from saved settings
     setAgents(prev => {
       const next = { ...prev }
@@ -172,6 +174,7 @@ export default function SettingsPage() {
       openai_api_key:      openaiKey,
       ollama_host:         ollamaHost,
       qa_retry_manual:     String(qaRetryManual),
+      qa_style_check_every_n_scenes: String(Math.max(1, parseInt(qaStyleCheckEvery, 10) || 3)),
       ...agentSettings,
     })
   }
@@ -404,9 +407,9 @@ export default function SettingsPage() {
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base">Writing Loop</CardTitle>
-          <CardDescription>Controls how Phase 3 handles scenes that fail QA.</CardDescription>
+          <CardDescription>Controls how Phase 3 runs QA on scenes.</CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
           <div className="flex items-center justify-between gap-4">
             <div>
               <p className="text-sm font-medium">Retry failed QA on manual writes</p>
@@ -416,6 +419,26 @@ export default function SettingsPage() {
               </p>
             </div>
             <Switch checked={qaRetryManual} onCheckedChange={setQaRetryManual} />
+          </div>
+
+          <Separator />
+
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium">Series style check cadence</p>
+              <p className="text-xs text-muted-foreground">
+                For books in a series, QA checks the scene against the series style sheet every Nth scene
+                instead of every scene, to keep the QA prompt from growing on every check.
+              </p>
+            </div>
+            <Input
+              id="qa-style-check-every"
+              type="number"
+              min={1}
+              value={qaStyleCheckEvery}
+              onChange={e => setQaStyleCheckEvery(e.target.value)}
+              className="w-20 text-center"
+            />
           </div>
         </CardContent>
       </Card>
