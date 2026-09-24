@@ -2,10 +2,11 @@ import { useState, useEffect, useRef, forwardRef } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { API } from '@/lib/api'
-import { runJob as doRunJob, sleep } from '@/lib/jobs'
+import { runJob as doRunJob, sleep, type JobState } from '@/lib/jobs'
 import { Button } from '@/components/ui/button'
 import ProseEditor from '@/components/ProseEditor'
-import { ChevronDown, ChevronRight, AlertCircle } from 'lucide-react'
+import QaIssuesList, { type QaIssue } from '@/components/QaIssuesList'
+import { ChevronDown, ChevronRight, AlertCircle, AlertTriangle } from 'lucide-react'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -32,6 +33,9 @@ interface Progress {
   ready: boolean; reason?: string
   acts: ActProgress[]; current: Current
 }
+interface BriefQaResult {
+  pass: boolean; issues: QaIssue[]; notes: string
+}
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -50,6 +54,24 @@ const StreamDisplay = forwardRef<HTMLDivElement, { text: string }>(({ text }, re
     {text || <span className="text-muted-foreground italic">Generating…</span>}
   </div>
 ))
+
+function BriefQaPanel({ qa }: { qa: BriefQaResult }) {
+  if (qa.pass && qa.issues.length === 0) return (
+    <div className="flex items-center gap-1.5 text-xs text-muted-foreground px-3 py-2 rounded-md border border-border">
+      Brief QA — no structural issues flagged.
+    </div>
+  )
+  return (
+    <div className="rounded-md border border-amber-400/50 bg-amber-50/50 dark:bg-amber-950/20 px-3 py-2 space-y-1.5">
+      <div className="flex items-center gap-1.5 text-xs font-medium text-amber-600 dark:text-amber-400">
+        <AlertTriangle size={12} />
+        Brief QA flagged this brief
+      </div>
+      {qa.notes && <p className="text-xs text-muted-foreground">{qa.notes}</p>}
+      <QaIssuesList issues={qa.issues} />
+    </div>
+  )
+}
 
 // ── Progress tree ──────────────────────────────────────────────────────────────
 
@@ -163,6 +185,7 @@ export default function SequentialWorkflow() {
   const [phase2Step, setPhase2Step] = useState<'idle' | 'consolidated' | 'run_done'>('idle')
   const [directive, setDirective] = useState('')
   const [savingProse, setSavingProse] = useState(false)
+  const [briefQa, setBriefQa] = useState<BriefQaResult | null>(null)
   const streamRef = useRef<HTMLDivElement>(null)
   const prevStepKey = useRef<string>('')
 
@@ -184,12 +207,23 @@ export default function SequentialWorkflow() {
     setEditContent(current?.content ?? '')
     setPhase2Step('idle')
     setDirective('')
+    setBriefQa(null)
   }, [stepKey]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Load the persisted brief QA result when reviewing a brief (covers reload / revisiting
+  // without regenerating — the run-scene job's own result only reaches state below).
+  useEffect(() => {
+    if (current?.step !== 'approve_brief' || !current.chapter || !current.scene) return
+    fetch(`${base}/phase1/tier4/chapter/${current.chapter}/scene/${current.scene}/brief-qa`)
+      .then(r => r.json())
+      .then(setBriefQa)
+      .catch(() => {})
+  }, [current?.step, current?.chapter, current?.scene]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const refetch = () => qc.invalidateQueries({ queryKey: ['seq-progress', bookId] })
 
   // Run a background job, streaming tokens to the stream display.
-  async function runBackgroundJob(url: string, body?: Record<string, unknown>) {
+  async function runBackgroundJob(url: string, body?: Record<string, unknown>, onDone?: (state: JobState) => void) {
     setStreaming(true)
     setStreamText('')
     setError(null)
@@ -199,6 +233,7 @@ export default function SequentialWorkflow() {
         streamRef.current?.scrollTo(0, streamRef.current.scrollHeight)
       })
       if (state.status === 'error') setError(state.error ?? 'Generation failed')
+      else onDone?.(state)
     } catch (e) { setError(String(e)) }
     finally { setStreaming(false); refetch() }
   }
@@ -386,7 +421,11 @@ export default function SequentialWorkflow() {
                       placeholder="Optional directive — e.g. 'raise tension', 'keep it brief', 'focus on character reaction'…"
                       className="w-full h-20 p-3 text-sm rounded-md border border-input bg-background resize-y placeholder:text-muted-foreground/50"
                     />
-                    <Button onClick={() => runBackgroundJob(`${base}/phase1/tier4/chapter/${chapter}/run-scene`, directive.trim() ? { scene, directive } : { scene })}>
+                    <Button onClick={() => runBackgroundJob(
+                      `${base}/phase1/tier4/chapter/${chapter}/run-scene`,
+                      directive.trim() ? { scene, directive } : { scene },
+                      state => setBriefQa((state.meta?.brief_qa as BriefQaResult) ?? null),
+                    )}>
                       Generate brief
                     </Button>
                   </div>
@@ -399,6 +438,7 @@ export default function SequentialWorkflow() {
           {step === 'approve_brief' && (
             <div className="space-y-3">
               <p className="text-sm text-muted-foreground">Review the brief for Scene {scene}. Edit freely — this guides prose writing.</p>
+              {briefQa && <BriefQaPanel qa={briefQa} />}
               <textarea
                 value={editContent}
                 onChange={e => setEditContent(e.target.value)}

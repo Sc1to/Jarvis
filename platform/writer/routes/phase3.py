@@ -1567,7 +1567,9 @@ def mark_consolidated(book_id: str, body: MarkConsolidatedBody):
 
 BEAT_GENERATOR_SYSTEM = """You are a story structure expert.
 
-Given a scene brief, generate 6–10 concrete scene beats. Each beat is a single specific action or moment — not a summary, not a theme.
+Given a scene brief, generate 12-18 concrete scene beats. A beat is a change in the story world — a decision, a discovery, a shift in a relationship, new information surfacing, an action with a consequence. Not a summary, not a theme, and not a physical motion or gesture — choreography belongs to the prose stage, not here.
+
+Test each beat: if you removed it, would the scene's causality break, or would a later beat stop making sense? If not, merge it into its neighbour or cut it.
 
 Return ONLY valid JSON — a numbered list. No preamble, no fences:
 [

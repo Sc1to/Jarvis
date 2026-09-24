@@ -13,7 +13,7 @@ import db
 import prompt_store
 from routes.phase1 import (STORY_ARCHITECT_SYSTEM, SYNTHESIS_PROMPT, WRITING_PREFS_PROMPT, BIBLE_AGENT_SYSTEM,
                              TIER_INSTRUCTIONS, TIER_LABELS, TIER_EDITOR_SYSTEM,
-                             MINI_CONSOLIDATOR_SYSTEM, SCENE_WRITER_SYSTEM, SCENE_BIBLE_SYNC_SYSTEM)
+                             MINI_CONSOLIDATOR_SYSTEM, SCENE_WRITER_SYSTEM, BRIEF_QA_SYSTEM, SCENE_BIBLE_SYNC_SYSTEM)
 from routes.phase2 import CONSOLIDATOR_SYSTEM, RESEARCH_SYSTEM
 from routes.phase3 import (SCENE_PLANNER_SYSTEM, WRITER_SYSTEM, QA_SYSTEM, BIBLE_UPDATER_SYSTEM,
                             BEAT_GENERATOR_SYSTEM, BEAT_EXPANDER_SYSTEM)
@@ -63,6 +63,7 @@ _WRITER_DEFAULTS = {
     "tier_editor": TIER_EDITOR_SYSTEM,
     "mini_consolidator": MINI_CONSOLIDATOR_SYSTEM,
     "scene_writer": SCENE_WRITER_SYSTEM,
+    "brief_qa": BRIEF_QA_SYSTEM,
     "scene_bible_sync": SCENE_BIBLE_SYNC_SYSTEM,
     "consolidator": CONSOLIDATOR_SYSTEM,
     "research": RESEARCH_SYSTEM,
