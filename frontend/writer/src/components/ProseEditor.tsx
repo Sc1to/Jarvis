@@ -4,6 +4,7 @@ import { runJob } from '@/lib/jobs'
 import { API } from '@/lib/api'
 import { Loader2, Expand, RotateCcw, FileText, Scissors } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import CopyButton from '@/components/CopyButton'
 
 interface Props {
   bookId: string
@@ -125,7 +126,8 @@ export default function ProseEditor({ bookId, value, onChange, disabled = false,
           {running ? <Loader2 size={10} className="animate-spin" /> : <FileText size={10} />}
           Notes
         </Button>
-        <span className={cn('ml-auto text-xs tabular-nums', overLimit ? 'text-amber-500 font-medium' : 'text-muted-foreground')}>
+        <CopyButton text={value} className="ml-auto" />
+        <span className={cn('text-xs tabular-nums', overLimit ? 'text-amber-500 font-medium' : 'text-muted-foreground')}>
           {wordCount.toLocaleString()}{targetWords ? ` / ~${targetWords.toLocaleString()}` : ''} words
         </span>
       </div>

@@ -7,6 +7,7 @@ import { Lock, Send, Loader2, FileText, X, ChevronLeft, ChevronRight } from 'luc
 import { cn } from '@/lib/utils'
 import { runJob } from '@/lib/jobs'
 import { API } from '@/lib/api'
+import CopyButton from '@/components/CopyButton'
 
 interface Message { role: 'user' | 'assistant'; content: string }
 
@@ -148,10 +149,16 @@ export default function NorthStarPage() {
       <div className="flex-1 overflow-y-auto px-5 py-4">
         {sidebarTab === 'northstar' || !locked
           ? northStarDoc
-            ? <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-mono leading-relaxed">{northStarDoc}</pre>
+            ? <div className="space-y-2">
+                <div className="flex justify-end"><CopyButton text={northStarDoc} /></div>
+                <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-mono leading-relaxed">{northStarDoc}</pre>
+              </div>
             : <p className="text-xs text-muted-foreground italic">Synthesized from the conversation on lock. Keep talking until the Story Architect has everything it needs.</p>
           : writingPrefs
-            ? <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-mono leading-relaxed">{writingPrefs}</pre>
+            ? <div className="space-y-2">
+                <div className="flex justify-end"><CopyButton text={writingPrefs} /></div>
+                <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-mono leading-relaxed">{writingPrefs}</pre>
+              </div>
             : <p className="text-xs text-muted-foreground italic">Extracted from the conversation on lock.</p>
         }
       </div>

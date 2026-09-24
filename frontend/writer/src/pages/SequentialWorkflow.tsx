@@ -6,6 +6,7 @@ import { runJob as doRunJob, sleep, type JobState } from '@/lib/jobs'
 import { Button } from '@/components/ui/button'
 import ProseEditor from '@/components/ProseEditor'
 import QaIssuesList, { type QaIssue } from '@/components/QaIssuesList'
+import CopyButton from '@/components/CopyButton'
 import { ChevronDown, ChevronRight, AlertCircle, AlertTriangle } from 'lucide-react'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -47,11 +48,18 @@ function StatusDot({ done, active, partial }: { done: boolean; active?: boolean;
 }
 
 const StreamDisplay = forwardRef<HTMLDivElement, { text: string }>(({ text }, ref) => (
-  <div
-    ref={ref}
-    className="h-72 overflow-y-auto p-3 bg-muted rounded-md text-xs font-mono whitespace-pre-wrap border border-border"
-  >
-    {text || <span className="text-muted-foreground italic">Generating…</span>}
+  <div className="space-y-1">
+    {text && (
+      <div className="flex justify-end">
+        <CopyButton text={text} />
+      </div>
+    )}
+    <div
+      ref={ref}
+      className="h-72 overflow-y-auto p-3 bg-muted rounded-md text-xs font-mono whitespace-pre-wrap border border-border"
+    >
+      {text || <span className="text-muted-foreground italic">Generating…</span>}
+    </div>
   </div>
 ))
 
@@ -367,7 +375,10 @@ export default function SequentialWorkflow() {
           {/* ── Approve chapters ── */}
           {step === 'approve_chapters' && (
             <div className="space-y-3">
-              <p className="text-sm text-muted-foreground">Review the chapter plan for Act {act}. Edit if needed.</p>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm text-muted-foreground">Review the chapter plan for Act {act}. Edit if needed.</p>
+                <CopyButton text={editContent} />
+              </div>
               <textarea
                 value={editContent}
                 onChange={e => setEditContent(e.target.value)}
@@ -393,9 +404,12 @@ export default function SequentialWorkflow() {
           {/* ── Approve scene list ── */}
           {step === 'approve_plan' && (
             <div className="space-y-3">
-              <p className="text-sm text-muted-foreground">
-                Review the scene list for Chapter {chapter}. Scenes must use <code className="text-xs">### Scene N — Title</code> format.
-              </p>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm text-muted-foreground">
+                  Review the scene list for Chapter {chapter}. Scenes must use <code className="text-xs">### Scene N — Title</code> format.
+                </p>
+                <CopyButton text={editContent} />
+              </div>
               <textarea
                 value={editContent}
                 onChange={e => setEditContent(e.target.value)}
@@ -437,7 +451,10 @@ export default function SequentialWorkflow() {
           {/* ── Approve scene brief ── */}
           {step === 'approve_brief' && (
             <div className="space-y-3">
-              <p className="text-sm text-muted-foreground">Review the brief for Scene {scene}. Edit freely — this guides prose writing.</p>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm text-muted-foreground">Review the brief for Scene {scene}. Edit freely — this guides prose writing.</p>
+                <CopyButton text={editContent} />
+              </div>
               {briefQa && <BriefQaPanel qa={briefQa} />}
               <textarea
                 value={editContent}
@@ -462,7 +479,10 @@ export default function SequentialWorkflow() {
               {c.brief && (
                 <details className="text-sm">
                   <summary className="cursor-pointer text-muted-foreground hover:text-foreground select-none">Scene brief (reference)</summary>
-                  <pre className="mt-2 p-3 bg-muted rounded-md text-xs overflow-x-auto whitespace-pre-wrap">{c.brief}</pre>
+                  <div className="flex justify-end mt-2">
+                    <CopyButton text={c.brief} />
+                  </div>
+                  <pre className="mt-1 p-3 bg-muted rounded-md text-xs overflow-x-auto whitespace-pre-wrap">{c.brief}</pre>
                 </details>
               )}
               <p className="text-sm text-muted-foreground">

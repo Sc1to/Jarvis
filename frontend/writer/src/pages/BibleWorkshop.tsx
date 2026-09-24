@@ -8,6 +8,7 @@ import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 import { API } from '@/lib/api'
 import { runJob, sleep } from '@/lib/jobs'
+import CopyButton from '@/components/CopyButton'
 import { ChevronRight, Play, CheckCircle, Lock, Loader2, BookOpen, MapPin, Users, Plus, ListOrdered, Layers } from 'lucide-react'
 
 type Stage = 'book' | 'acts' | 'consolidate' | 'foreshadowing' | 'chapters' | 'scenes'
@@ -908,7 +909,8 @@ export default function BibleWorkshopPage() {
                   <h2 className="font-semibold">Tier {tierIdx + 1} — {activeStage === 'book' ? 'Book' : 'Acts'}</h2>
                   <p className="text-sm text-muted-foreground">{STAGE_QUESTIONS[activeStage]}</p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-2 items-center">
+                  {contents[tierIdx] && <CopyButton text={contents[tierIdx] ?? ''} />}
                   {statuses[tierIdx] === 'active' && (
                     <Button size="sm" onClick={() => runTier(tierIdx)} className="gap-2" disabled={streaming}>
                       <Play size={13} />Run agent
@@ -1241,6 +1243,7 @@ export default function BibleWorkshopPage() {
                           ) : (
                             <>
                               <div className="flex items-center justify-end gap-2">
+                                {hasLocalContent && <CopyButton text={content ?? ''} />}
                                 {isRunning ? (
                                   <Badge variant="secondary" className="gap-1.5">
                                     <Loader2 size={12} className="animate-spin" />Agent running…
@@ -1393,7 +1396,8 @@ export default function BibleWorkshopPage() {
                             <>
                               <div className="flex items-center justify-between">
                                 <p className="text-xs text-muted-foreground">Step 1 — generate the scene list for this chapter.</p>
-                                <div className="flex gap-2">
+                                <div className="flex gap-2 items-center">
+                                  {planContent !== undefined && <CopyButton text={planContent} />}
                                   {isPlanRunning ? (
                                     <Badge variant="secondary" className="gap-1.5"><Loader2 size={12} className="animate-spin" />Planning…</Badge>
                                   ) : (
@@ -1487,6 +1491,7 @@ export default function BibleWorkshopPage() {
                                     {isScExpanded && (
                                       <div className="border-t border-border/60 px-3 py-3 space-y-2.5">
                                         <div className="flex items-center justify-end gap-2 flex-wrap">
+                                          {hasLocalSc && <CopyButton text={scContent ?? ''} />}
                                           {isScSyncing && (
                                             <Badge variant="secondary" className="gap-1.5"><Loader2 size={11} className="animate-spin" />Syncing bible…</Badge>
                                           )}
@@ -1670,7 +1675,10 @@ export default function BibleWorkshopPage() {
                 )}
                 {p2Log && (
                   <Card className="bg-muted/30">
-                    <CardContent className="p-4">
+                    <CardContent className="p-4 space-y-2">
+                      <div className="flex justify-end">
+                        <CopyButton text={p2Log} />
+                      </div>
                       <pre ref={p2LogRef} className="text-xs font-mono whitespace-pre-wrap leading-relaxed text-muted-foreground max-h-48 overflow-y-auto">
                         {p2Log}
                         {(p2Step === 'consolidating' || p2Step === 'researching') && <span className="animate-pulse">▋</span>}

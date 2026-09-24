@@ -12,6 +12,7 @@ import { Play, CheckCircle, Loader2, Lock, AlertTriangle, Zap, ChevronLeft, Chev
 import ProseEditor from '@/components/ProseEditor'
 import SteeringPanel from '@/components/SteeringPanel'
 import QaIssuesList, { type QaIssue } from '@/components/QaIssuesList'
+import CopyButton from '@/components/CopyButton'
 
 interface ChapterSummary {
   chapter: number
@@ -757,9 +758,14 @@ export default function WritingLoopPage() {
               </div>
             )}
             {jobLog.length > 0 && (
-              <pre className="text-xs font-mono text-muted-foreground bg-muted/30 rounded-md px-3 py-2 max-h-24 overflow-y-auto whitespace-pre-wrap">
-                {jobLog.join('\n')}{autoWriting && <span className="animate-pulse"> ▋</span>}
-              </pre>
+              <div className="space-y-1">
+                <div className="flex justify-end">
+                  <CopyButton text={jobLog.join('\n')} />
+                </div>
+                <pre className="text-xs font-mono text-muted-foreground bg-muted/30 rounded-md px-3 py-2 max-h-24 overflow-y-auto whitespace-pre-wrap">
+                  {jobLog.join('\n')}{autoWriting && <span className="animate-pulse"> ▋</span>}
+                </pre>
+              </div>
             )}
           </div>
         )}
@@ -882,6 +888,9 @@ export default function WritingLoopPage() {
                     ))}
                   </div>
                 )}
+                <div className="flex justify-end mb-2">
+                  <CopyButton text={chapterData?.content ?? ''} label="Copy chapter" />
+                </div>
                 <pre className="whitespace-pre-wrap font-serif text-base leading-relaxed text-foreground">
                   {chapterData?.content}
                 </pre>
