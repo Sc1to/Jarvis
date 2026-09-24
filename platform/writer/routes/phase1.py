@@ -105,17 +105,24 @@ Specific geographical setting: place name, interior/exterior, time of day, relev
 ## Mood
 The dominant emotional atmosphere of the scene (e.g. tense, melancholic, hopeful, threatening). How it should feel to the reader.
 
+## POV Character
+Name the single POV character. Every other section below is written strictly from what this character can perceive: their own thoughts and feelings, plus other characters' visible words, actions, and expressions. Never another character's private thoughts, motives, or realizations — even if you know them from the story bible.
+
 ## Characters Present
-Each character with their emotional state and goal entering this scene.
+Each character present, with their role in the scene. State an emotional state or goal ONLY if the scene turns on it — most characters are simply doing their job or established role, and that is a complete answer. Do not invent competing agendas, resentment, or friction that isn't already established elsewhere in the story bible or North Star. Ordinary, cooperative interaction is the default.
 
 ## Scene Beats
-Numbered list of what happens, in order. Concrete actions and decisions — no prose sentences, just clear beats.
+A numbered list of 12-18 beats: the consequential turns in the scene, in order. A beat is a change in the story world — a decision, a discovery, a shift in a relationship, new information surfacing, an action with a consequence. A beat is NOT a physical motion, gesture, tool use, or step-by-step choreography of how something happens — that belongs to the writing stage, not this plan.
+
+Test each beat: if you removed it, would the scene's causality break, or would a later beat stop making sense? If not, it isn't a beat — merge it into its neighbour or cut it.
+
+Do not end the list with a beat that states what the scene means or what the POV character now understands. The last beat is still a story event, not a summary of one.
 
 ## Key Dialogue Points
-The exchanges or lines that must occur. Paraphrase is fine — capture intent, not exact wording.
+Only exchanges that ARE one of the beats above, or are necessary to deliver one. Do not introduce a new exchange, revelation, or mini-event that isn't already in the beats list.
 
 ## Sensory & Atmosphere Notes
-Specific sensory details (sounds, smells, light, weather, texture) that should colour the scene.
+Texture only — sounds, smells, light, weather. These describe how the scene feels; they must not contain new events, discoveries, or decisions. If a sensory detail is actually a plot point, put it in Scene Beats instead.
 
 ## Entry / Exit State
 - Entry: [world state at scene open]
@@ -124,7 +131,23 @@ Specific sensory details (sounds, smells, light, weather, texture) that should c
 Rules:
 - Use specific character names, locations, and facts from the story bible and North Star
 - No prose — bullets and short sentences only
-- Be specific, not vague"""
+- Be specific, not vague
+- Present significant details and clues with the same ordinary weight as insignificant ones — no beat or note whose only purpose is to flag importance for the reader"""
+
+BRIEF_QA_SYSTEM = """You are reviewing a scene planning brief before it reaches the prose writer — not prose itself.
+
+Check the brief against these structural rules:
+1. Beat count and granularity — should be roughly 12-18 beats, each a consequential change (decision, discovery, relationship shift, new information, consequential action). Flag if there are significantly more beats than that, or if beats describe physical choreography (gestures, movement, handling objects) rather than story change.
+2. Manufactured conflict — flag any character goal, resentment, or friction that reads invented rather than grounded in the story bible/North Star, especially for characters who would ordinarily just be doing their job.
+3. Supporting-section drift — Key Dialogue Points, Characters Present, and Sensory notes must not introduce events, discoveries, or decisions that are not already one of the listed beats.
+4. POV discipline — flag anything describing another character's private thoughts, motives, or realizations when they are not the stated POV character.
+5. Self-explaining beats — flag any beat, especially the final one, that states the scene's meaning or the POV character's takeaway rather than depicting a story event.
+6. Over-signalling — flag any beat or note whose only function is to underline a clue or fact's importance rather than presenting it as an ordinary observed detail.
+
+Return ONLY valid JSON — no preamble, no fences:
+{"pass": true, "issues": [{"type": "beat_count|choreography|conflict|drift|pov|self_explaining|signalling", "description": "...", "severity": "warning|error"}], "notes": "brief overall assessment"}
+
+pass = true when there are zero error-severity issues. Reserve error for POV violations and a beat count roughly double the target or more; everything else is a warning unless clearly severe."""
 
 SCENE_BIBLE_SYNC_SYSTEM = """You are a story bible updater. Given an approved scene and the current entity skeleton, identify any NEW entities in the scene not yet in the skeleton.
 
@@ -890,6 +913,10 @@ def _tier4_scene_path(book_id: str, chapter: int, scene: int) -> str:
     return os.path.join(_tier4_dir(book_id), f"chapter_{chapter:02d}_scene_{scene:02d}.md")
 
 
+def _tier4_scene_qa_path(book_id: str, chapter: int, scene: int) -> str:
+    return os.path.join(_tier4_dir(book_id), f"chapter_{chapter:02d}_scene_{scene:02d}_qa.json")
+
+
 def _tier4_status_path(book_id: str) -> str:
     return os.path.join(_tier4_dir(book_id), "status.json")
 
@@ -1029,6 +1056,15 @@ def get_tier4_scene(book_id: str, chapter_num: int, scene_num: int):
         return {"content": f.read()}
 
 
+@router.get("/books/{book_id}/phase1/tier4/chapter/{chapter_num}/scene/{scene_num}/brief-qa")
+def get_scene_brief_qa(book_id: str, chapter_num: int, scene_num: int):
+    path = _tier4_scene_qa_path(book_id, chapter_num, scene_num)
+    if not os.path.exists(path):
+        return None
+    with open(path) as f:
+        return json.load(f)
+
+
 @router.get("/books/{book_id}/phase1/tier4/chapter/{chapter_num}/plan")
 def get_tier4_chapter_plan(book_id: str, chapter_num: int):
     path = _tier4_chapter_path(book_id, chapter_num)
@@ -1125,6 +1161,25 @@ async def edit_tier4_chapter(book_id: str, body: EditChapterBody, user: str = De
 
 # ── Individual scene endpoints ─────────────────────────────────────────────────
 
+async def _run_brief_qa(brief_text: str, user: str) -> dict:
+    """Review a generated scene brief for beat granularity, manufactured conflict,
+    POV discipline, etc. Never blocks brief generation — degrades to a soft pass
+    with a system warning if the QA agent isn't configured or the call fails."""
+    qa_provider = db.get_setting("agent_qa_agent_provider")
+    qa_model = db.get_setting("agent_qa_agent_model")
+    if not qa_provider or not qa_model:
+        return {"pass": True, "issues": [], "notes": "Brief QA skipped — QA agent not configured"}
+    try:
+        qa_text = await _bg_call(
+            qa_provider, qa_model,
+            [{"role": "user", "content": f"## Brief\n\n{brief_text}"}],
+            prompt_store.get("brief_qa", BRIEF_QA_SYSTEM), user, json_mode=True,
+        )
+        return _extract_json_skeleton(qa_text)
+    except Exception as e:
+        return {"pass": True, "issues": [{"type": "system", "description": str(e), "severity": "warning"}], "notes": "Brief QA skipped"}
+
+
 class RunSceneBody(BaseModel):
     scene: int
     directive: str = ""
@@ -1174,7 +1229,7 @@ async def run_scene(book_id: str, chapter_num: int, body: RunSceneBody, user: st
     if body.directive.strip():
         context += f"\n\n## Author directive\n\n{body.directive}"
 
-    messages = [{"role": "user", "content": context + "\n\nWrite the scene brief now. Use ONLY the 7 section headers from the instructions. Do NOT write prose sentences or paragraphs. Bullets and short phrases only."}]
+    messages = [{"role": "user", "content": context + "\n\nWrite the scene brief now. Use ONLY the 8 section headers from the instructions. Do NOT write prose sentences or paragraphs. Bullets and short phrases only."}]
 
     job_id, job = job_store.create()
 
@@ -1187,6 +1242,12 @@ async def run_scene(book_id: str, chapter_num: int, body: RunSceneBody, user: st
             os.makedirs(_tier4_dir(book_id), exist_ok=True)
             with open(_tier4_scene_path(book_id, chapter_num, body.scene), "w") as f:
                 f.write(full_text)
+
+            brief_qa = await _run_brief_qa(full_text, user)
+            with open(_tier4_scene_qa_path(book_id, chapter_num, body.scene), "w") as f:
+                json.dump(brief_qa, f, indent=2)
+            job["meta"]["brief_qa"] = brief_qa
+
             job["status"] = "done"
             job["result"] = full_text
         except Exception as e:
@@ -1635,7 +1696,7 @@ async def _bg_run_scene_brief(book_id: str, chapter_num: int, scene_num: int, us
         context += f"\n\n## Previous Scene (ending)\n\n…{prev_scene_tail}"
     context += f"\n\n## Scene to Write\n\n{scene_plan_section or f'Scene {scene_num} of Chapter {chapter_num}'}"
 
-    messages = [{"role": "user", "content": context + "\n\nWrite the scene brief now. Use ONLY the 7 section headers from the instructions. Do NOT write prose sentences or paragraphs. Bullets and short phrases only."}]
+    messages = [{"role": "user", "content": context + "\n\nWrite the scene brief now. Use ONLY the 8 section headers from the instructions. Do NOT write prose sentences or paragraphs. Bullets and short phrases only."}]
 
     log_cb(f"Running scene brief Ch{chapter_num} Sc{scene_num}...")
     return await _bg_call(provider, model, messages, SCENE_WRITER_SYSTEM, user)

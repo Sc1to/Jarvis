@@ -11,6 +11,7 @@ import { API } from '@/lib/api'
 import { Play, CheckCircle, Loader2, Lock, AlertTriangle, Zap, ChevronLeft, ChevronRight, Save, PenLine, SlidersHorizontal, RefreshCw } from 'lucide-react'
 import ProseEditor from '@/components/ProseEditor'
 import SteeringPanel from '@/components/SteeringPanel'
+import QaIssuesList, { type QaIssue } from '@/components/QaIssuesList'
 
 interface ChapterSummary {
   chapter: number
@@ -18,12 +19,6 @@ interface ChapterSummary {
   scene_count: number
   approved: boolean
   bible_updated: boolean
-}
-
-interface QaIssue {
-  type: string
-  description: string
-  severity: string
 }
 
 interface SceneResult {
@@ -148,18 +143,7 @@ function QaFindings({ scene, onUseAsDirective }: { scene: SceneResult; onUseAsDi
         {scene.author_edited && <span className="font-normal text-muted-foreground">— on the agent draft, before your edits</span>}
       </div>
       {scene.qa_notes && <p className="text-xs text-muted-foreground">{scene.qa_notes}</p>}
-      {issues.length > 0 && (
-        <ul className="space-y-0.5">
-          {issues.map((iss, i) => (
-            <li key={i} className="text-xs">
-              <span className={cn('font-mono text-[10px] uppercase mr-1', iss.severity === 'error' ? 'text-red-500' : 'text-muted-foreground')}>
-                {iss.severity}
-              </span>
-              {iss.description}
-            </li>
-          ))}
-        </ul>
-      )}
+      <QaIssuesList issues={issues} />
       <p className="text-[11px] text-muted-foreground pt-0.5">
         Keep it as is, edit it below, or{' '}
         <button onClick={() => onUseAsDirective(directive)} className="underline hover:text-foreground">
