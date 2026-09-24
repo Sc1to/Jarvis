@@ -14,8 +14,9 @@ import jobs as job_store
 from deps import current_user
 import llm
 import prompt_store
-from prompt_blocks import assemble_writer_context, _truncate_prior_scenes
+from prompt_blocks import assemble_writer_context, condense_prior_scenes, _truncate_prior_scenes
 from routes.series import get_style_digest
+import steering
 
 log = logging.getLogger(__name__)
 
@@ -53,10 +54,15 @@ Write prose that is:
 - Concrete and sensory — show, don't tell
 - Consistent with all entity facts in the ledger
 - Faithful to the narrative voice established in the North Star
-- Precisely meeting the exit state contract by scene end
+- Precisely meeting the exit state contract by scene end — through events and action, not by announcing it
 
-Write ONLY prose. No headers, no scene numbers, no formatting markers. Begin the scene directly.
-Target length: 600-900 words."""
+Economy:
+- Assume the reader remembers everything in earlier scenes and chapters. Never restate a character's goal, task, backstory, or any fact already established — no recaps, no reminders, no characters re-explaining what they both know.
+- The ledger and brief exist for your consistency, not for narration. Put a fact on the page only when it matters in this moment and has not been shown before.
+- Respect the length target in the scene contract. Cover the beats economically; cut rather than pad.
+- Follow the author standing notes. They override the brief and the writing preferences.
+
+Write ONLY prose. No headers, no scene numbers, no formatting markers. Begin the scene directly."""
 
 QA_SYSTEM = """You are a novel quality assurance agent. Review the scene for consistency.
 
@@ -65,9 +71,11 @@ Check:
 2. Exit state contract — specified conditions are established by scene end
 3. Continuity — no contradictions with prior scenes in this chapter
 4. Voice — dialogue and behaviour consistent with character coreFacts
+5. Redundancy — the scene restates goals, tasks, backstory or facts the reader already knows from prior scenes or the ledger (recaps, reminders, characters re-explaining what both know). Error when an established fact is restated rather than advanced; warning for minor echoes. Quote the offending sentence.
+6. Author standing notes — if provided, any violation is an error
 
 Return ONLY valid JSON — no preamble, no fences:
-{"pass": true, "issues": [{"type": "entity|continuity|contract|voice", "description": "...", "severity": "warning|error"}], "notes": "brief overall assessment"}
+{"pass": true, "issues": [{"type": "entity|continuity|contract|voice|redundancy|notes", "description": "...", "severity": "warning|error"}], "notes": "brief overall assessment"}
 
 pass = true when there are zero error-severity issues. Warnings alone do not fail."""
 
@@ -77,7 +85,7 @@ pass = true when there are zero error-severity issues. Warnings alone do not fai
 STYLE_CHECK_ADDENDUM = """
 
 Additionally check:
-5. Style alignment — does this scene stay consistent with the series style digest provided below?
+7. Style alignment — does this scene stay consistent with the series style digest provided below?
 
 Add style issues to "issues" with type "style"."""
 
@@ -122,37 +130,6 @@ def _chapter_meta_path(book_id: str, chapter: int) -> str:
 
 def _chapter_plan_path(book_id: str, chapter: int) -> str:
     return os.path.join(db.data_dir(book_id), f"chapter_{chapter:02d}_plan.json")
-
-def _manual_qa_max_attempts() -> int:
-    """Writer attempts per scene for a manual (non auto-write) chapter write."""
-    return 3 if db.get_setting("qa_retry_manual") == "true" else 1
-
-def _style_check_cadence() -> int:
-    """Check series style alignment every Nth scene rather than every scene."""
-    raw = db.get_setting("qa_style_check_every_n_scenes")
-    try:
-        n = int(raw)
-        return n if n > 0 else 3
-    except (TypeError, ValueError):
-        return 3
-
-async def _load_style_digest(book_id: str, qa_provider: str, qa_model: str, user: str) -> str:
-    """Series style digest for QA, or "" if the book isn't in a series or has no style sheet."""
-    book = db.get_book(book_id)
-    series_id = book and book.get("series_id")
-    if not series_id:
-        return ""
-    try:
-        return await get_style_digest(series_id, qa_provider, qa_model, user)
-    except Exception as e:
-        log.warning(f"Style digest unavailable for series {series_id}: {e}")
-        return ""
-
-def _qa_prompt_for_scene(scene_num: int, style_digest: str) -> tuple[str, bool]:
-    """QA system prompt for a scene, plus whether this scene is sampled for style checking."""
-    include_style = bool(style_digest) and scene_num % _style_check_cadence() == 0
-    system = prompt_store.get("qa", QA_SYSTEM) + (STYLE_CHECK_ADDENDUM if include_style else "")
-    return system, include_style
 
 def _read_meta(book_id: str, chapter: int) -> dict | None:
     p = _chapter_meta_path(book_id, chapter)
@@ -267,9 +244,146 @@ def _checkpoint_chapter_progress(
         }, f)
 
 
-# ── Background task: Write Chapter ────────────────────────────────────────────
+# ── Chapter / scene file helpers ───────────────────────────────────────────────
 
-async def _write_chapter_task(book_id: str, chapter: int, user: str, job_id: str, queue: asyncio.Queue) -> None:
+def _scene_sections(content: str) -> dict[int, str]:
+    """Map scene number -> prose for every '## Scene N' section in a chapter file."""
+    return {
+        int(m.group(1)): m.group(2).strip()
+        for m in re.finditer(r"^## Scene (\d+)\n\n(.*?)(?=\n\n---\n\n## Scene |\Z)", content, re.MULTILINE | re.DOTALL)
+    }
+
+def _replace_scene_section(content: str, scene: int, text: str) -> str:
+    """Replace one scene's prose, or append the scene if it is not in the chapter yet.
+
+    Splices by match offsets rather than re.sub so backslashes in prose aren't treated as escapes.
+    """
+    m = re.search(rf"^## Scene {scene}\n\n(.*?)(?=\n\n---\n\n## Scene |\Z)", content, re.MULTILINE | re.DOTALL)
+    if m:
+        return content[:m.start()] + f"## Scene {scene}\n\n{text}" + content[m.end():]
+    sep = "\n\n---\n\n" if "## Scene " in content else "\n\n"
+    return content.rstrip() + f"{sep}## Scene {scene}\n\n{text}"
+
+def _assemble_chapter_md(chapter: int, scene_results: list[dict], completed_scenes: list[str]) -> str:
+    return f"# Chapter {chapter}\n\n" + "\n\n---\n\n".join(
+        f"## Scene {r['scene']}\n\n{prose}"
+        for r, prose in zip(scene_results, completed_scenes)
+    )
+
+def _mark_written(meta: dict) -> None:
+    """A single-scene write finishes a chapter — unless it is paused mid-write, which stays in progress."""
+    if meta.get("status") != "in_progress":
+        meta["status"] = "written"
+
+def _prior_bridge(book_id: str, chapter: int, words: int = 250) -> str:
+    """Closing lines of the previous chapter only — older chapters live in the ledger."""
+    prev_path = _chapter_path(book_id, chapter - 1)
+    if chapter <= 1 or not os.path.exists(prev_path):
+        return ""
+    return f"[End of Chapter {chapter - 1}]:\n{_last_words(open(prev_path).read(), words)}"
+
+def _plan_summaries(scene_plan: list[dict]) -> dict[int, str]:
+    """One-line 'what this scene covered' per planned scene, for the Writer's condensed history."""
+    out = {}
+    for s in scene_plan:
+        brief, exit_state = s.get("brief", ""), s.get("exit_state", "")
+        if brief or exit_state:
+            out[s.get("scene")] = f"{brief} Ends with: {exit_state}" if exit_state else brief
+    return out
+
+def _chapter_summaries(book_id: str, chapter: int) -> dict[int, str]:
+    """Scene summaries for single-scene writes: the saved scene plan, else the tier4 scene headings."""
+    plan_path = _chapter_plan_path(book_id, chapter)
+    if os.path.exists(plan_path):
+        try:
+            return _plan_summaries(json.load(open(plan_path)))
+        except Exception:
+            pass
+    tier4_path = os.path.join(db.data_dir(book_id), "tier4", f"chapter_{chapter:02d}.md")
+    if not os.path.exists(tier4_path):
+        return {}
+    out = {}
+    for m in re.finditer(r"^### Scene (\d+)\s*[—–-]?\s*(.*?)(?=^### Scene \d+|\Z)", open(tier4_path).read(), re.MULTILINE | re.DOTALL):
+        words = " ".join(m.group(2).split()).split(" ")
+        out[int(m.group(1))] = " ".join(words[:40]) + ("…" if len(words) > 40 else "")
+    return out
+
+def _length_issue(text: str, target: int, severity: str) -> dict | None:
+    wc = len(text.split())
+    limit = steering.word_limit(target)
+    if wc <= limit:
+        return None
+    return {"type": "length", "severity": severity,
+            "description": f"Scene is {wc} words; target is about {target} (limit {limit})."}
+
+def _apply_length_check(qa_result: dict, text: str, target: int, severity: str) -> dict:
+    issue = _length_issue(text, target, severity)
+    if issue:
+        qa_result = {**qa_result, "issues": [*qa_result.get("issues", []), issue]}
+        if severity == "error":
+            qa_result["pass"] = False
+    return qa_result
+
+def _qa_user_message(writing_prefs: str, ledger_json: str, prior_text: str, exit_state: str,
+                     scene_text: str, author_notes: str = "", style_digest: str = "") -> str:
+    return (
+        (f"## Writing Preferences\n\n{writing_prefs}\n\n" if writing_prefs else "")
+        + (f"## Author standing notes\n\n{author_notes}\n\n" if author_notes else "")
+        + (f"## Series Style Digest\n\n{style_digest}\n\n" if style_digest else "")
+        + f"## Entity Ledger\n\n{ledger_json}\n\n"
+        f"## Prior scenes in this chapter\n\n{prior_text}\n\n"
+        f"## Exit state contract\n\n{exit_state}\n\n"
+        f"## Scene to review\n\n{scene_text}"
+    )
+
+def _manual_retry_enabled() -> bool:
+    return db.get_setting("qa_retry_manual") == "true"
+
+def _style_check_cadence() -> int:
+    """Check series style alignment every Nth scene rather than every scene."""
+    raw = db.get_setting("qa_style_check_every_n_scenes")
+    try:
+        n = int(raw)
+        return n if n > 0 else 3
+    except (TypeError, ValueError):
+        return 3
+
+async def _load_style_digest(book_id: str, qa_provider: str, qa_model: str, user: str) -> str:
+    """Series style digest for QA, or "" if the book isn't in a series or has no style sheet."""
+    book = db.get_book(book_id)
+    series_id = book and book.get("series_id")
+    if not series_id:
+        return ""
+    try:
+        return await get_style_digest(series_id, qa_provider, qa_model, user)
+    except Exception as e:
+        log.warning(f"Style digest unavailable for series {series_id}: {e}")
+        return ""
+
+def _qa_prompt_for_scene(scene_num: int, style_digest: str) -> tuple[str, bool]:
+    """QA system prompt for a scene, plus whether this scene is sampled for style checking."""
+    include_style = bool(style_digest) and scene_num % _style_check_cadence() == 0
+    system = prompt_store.get("qa", QA_SYSTEM) + (STYLE_CHECK_ADDENDUM if include_style else "")
+    return system, include_style
+
+
+# ── Chapter writer (shared by manual Write Chapter and Auto-write all) ────────
+
+async def _write_chapter_core(
+    book_id: str, chapter: int, user: str, emit, log_line, *, auto: bool, pause_after_scene: bool = False,
+) -> bool:
+    """Write a chapter scene by scene. Returns True when finished, False when paused.
+
+    Auto mode (and manual mode with qa_retry_manual on) retries QA-failed scenes up
+    to 3 times and trims over-length scenes automatically. Plain manual mode keeps the
+    first draft and flags QA and length problems for the author.
+
+    With pause_after_scene, the chapter is saved as 'in_progress' after each new scene;
+    calling again resumes from the checkpoint, picking up any author edits or rewrites
+    made to the saved scenes in the meantime.
+    """
+    from routes.text_ops import tighten_prose
+
     book_dir = db.data_dir(book_id)
 
     writer_provider = db.get_setting("agent_writer_agent_provider")
@@ -283,17 +397,21 @@ async def _write_chapter_task(book_id: str, chapter: int, user: str, job_id: str
     if missing:
         raise RuntimeError(f"Agents not configured: {', '.join(missing)}")
 
+    retry = auto or _manual_retry_enabled()
+    max_attempts = 3 if retry else 1
+
     north_star = _read_north_star(book_id)
     writing_prefs = _read_writing_prefs(book_id)
-    style_digest = await _load_style_digest(book_id, qa_provider, qa_model, user)
     tier4_path = os.path.join(book_dir, "tier4", f"chapter_{chapter:02d}.md")
     if not os.path.exists(tier4_path):
         raise RuntimeError(f"No tier4 scene bible found for Chapter {chapter}")
     tier4_content = open(tier4_path).read()
     bible = _read_bible(book_id)
     ledger_json = json.dumps(bible.get("ledger", {}))
+    author_notes = steering.notes_for(book_id, chapter)
+    style_digest = await _load_style_digest(book_id, qa_provider, qa_model, user)
 
-    # Resume from checkpoint if a previous run was interrupted
+    # Resume from checkpoint if a previous run was interrupted or paused
     progress_path = _chapter_progress_path(book_id, chapter)
     resume_scene_plan: list | None = None
     resume_scene_results: list = []
@@ -309,11 +427,12 @@ async def _write_chapter_task(book_id: str, chapter: int, user: str, job_id: str
 
     if resume_scene_plan is not None:
         scene_plan = resume_scene_plan
+        _sync_paused_chapter(book_id, chapter, resume_scene_results, resume_completed_scenes)
         done_count = len(resume_completed_scenes)
-        await queue.put({"type": "status", "message": f"Resuming Chapter {chapter} — {done_count}/{len(scene_plan)} scenes already written"})
-        await queue.put({"type": "plan_done", "scene_count": len(scene_plan), "scenes": scene_plan})
+        await emit({"type": "status", "message": f"Resuming Chapter {chapter} — {done_count}/{len(scene_plan)} scenes already written"})
+        await emit({"type": "plan_done", "scene_count": len(scene_plan), "scenes": scene_plan})
     else:
-        await queue.put({"type": "status", "message": f"Planning scenes for Chapter {chapter}…"})
+        await emit({"type": "status", "message": f"Planning scenes for Chapter {chapter}…"})
         plan_text = await _call(
             planner_provider, planner_model,
             [{"role": "user", "content": f"Chapter number: {chapter}\n\nTier 4 (Scenes bible):\n\n{tier4_content}"}],
@@ -321,33 +440,30 @@ async def _write_chapter_task(book_id: str, chapter: int, user: str, job_id: str
             user, json_mode=True,
         )
         scene_plan = _extract_json_list(plan_text)
-        await queue.put({"type": "plan_done", "scene_count": len(scene_plan), "scenes": scene_plan})
+        await emit({"type": "plan_done", "scene_count": len(scene_plan), "scenes": scene_plan})
 
-    prior_bridge = ""
-    for prev in range(1, chapter):
-        prev_path = _chapter_path(book_id, prev)
-        if os.path.exists(prev_path):
-            words = open(prev_path).read().split()
-            snippet = " ".join(words[-200:]) if len(words) > 200 else " ".join(words)
-            prior_bridge += f"\n\n[End of Chapter {prev}]:\n{snippet}"
+    prior_bridge = _prior_bridge(book_id, chapter)
+    summaries = _plan_summaries(scene_plan)
+    word_target = steering.scene_word_target(book_id, len(scene_plan))
+    word_limit = steering.word_limit(word_target)
 
     done_scene_nums = {r["scene"] for r in resume_scene_results}
     completed_scenes: list[str] = list(resume_completed_scenes)
     scene_results: list[dict] = list(resume_scene_results)
 
-    # Manual writes stop after one QA-failed draft so the author can review what QA
-    # flagged, unless they opted into auto-retry. Auto-write always retries.
-    max_attempts = _manual_qa_max_attempts()
-
     for scene_idx, scene_def in enumerate(scene_plan):
         scene_num = scene_def.get("scene", len(completed_scenes) + 1)
         if scene_num in done_scene_nums:
-            continue  # already written in a prior interrupted run
+            continue  # already written in a prior interrupted/paused run
 
         brief = scene_def.get("brief", "")
         entry_state = scene_def.get("entry_state", "")
         exit_state = scene_def.get("exit_state", "")
         curr_pov = scene_def.get("pov_character")
+
+        # The Writer gets a condensed history (see condense_prior_scenes); QA gets full prose
+        writer_prior = condense_prior_scenes([(r["scene"], t) for r, t in zip(scene_results, completed_scenes)], summaries)
+        qa_prior = _truncate_prior_scenes(completed_scenes)
 
         scene_text = ""
         qa_result: dict | None = None
@@ -355,22 +471,21 @@ async def _write_chapter_task(book_id: str, chapter: int, user: str, job_id: str
 
         while attempt < max_attempts:
             attempt += 1
-            await queue.put({
+            await emit({
                 "type": "scene_start" if attempt == 1 else "rewrite_start",
                 "scene": scene_num, "total": len(scene_plan), "attempt": attempt, "brief": brief,
             })
 
-            prior_text = _truncate_prior_scenes(completed_scenes)
             rewrite_note = ""
             if attempt > 1 and qa_result:
                 errors = [i["description"] for i in qa_result.get("issues", []) if i.get("severity") == "error"]
-                rewrite_note = "\n\nPrevious attempt issues:\n" + "\n".join(f"- {e}" for e in errors)
+                rewrite_note = "\n\nPrevious attempt issues — address in rewrite:\n" + "\n".join(f"- {e}" for e in errors)
 
             context_block = assemble_writer_context(
                 north_star=north_star,
                 writing_prefs=writing_prefs,
                 ledger_json=ledger_json,
-                prior_text=prior_text,
+                prior_text=writer_prior,
                 chapter=chapter,
                 scene_num=scene_num,
                 brief=brief,
@@ -378,6 +493,9 @@ async def _write_chapter_task(book_id: str, chapter: int, user: str, job_id: str
                 exit_state=exit_state,
                 prior_bridge=prior_bridge,
                 rewrite_note=rewrite_note,
+                author_notes=author_notes,
+                word_target=word_target,
+                word_limit=word_limit,
             )
 
             messages: list[dict] = [{"role": "user", "content": context_block}]
@@ -388,41 +506,45 @@ async def _write_chapter_task(book_id: str, chapter: int, user: str, job_id: str
                     messages.append({"role": "assistant", "content": prose_tail})
                     messages.append({"role": "user", "content": f"Continue the scene.\n\nScene brief:\n\n{brief}"})
 
-            scene_text = ""
             try:
                 # Collect prose without streaming tokens — avoids queue bloat for long runs
                 scene_text = await _call(writer_provider, writer_model, messages, prompt_store.get("writer", WRITER_SYSTEM), user)
             except Exception as e:
-                await queue.put({"type": "error", "message": f"Writer error on scene {scene_num}: {e}"})
+                await emit({"type": "error", "message": f"Writer error on scene {scene_num}: {e}"})
                 raise
 
-            await queue.put({"type": "scene_written", "scene": scene_num, "word_count": len(scene_text.split())})
+            await emit({"type": "scene_written", "scene": scene_num, "word_count": len(scene_text.split()), "word_target": word_target})
 
-            await queue.put({"type": "qa_start", "scene": scene_num, "attempt": attempt})
+            if retry and len(scene_text.split()) > word_limit:
+                await emit({"type": "status", "message": f"Scene {scene_num} is {len(scene_text.split())} words (target {word_target}) — tightening…"})
+                try:
+                    scene_text = await tighten_prose(scene_text, word_target, user)
+                    await emit({"type": "scene_written", "scene": scene_num, "word_count": len(scene_text.split()), "word_target": word_target})
+                except Exception as e:
+                    await emit({"type": "status", "message": f"Tighten failed, keeping the long draft: {e}"})
+
+            await emit({"type": "qa_start", "scene": scene_num, "attempt": attempt})
             qa_system, include_style = _qa_prompt_for_scene(scene_num, style_digest)
-            qa_user = (
-                (f"## Writing Preferences\n\n{writing_prefs}\n\n" if writing_prefs else "")
-                + f"## Entity Ledger\n\n{ledger_json}\n\n"
-                f"## Prior scenes in this chapter\n\n{prior_text}\n\n"
-                f"## Exit state contract\n\n{exit_state}\n\n"
-                + (f"## Series Style Digest\n\n{style_digest}\n\n" if include_style else "")
-                + f"## Scene to review\n\n{scene_text}"
-            )
+            qa_user = _qa_user_message(writing_prefs, ledger_json, qa_prior, exit_state, scene_text, author_notes,
+                                        style_digest if include_style else "")
             try:
                 qa_text = await _call(qa_provider, qa_model, [{"role": "user", "content": qa_user}], qa_system, user, json_mode=True)
                 qa_result = _extract_json(qa_text)
             except Exception as e:
                 qa_result = {"pass": True, "issues": [{"type": "system", "description": str(e), "severity": "warning"}], "notes": "QA skipped"}
 
+            # Over-length is the author's call in manual mode; in retry mode it was already trimmed
+            qa_result = _apply_length_check(qa_result, scene_text, word_target, "warning" if retry else "error")
+
             passed = qa_result.get("pass", True)
-            await queue.put({
+            await emit({
                 "type": "qa_result", "scene": scene_num, "attempt": attempt,
                 "pass": passed, "issues": qa_result.get("issues", []), "notes": qa_result.get("notes", ""),
             })
 
             if passed or attempt >= max_attempts:
-                if not passed and max_attempts == 1:
-                    await queue.put({"type": "qa_held", "scene": scene_num})
+                if not passed and not retry:
+                    await emit({"type": "qa_held", "scene": scene_num})
                 break
 
         completed_scenes.append(scene_text)
@@ -434,45 +556,96 @@ async def _write_chapter_task(book_id: str, chapter: int, user: str, job_id: str
             "qa_notes": qa_result.get("notes", "") if qa_result else "",
             "qa_issues": qa_result.get("issues", []) if qa_result else [],
             "word_count": len(scene_text.split()),
+            "word_target": word_target,
         })
 
         # Checkpoint after each scene — crash doesn't lose completed scenes
         _checkpoint_chapter_progress(book_id, chapter, scene_plan, scene_results, completed_scenes)
-        db.append_job_log(job_id, f"Scene {scene_num} done ({len(scene_text.split())} words)")
+        log_line(f"Scene {scene_num} done ({len(scene_text.split())} words)")
 
-    # Finalize: assemble full chapter and commit
-    chapter_md = f"# Chapter {chapter}\n\n" + "\n\n---\n\n".join(
-        f"## Scene {r['scene']}\n\n{prose}"
-        for r, prose in zip(scene_results, completed_scenes)
-    )
-    meta = {
-        "chapter": chapter,
-        "scene_count": len(scene_plan),
-        "scenes": scene_results,
-        "status": "written",
-        "written_at": datetime.now(timezone.utc).isoformat(),
-        "approved_at": None,
-        "bible_updated": False,
-    }
+        remaining = len(scene_plan) - len(scene_results)
+        if pause_after_scene and remaining > 0:
+            _save_chapter(book_id, chapter, scene_plan, scene_results, completed_scenes, status="in_progress",
+                          commit_msg=f"Write Chapter {chapter} — paused after Scene {scene_num}")
+            await emit({"type": "paused", "scene": scene_num, "remaining": remaining})
+            return False
 
-    with open(_chapter_path(book_id, chapter), "w") as f:
-        f.write(chapter_md)
-    with open(_chapter_meta_path(book_id, chapter), "w") as f:
-        json.dump(meta, f, indent=2)
-    with open(_chapter_plan_path(book_id, chapter), "w") as f:
-        json.dump(scene_plan, f, indent=2)
-
+    _save_chapter(book_id, chapter, scene_plan, scene_results, completed_scenes, status="written",
+                  commit_msg=f"Write Chapter {chapter} — {len(scene_plan)} scenes")
     try:
         os.remove(progress_path)
     except FileNotFoundError:
         pass
 
-    from git import Repo
-    repo = Repo(book_dir)
-    repo.index.add([f"chapter_{chapter:02d}.md", f"chapter_{chapter:02d}_meta.json", f"chapter_{chapter:02d}_plan.json"])
-    repo.index.commit(f"Write Chapter {chapter} — {len(scene_plan)} scenes")
+    log_line(f"Chapter {chapter} written — {len(scene_plan)} scenes, {sum(r['word_count'] for r in scene_results):,} words")
+    await emit({"type": "chapter_done", "chapter": chapter, "scene_count": len(scene_plan)})
+    return True
 
-    await queue.put({"type": "chapter_done", "chapter": chapter, "scene_count": len(scene_plan)})
+
+def _save_chapter(book_id: str, chapter: int, scene_plan: list, scene_results: list, completed_scenes: list,
+                  *, status: str, commit_msg: str) -> None:
+    meta = {
+        "chapter": chapter,
+        "scene_count": len(scene_plan),
+        "scenes": scene_results,
+        "status": status,
+        "written_at": datetime.now(timezone.utc).isoformat(),
+        "approved_at": None,
+        "bible_updated": False,
+    }
+    with open(_chapter_path(book_id, chapter), "w") as f:
+        f.write(_assemble_chapter_md(chapter, scene_results, completed_scenes))
+    with open(_chapter_meta_path(book_id, chapter), "w") as f:
+        json.dump(meta, f, indent=2)
+    with open(_chapter_plan_path(book_id, chapter), "w") as f:
+        json.dump(scene_plan, f, indent=2)
+
+    from git import Repo
+    repo = Repo(db.data_dir(book_id))
+    repo.index.add([f"chapter_{chapter:02d}.md", f"chapter_{chapter:02d}_meta.json", f"chapter_{chapter:02d}_plan.json"])
+    repo.index.commit(commit_msg)
+
+
+def _sync_paused_chapter(book_id: str, chapter: int, scene_results: list, completed_scenes: list) -> None:
+    """Fold author edits and rewrites made while a chapter was paused back into the checkpoint lists (in place)."""
+    meta = _read_meta(book_id, chapter)
+    chapter_path = _chapter_path(book_id, chapter)
+    if not meta or meta.get("status") != "in_progress" or not os.path.exists(chapter_path):
+        return
+    sections = _scene_sections(open(chapter_path).read())
+    meta_by_scene = {s.get("scene"): s for s in meta.get("scenes", [])}
+    for i, r in enumerate(scene_results):
+        n = r["scene"]
+        if n in sections and i < len(completed_scenes):
+            completed_scenes[i] = sections[n]
+        if n in meta_by_scene:
+            r.update(meta_by_scene[n])
+
+
+async def _write_chapter_task(book_id: str, chapter: int, user: str, job_id: str, queue: asyncio.Queue,
+                              pause_after_scene: bool = False) -> None:
+    """Manual Write Chapter — events stream to the Writing Loop."""
+    await _write_chapter_core(
+        book_id, chapter, user, queue.put, lambda msg: db.append_job_log(job_id, msg),
+        auto=False, pause_after_scene=pause_after_scene,
+    )
+
+
+def _event_log_line(ev: dict) -> str | None:
+    t = ev.get("type")
+    if t == "status":
+        return f"  {ev.get('message')}"
+    if t == "plan_done":
+        return f"  {ev.get('scene_count')} scenes planned"
+    if t == "scene_start":
+        return f"  Scene {ev.get('scene')}/{ev.get('total')}"
+    if t == "rewrite_start":
+        return f"  Scene {ev.get('scene')} — attempt {ev.get('attempt')}"
+    if t == "qa_result":
+        return f"    QA {'pass' if ev.get('pass') else 'fail'} — {ev.get('notes', '')}"
+    if t == "error":
+        return f"  ⚠ {ev.get('message')}"
+    return None
 
 
 # ── Background task: Approve Chapter ─────────────────────────────────────────
@@ -565,153 +738,13 @@ def _launch_chapter_job(book_id: str, chapter: int, step: str, user: str, task_f
 # without holding an HTTP connection.
 
 async def _write_chapter_bg(book_id: str, chapter: int, user: str, log_cb) -> None:
-    book_dir = db.data_dir(book_id)
+    """Auto-write — same pipeline as Write Chapter, with retries and trimming, logged to the job log."""
+    async def emit(ev: dict) -> None:
+        line = _event_log_line(ev)
+        if line:
+            log_cb(line)
 
-    writer_provider = db.get_setting("agent_writer_agent_provider")
-    writer_model = db.get_setting("agent_writer_agent_model")
-    qa_provider = db.get_setting("agent_qa_agent_provider")
-    qa_model = db.get_setting("agent_qa_agent_model")
-    planner_provider = db.get_setting("agent_bible_agent_provider")
-    planner_model = db.get_setting("agent_bible_agent_model")
-
-    missing = [k for k, v in [("writer_agent", writer_provider), ("qa_agent", qa_provider), ("bible_agent", planner_provider)] if not v]
-    if missing:
-        raise RuntimeError(f"Agents not configured: {', '.join(missing)}")
-
-    north_star = _read_north_star(book_id)
-    writing_prefs = _read_writing_prefs(book_id)
-    style_digest = await _load_style_digest(book_id, qa_provider, qa_model, user)
-    tier4_path = os.path.join(book_dir, "tier4", f"chapter_{chapter:02d}.md")
-    if not os.path.exists(tier4_path):
-        raise RuntimeError(f"No tier4 scene bible found for Chapter {chapter} — cannot write beyond the planned chapter count")
-    tier4_content = open(tier4_path).read()
-    bible = _read_bible(book_id)
-    ledger_json = json.dumps(bible.get("ledger", {}))
-
-    log_cb(f"Planning scenes for Chapter {chapter}…")
-    plan_text = await _call(
-        planner_provider, planner_model,
-        [{"role": "user", "content": f"Chapter number: {chapter}\n\nTier 4 (Scenes bible):\n\n{tier4_content}"}],
-        prompt_store.get("scene_planner", SCENE_PLANNER_SYSTEM),
-        user,
-        json_mode=True,
-    )
-    scene_plan = _extract_json_list(plan_text)
-    log_cb(f"  {len(scene_plan)} scenes extracted")
-
-    prior_bridge = ""
-    for prev in range(1, chapter):
-        prev_path = _chapter_path(book_id, prev)
-        if os.path.exists(prev_path):
-            words = open(prev_path).read().split()
-            snippet = " ".join(words[-200:]) if len(words) > 200 else " ".join(words)
-            prior_bridge += f"\n\n[End of Chapter {prev}]:\n{snippet}"
-
-    completed_scenes: list[str] = []
-    scene_results: list[dict] = []
-
-    for scene_idx, scene_def in enumerate(scene_plan):
-        scene_num = scene_def.get("scene", len(completed_scenes) + 1)
-        brief = scene_def.get("brief", "")
-        entry_state = scene_def.get("entry_state", "")
-        exit_state = scene_def.get("exit_state", "")
-        curr_pov = scene_def.get("pov_character")
-
-        scene_text = ""
-        qa_result: dict | None = None
-        attempt = 0
-
-        while attempt < 3:
-            attempt += 1
-            log_cb(f"  Scene {scene_num}/{len(scene_plan)} — attempt {attempt}")
-
-            prior_text = _truncate_prior_scenes(completed_scenes)
-            rewrite_note = ""
-            if attempt > 1 and qa_result:
-                errors = [i["description"] for i in qa_result.get("issues", []) if i.get("severity") == "error"]
-                rewrite_note = "\n\nPrevious attempt issues — address in rewrite:\n" + "\n".join(f"- {e}" for e in errors)
-
-            context_block = assemble_writer_context(
-                north_star=north_star,
-                writing_prefs=writing_prefs,
-                ledger_json=ledger_json,
-                prior_text=prior_text,
-                chapter=chapter,
-                scene_num=scene_num,
-                brief=brief,
-                entry_state=entry_state,
-                exit_state=exit_state,
-                prior_bridge=prior_bridge,
-                rewrite_note=rewrite_note,
-            )
-
-            messages: list[dict] = [{"role": "user", "content": context_block}]
-            if completed_scenes and attempt == 1:
-                prev_pov = scene_plan[scene_idx - 1].get("pov_character") if scene_idx > 0 else None
-                if prev_pov and curr_pov and prev_pov == curr_pov:
-                    prose_tail = _last_words(completed_scenes[-1], 500)
-                    messages.append({"role": "assistant", "content": prose_tail})
-                    messages.append({"role": "user", "content": f"Continue the scene.\n\nScene brief:\n\n{brief}"})
-
-            scene_text = await _call(writer_provider, writer_model, messages, prompt_store.get("writer", WRITER_SYSTEM), user)
-
-            qa_system, include_style = _qa_prompt_for_scene(scene_num, style_digest)
-            qa_user = (
-                (f"## Writing Preferences\n\n{writing_prefs}\n\n" if writing_prefs else "")
-                + f"## Entity Ledger\n\n{ledger_json}\n\n"
-                f"## Prior scenes in this chapter\n\n{prior_text}\n\n"
-                f"## Exit state contract\n\n{exit_state}\n\n"
-                + (f"## Series Style Digest\n\n{style_digest}\n\n" if include_style else "")
-                + f"## Scene to review\n\n{scene_text}"
-            )
-            try:
-                qa_text = await _call(qa_provider, qa_model, [{"role": "user", "content": qa_user}], qa_system, user, json_mode=True)
-                qa_result = _extract_json(qa_text)
-            except Exception as e:
-                qa_result = {"pass": True, "issues": [], "notes": f"QA skipped: {e}"}
-
-            passed = qa_result.get("pass", True)
-            log_cb(f"    QA {'pass' if passed else 'fail'} — {qa_result.get('notes', '')}")
-            if passed or attempt >= 3:
-                break
-
-        completed_scenes.append(scene_text)
-        scene_results.append({
-            "scene": scene_num, "brief": brief,
-            "entry_state": entry_state, "exit_state": exit_state,
-            "attempts": attempt,
-            "qa_pass": qa_result.get("pass", True) if qa_result else True,
-            "qa_notes": qa_result.get("notes", "") if qa_result else "",
-            "qa_issues": qa_result.get("issues", []) if qa_result else [],
-            "word_count": len(scene_text.split()),
-        })
-
-    chapter_md = f"# Chapter {chapter}\n\n" + "\n\n---\n\n".join(
-        f"## Scene {r['scene']}\n\n{prose}"
-        for r, prose in zip(scene_results, completed_scenes)
-    )
-    meta = {
-        "chapter": chapter,
-        "scene_count": len(scene_plan),
-        "scenes": scene_results,
-        "status": "written",
-        "written_at": datetime.now(timezone.utc).isoformat(),
-        "approved_at": None,
-        "bible_updated": False,
-    }
-
-    with open(_chapter_path(book_id, chapter), "w") as f:
-        f.write(chapter_md)
-    with open(_chapter_meta_path(book_id, chapter), "w") as f:
-        json.dump(meta, f, indent=2)
-    with open(_chapter_plan_path(book_id, chapter), "w") as f:
-        json.dump(scene_plan, f, indent=2)
-
-    from git import Repo
-    repo = Repo(book_dir)
-    repo.index.add([f"chapter_{chapter:02d}.md", f"chapter_{chapter:02d}_meta.json", f"chapter_{chapter:02d}_plan.json"])
-    repo.index.commit(f"Write Chapter {chapter} — {len(scene_plan)} scenes")
-    log_cb(f"Chapter {chapter} written — {len(scene_plan)} scenes, {sum(r['word_count'] for r in scene_results):,} words")
+    await _write_chapter_core(book_id, chapter, user, emit, log_cb, auto=True)
 
 
 async def _approve_chapter_bg(book_id: str, chapter: int, user: str, log_cb) -> None:
@@ -794,8 +827,8 @@ async def _run_auto_write(book_id: str, job_id: str, user: str) -> None:
 
             db.update_auto_write_job(job_id, current_chapter=chnum)
 
-            if not unapproved:
-                log(f"Writing Chapter {chnum}…")
+            if not unapproved or unapproved["status"] == "in_progress":
+                log(f"{'Continuing' if unapproved else 'Writing'} Chapter {chnum}…")
                 await _write_chapter_bg(book_id, chnum, user, log)
                 if is_cancelled():
                     return
@@ -870,11 +903,87 @@ def phase3_status(book_id: str):
 
 class WriteChapterBody(BaseModel):
     chapter: int
+    pause_after_scene: bool = False
+
+def _write_task(pause_after_scene: bool):
+    async def task(book_id, chapter, user, job_id, queue):
+        await _write_chapter_task(book_id, chapter, user, job_id, queue, pause_after_scene=pause_after_scene)
+    return task
 
 @router.post("/books/{book_id}/phase3/write-chapter")
 async def write_chapter(book_id: str, body: WriteChapterBody, user: str = Depends(current_user)):
-    _db_job_id, global_job_id, _is_new = _launch_chapter_job(book_id, body.chapter, "write", user, _write_chapter_task)
+    """Write (or continue writing) a chapter. pause_after_scene stops after each new scene for review."""
+    _db_job_id, global_job_id, _is_new = _launch_chapter_job(
+        book_id, body.chapter, "write", user, _write_task(body.pause_after_scene))
     return {"job_id": global_job_id}
+
+# ── Regenerate later scenes ────────────────────────────────────────────────────
+
+def _prepare_regenerate_after(book_id: str, chapter: int, scene: int) -> int:
+    """Keep scenes up to and including `scene`, drop the rest, and checkpoint so the
+    next write run regenerates everything after it. Returns the number of scenes dropped."""
+    from fastapi import HTTPException
+    chapter_path = _chapter_path(book_id, chapter)
+    plan_path = _chapter_plan_path(book_id, chapter)
+    meta = _read_meta(book_id, chapter)
+    if not os.path.exists(chapter_path) or not meta:
+        raise HTTPException(404, "Chapter not found.")
+    if meta.get("status") == "approved":
+        raise HTTPException(409, "Chapter is approved — it can no longer be regenerated.")
+    if not os.path.exists(plan_path):
+        raise HTTPException(400, "No saved scene plan for this chapter — rewrite it with Write Chapter instead.")
+
+    scene_plan = json.load(open(plan_path))
+    plan_nums = [s.get("scene") for s in scene_plan]
+    if scene not in plan_nums:
+        raise HTTPException(404, f"Scene {scene} is not in the Chapter {chapter} plan.")
+    keep = set(plan_nums[:plan_nums.index(scene) + 1])
+
+    sections = _scene_sections(open(chapter_path).read())
+    kept_results = [s for s in meta.get("scenes", []) if s.get("scene") in keep and s.get("scene") in sections]
+    kept_results.sort(key=lambda s: plan_nums.index(s["scene"]))
+    kept_prose = [sections[s["scene"]] for s in kept_results]
+    dropped = len([n for n in sections if n not in keep])
+
+    _checkpoint_chapter_progress(book_id, chapter, scene_plan, kept_results, kept_prose)
+    _save_chapter(book_id, chapter, scene_plan, kept_results, kept_prose, status="in_progress",
+                  commit_msg=f"Regenerate Chapter {chapter} after Scene {scene}")
+    return dropped
+
+class RegenerateBody(BaseModel):
+    pause_after_scene: bool = False
+
+@router.post("/books/{book_id}/phase3/chapter/{chapter}/regenerate-after/{scene}")
+async def regenerate_after(book_id: str, chapter: int, scene: int, body: RegenerateBody, user: str = Depends(current_user)):
+    """Replace every scene after `scene` with fresh ones written from the corrected story so far."""
+    _prepare_regenerate_after(book_id, chapter, scene)
+    _db_job_id, global_job_id, _is_new = _launch_chapter_job(
+        book_id, chapter, "write", user, _write_task(body.pause_after_scene))
+    return {"job_id": global_job_id}
+
+# ── Steering: length target and standing notes ─────────────────────────────────
+
+class SteeringBody(BaseModel):
+    target_chapter_words: int | None = None
+    book_notes: str = ""
+    chapter_notes: dict[str, str] = {}
+
+@router.get("/books/{book_id}/phase3/steering")
+def get_steering(book_id: str):
+    return {"data": steering.read(book_id), "status": "ok"}
+
+@router.put("/books/{book_id}/phase3/steering")
+def put_steering(book_id: str, body: SteeringBody):
+    data = steering.write(book_id, body.model_dump())
+    try:
+        from git import Repo
+        repo = Repo(db.data_dir(book_id))
+        repo.index.add([steering.FILE_NAME])
+        if repo.is_dirty(index=True, working_tree=False, untracked_files=False):
+            repo.index.commit("Update length target and standing notes")
+    except Exception as e:
+        log.warning(f"Could not commit steering for {book_id}: {e}")
+    return {"data": data, "status": "ok"}
 
 # ── Get Chapter ────────────────────────────────────────────────────────────────
 
@@ -883,10 +992,13 @@ def get_chapter(book_id: str, chapter: int):
     content_path = _chapter_path(book_id, chapter)
     if not os.path.exists(content_path):
         return None
+    meta = _read_meta(book_id, chapter)
+    scene_count = steering.planned_scene_count(book_id, chapter) or (meta or {}).get("scene_count") or 0
     return {
         "chapter": chapter,
         "content": open(content_path).read(),
-        "meta": _read_meta(book_id, chapter),
+        "meta": meta,
+        "scene_word_target": steering.scene_word_target(book_id, scene_count),
     }
 
 
@@ -921,6 +1033,9 @@ def chapter_job_status(book_id: str, chapter: int, step: str = "write"):
 
 @router.post("/books/{book_id}/phase3/chapter/{chapter}/approve")
 async def approve_chapter(book_id: str, chapter: int, user: str = Depends(current_user)):
+    from fastapi import HTTPException
+    if (_read_meta(book_id, chapter) or {}).get("status") == "in_progress":
+        raise HTTPException(409, "Chapter is still being written — continue writing it before approving.")
     _db_job_id, global_job_id, _is_new = _launch_chapter_job(book_id, chapter, "approve", user, _approve_chapter_task)
     return {"job_id": global_job_id}
 
@@ -982,32 +1097,42 @@ async def rewrite_scene(book_id: str, chapter: int, scene: int, body: RewriteBod
     north_star = _read_north_star(book_id)
     writing_prefs = _read_writing_prefs(book_id)
     ledger_json = json.dumps(_read_bible(book_id).get("ledger", {}))
-    style_digest = await _load_style_digest(book_id, qa_provider, qa_model, user)
 
     plan_path = _chapter_plan_path(book_id, chapter)
     scene_plan = json.load(open(plan_path)) if os.path.exists(plan_path) else []
     scene_def = next((s for s in scene_plan if s.get("scene") == scene), {})
+    style_digest = await _load_style_digest(book_id, qa_provider, qa_model, user)
 
-    content = open(chapter_path).read()
-    parts = content.split("## Scene ")
-    prior_scenes = [p.split("\n", 1)[1].strip() for p in parts[1:] if p.split("\n", 1)[0].strip() != str(scene)]
-    prior_text = "\n\n---\n\n".join(prior_scenes) if prior_scenes else "None yet."
+    sections = _scene_sections(open(chapter_path).read())
+    # QA checks against every other scene; the Writer gets a condensed view of the scenes before this one
+    other_scenes = [text for n, text in sections.items() if n != scene]
+    qa_prior = "\n\n---\n\n".join(other_scenes) if other_scenes else "None yet."
+    writer_prior = condense_prior_scenes(
+        [(n, text) for n, text in sections.items() if n < scene],
+        _plan_summaries(scene_plan) if scene_plan else _chapter_summaries(book_id, chapter),
+    )
 
     exit_state = scene_def.get("exit_state", "")
     brief = scene_def.get("brief", "")
+    author_notes = steering.notes_for(book_id, chapter)
+    word_target = steering.scene_word_target(book_id, len(scene_plan) or steering.planned_scene_count(book_id, chapter))
 
     rewrite_note = f"\n\n## Author directive\n\n{body.directive}\n\nRewrite this scene addressing the directive."
     context_block = assemble_writer_context(
         north_star=north_star,
         writing_prefs=writing_prefs,
         ledger_json=ledger_json,
-        prior_text=prior_text,
+        prior_text=writer_prior,
         chapter=chapter,
         scene_num=scene,
         brief=brief,
         entry_state="",
         exit_state=exit_state,
+        prior_bridge=_prior_bridge(book_id, chapter) if scene == min(sections, default=scene) else "",
         rewrite_note=rewrite_note,
+        author_notes=author_notes,
+        word_target=word_target,
+        word_limit=steering.word_limit(word_target),
     )
 
     job_id, job = job_store.create(meta={"events": [], "qa_result": None})
@@ -1027,21 +1152,16 @@ async def rewrite_scene(book_id: str, chapter: int, scene: int, body: RewriteBod
                 scene_text += token
                 job["tokens"] += token
 
-            events.append({"type": "scene_written", "scene": scene, "word_count": len(scene_text.split())})
+            events.append({"type": "scene_written", "scene": scene, "word_count": len(scene_text.split()), "word_target": word_target})
 
             qa_system, include_style = _qa_prompt_for_scene(scene, style_digest)
-            qa_user = (
-                (f"## Writing Preferences\n\n{writing_prefs}\n\n" if writing_prefs else "")
-                + f"## Entity Ledger\n\n{ledger_json}\n\n"
-                f"## Prior scenes\n\n{prior_text}\n\n"
-                f"## Exit state contract\n\n{exit_state}\n\n"
-                + (f"## Series Style Digest\n\n{style_digest}\n\n" if include_style else "")
-                + f"## Scene to review\n\n{scene_text}"
-            )
+            qa_user = _qa_user_message(writing_prefs, ledger_json, qa_prior, exit_state, scene_text, author_notes,
+                                        style_digest if include_style else "")
             try:
-                qa_result = _extract_json(await _call(qa_provider, qa_model, [{"role": "user", "content": qa_user}], qa_system, json_mode=True))
+                qa_result = _extract_json(await _call(qa_provider, qa_model, [{"role": "user", "content": qa_user}], qa_system, user, json_mode=True))
             except Exception as e:
                 qa_result = {"pass": True, "issues": [], "notes": f"QA error: {e}"}
+            qa_result = _apply_length_check(qa_result, scene_text, word_target, "error")
 
             job["meta"]["qa_result"] = qa_result
             events.append({
@@ -1051,20 +1171,16 @@ async def rewrite_scene(book_id: str, chapter: int, scene: int, body: RewriteBod
                 "notes": qa_result.get("notes", ""),
             })
 
-            new_content = re.sub(
-                rf"(## Scene {scene}\n\n)(.*?)(?=\n\n---\n\n## Scene |\Z)",
-                f"## Scene {scene}\n\n{scene_text}",
-                content,
-                flags=re.DOTALL,
-            )
+            # Re-read: the author may have saved edits to other scenes while this ran
+            new_content = _replace_scene_section(open(chapter_path).read(), scene, scene_text)
             with open(chapter_path, "w") as f:
                 f.write(new_content)
 
             meta = _read_meta(book_id, chapter) or {}
             for s in meta.get("scenes", []):
                 if s["scene"] == scene:
-                    s.update({"qa_pass": qa_result.get("pass", True), "qa_notes": qa_result.get("notes", ""), "qa_issues": qa_result.get("issues", []), "attempts": 1, "word_count": len(scene_text.split()), "author_edited": False})
-            meta["status"] = "written"
+                    s.update({"qa_pass": qa_result.get("pass", True), "qa_notes": qa_result.get("notes", ""), "qa_issues": qa_result.get("issues", []), "attempts": 1, "word_count": len(scene_text.split()), "word_target": word_target, "author_edited": False})
+            _mark_written(meta)
             with open(_chapter_meta_path(book_id, chapter), "w") as f:
                 json.dump(meta, f, indent=2)
 
@@ -1109,15 +1225,13 @@ def save_scene_prose(book_id: str, chapter: int, scene: int, body: SceneProseBod
         raise HTTPException(409, "Chapter is approved — edits are locked.")
 
     content = open(chapter_path).read()
-    pattern = rf"(## Scene {scene}\n\n)(.*?)(?=\n\n---\n\n## Scene |\Z)"
-    match = re.search(pattern, content, flags=re.DOTALL)
-    if not match:
+    current = _scene_sections(content).get(scene)
+    if current is None:
         raise HTTPException(404, f"Scene {scene} not found in Chapter {chapter}.")
-    if match.group(2).strip() == text:
+    if current == text:
         return {"data": {"saved": False, "word_count": len(text.split())}, "status": "ok"}
 
-    # Splice by match offsets rather than re.sub so backslashes in the author's text aren't treated as escapes
-    new_content = content[:match.start()] + f"## Scene {scene}\n\n{text}" + content[match.end():]
+    new_content = _replace_scene_section(content, scene, text)
     with open(chapter_path, "w") as f:
         f.write(new_content)
 
@@ -1251,6 +1365,7 @@ def sequential_progress(book_id: str):
                             current = {
                                 "act": act_num, "chapter": ch_num, "scene": sc_num, "step": "approve_prose",
                                 "content": ch_prose,
+                                "word_target": steering.scene_word_target(book_id, steering.planned_scene_count(book_id, ch_num)),
                             }
 
                 scenes_out.append({
@@ -1321,23 +1436,13 @@ async def write_scene_sequential(book_id: str, chapter: int, scene: int, body: W
     writing_prefs = _read_writing_prefs(book_id)
     ledger_json = json.dumps(_read_bible(book_id).get("ledger", {}))
 
-    prior_text = "None yet."
     chapter_prose_path = _chapter_path(book_id, chapter)
-    if os.path.exists(chapter_prose_path):
-        raw = open(chapter_prose_path).read()
-        parts = raw.split("## Scene ")
-        prior_parts = []
-        for p in parts[1:]:
-            header = p.split("\n", 1)[0].strip()
-            try:
-                sn = int(header)
-                if sn < scene:
-                    prose = p.split("\n", 1)[1].strip() if "\n" in p else ""
-                    prior_parts.append(f"[Scene {sn}]\n{prose.rstrip('- ').strip()}")
-            except ValueError:
-                pass
-        if prior_parts:
-            prior_text = "\n\n---\n\n".join(prior_parts)
+    sections = _scene_sections(open(chapter_prose_path).read()) if os.path.exists(chapter_prose_path) else {}
+    prior_text = condense_prior_scenes(
+        sorted((n, text) for n, text in sections.items() if n < scene),
+        _chapter_summaries(book_id, chapter),
+    )
+    word_target = steering.scene_word_target(book_id, steering.planned_scene_count(book_id, chapter))
 
     directive_note = f"\n\n## Author directive\n\n{body.directive}" if body.directive.strip() else ""
     scene_brief_block = f"## Scene Plan\n\n{scene_plan_section or f'Scene {scene} of Chapter {chapter}'}\n\n## Scene Brief\n\n{brief_content}"
@@ -1352,7 +1457,11 @@ async def write_scene_sequential(book_id: str, chapter: int, scene: int, body: W
         brief=scene_brief_block,
         entry_state="",
         exit_state="",
+        prior_bridge=_prior_bridge(book_id, chapter) if not any(n < scene for n in sections) else "",
         rewrite_note=directive_note,
+        author_notes=steering.notes_for(book_id, chapter),
+        word_target=word_target,
+        word_limit=steering.word_limit(word_target),
     )
 
     messages: list[dict] = [{"role": "user", "content": context_block}]
@@ -1390,31 +1499,20 @@ async def write_scene_sequential(book_id: str, chapter: int, scene: int, body: W
                 scene_text += token
                 job["tokens"] += token
 
-            if os.path.exists(chapter_prose_path):
-                raw = open(chapter_prose_path).read()
-                if re.search(rf"^## Scene {scene}\b", raw, re.MULTILINE):
-                    new_content = re.sub(
-                        rf"(## Scene {scene}\n\n)(.*?)(?=\n\n---\n\n## Scene |\Z)",
-                        f"## Scene {scene}\n\n{scene_text}",
-                        raw, flags=re.DOTALL,
-                    )
-                else:
-                    new_content = raw.rstrip() + f"\n\n---\n\n## Scene {scene}\n\n{scene_text}"
-            else:
-                new_content = f"# Chapter {chapter}\n\n## Scene {scene}\n\n{scene_text}"
-
+            raw = open(chapter_prose_path).read() if os.path.exists(chapter_prose_path) else f"# Chapter {chapter}"
             with open(chapter_prose_path, "w") as f:
-                f.write(new_content)
+                f.write(_replace_scene_section(raw, scene, scene_text))
 
             meta_path = _chapter_meta_path(book_id, chapter)
             meta = _read_json(meta_path, {"chapter": chapter, "scenes": [], "status": "written"})
             meta.setdefault("written_at", datetime.now(timezone.utc).isoformat())
-            meta["status"] = "written"
+            _mark_written(meta)
+            scene_meta = {"status": "written", "word_count": len(scene_text.split()), "word_target": word_target, "author_edited": False}
             existing = next((s for s in meta["scenes"] if s.get("scene") == scene), None)
             if existing:
-                existing.update({"status": "written", "word_count": len(scene_text.split()), "author_edited": False})
+                existing.update(scene_meta)
             else:
-                meta["scenes"].append({"scene": scene, "status": "written", "word_count": len(scene_text.split())})
+                meta["scenes"].append({"scene": scene, **scene_meta})
             meta["scene_count"] = len(meta["scenes"])
 
             with open(meta_path, "w") as f:
@@ -1481,14 +1579,15 @@ Be specific. Use character names. Beats must be ordered and causally connected."
 
 BEAT_EXPANDER_SYSTEM = """You are a literary novelist. Your sole task is to expand a beat list into continuous scene prose.
 
-The user message contains the scene context and an ordered list of beats. Expand each beat into 2–4 sentences of prose. Connect beats into a continuous, flowing scene — do not number them or add headers.
+The user message contains the scene context and an ordered list of beats. Expand the beats into prose, giving each only as much space as the length target in the scene contract allows. Connect beats into a continuous, flowing scene — do not number them or add headers.
 
 Rules:
 - Follow all writing preferences and entity facts exactly
 - Do not introduce new events, characters, or information beyond the beats
 - Match the voice, tense, and style of the writing preferences
-- Write ONLY prose. No headers, no beat numbers, no formatting markers.
-Target length: 600–900 words."""
+- Never restate facts, goals or tasks the reader already knows from earlier scenes
+- Follow the author standing notes and the length target in the scene contract
+- Write ONLY prose. No headers, no beat numbers, no formatting markers."""
 
 
 class WriteWithBeatsBody(BaseModel):
@@ -1516,23 +1615,14 @@ async def write_scene_with_beats(book_id: str, chapter: int, scene: int, body: W
     writing_prefs = _read_writing_prefs(book_id)
     ledger_json = json.dumps(_read_bible(book_id).get("ledger", {}))
 
-    prior_text = "None yet."
     chapter_prose_path = _chapter_path(book_id, chapter)
-    if os.path.exists(chapter_prose_path):
-        raw = open(chapter_prose_path).read()
-        parts = raw.split("## Scene ")
-        prior_parts = []
-        for p in parts[1:]:
-            header = p.split("\n", 1)[0].strip()
-            try:
-                sn = int(header)
-                if sn < scene:
-                    prose = p.split("\n", 1)[1].strip() if "\n" in p else ""
-                    prior_parts.append(f"[Scene {sn}]\n{prose.rstrip('- ').strip()}")
-            except ValueError:
-                pass
-        if prior_parts:
-            prior_text = "\n\n---\n\n".join(prior_parts)
+    sections = _scene_sections(open(chapter_prose_path).read()) if os.path.exists(chapter_prose_path) else {}
+    prior_text = condense_prior_scenes(
+        sorted((n, text) for n, text in sections.items() if n < scene),
+        _chapter_summaries(book_id, chapter),
+    )
+    word_target = steering.scene_word_target(book_id, steering.planned_scene_count(book_id, chapter))
+    author_notes = steering.notes_for(book_id, chapter)
 
     beat_prompt = (
         f"Scene brief:\n\n{brief_content}"
@@ -1564,6 +1654,9 @@ async def write_scene_with_beats(book_id: str, chapter: int, scene: int, body: W
                 brief=brief_content,
                 entry_state="",
                 exit_state="",
+                author_notes=author_notes,
+                word_target=word_target,
+                word_limit=steering.word_limit(word_target),
             )
             expand_user = f"{expand_context}\n\n## Beat list\n\n{beats_formatted}\n\nExpand these beats into continuous prose now."
 
@@ -1577,31 +1670,20 @@ async def write_scene_with_beats(book_id: str, chapter: int, scene: int, body: W
                 scene_text += token
                 job["tokens"] += token
 
-            if os.path.exists(chapter_prose_path):
-                existing = open(chapter_prose_path).read()
-                if f"## Scene {scene}" in existing:
-                    new_content = re.sub(
-                        rf"(## Scene {scene}\n\n)(.*?)(?=\n\n---\n\n## Scene |\Z)",
-                        f"## Scene {scene}\n\n{scene_text}",
-                        existing, flags=re.DOTALL
-                    )
-                else:
-                    new_content = existing.rstrip() + f"\n\n---\n\n## Scene {scene}\n\n{scene_text}"
-            else:
-                new_content = f"# Chapter {chapter}\n\n## Scene {scene}\n\n{scene_text}"
-
+            raw = open(chapter_prose_path).read() if os.path.exists(chapter_prose_path) else f"# Chapter {chapter}"
             with open(chapter_prose_path, "w") as f:
-                f.write(new_content)
+                f.write(_replace_scene_section(raw, scene, scene_text))
 
             meta_path = _chapter_meta_path(book_id, chapter)
             meta = _read_json(meta_path, {"chapter": chapter, "scenes": [], "status": "written"})
             meta.setdefault("written_at", datetime.now(timezone.utc).isoformat())
-            meta["status"] = "written"
+            _mark_written(meta)
+            scene_meta = {"status": "written", "word_count": len(scene_text.split()), "word_target": word_target, "author_edited": False}
             existing_scene = next((s for s in meta["scenes"] if s.get("scene") == scene), None)
             if existing_scene:
-                existing_scene.update({"status": "written", "word_count": len(scene_text.split()), "author_edited": False})
+                existing_scene.update(scene_meta)
             else:
-                meta["scenes"].append({"scene": scene, "status": "written", "word_count": len(scene_text.split())})
+                meta["scenes"].append({"scene": scene, **scene_meta})
             meta["scene_count"] = len(meta["scenes"])
 
             with open(meta_path, "w") as f:

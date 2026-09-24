@@ -26,7 +26,7 @@ interface ActProgress {
 }
 interface Current {
   act: number | null; chapter: number | null; scene: number | null
-  step: string; content?: string; brief?: string
+  step: string; content?: string; brief?: string; word_target?: number
 }
 interface Progress {
   ready: boolean; reason?: string
@@ -425,7 +425,9 @@ export default function SequentialWorkflow() {
                   <pre className="mt-2 p-3 bg-muted rounded-md text-xs overflow-x-auto whitespace-pre-wrap">{c.brief}</pre>
                 </details>
               )}
-              <p className="text-sm text-muted-foreground">Write the prose for Scene {scene}.</p>
+              <p className="text-sm text-muted-foreground">
+                Write the prose for Scene {scene}. The length target and standing notes set under <span className="font-medium">Length &amp; notes</span> in Writing Loop apply.
+              </p>
               {streaming
                 ? <StreamDisplay ref={streamRef} text={streamText} />
                 : (
@@ -459,6 +461,7 @@ export default function SequentialWorkflow() {
                   value={editContent}
                   onChange={setEditContent}
                   disabled={savingProse}
+                  targetWords={c.word_target}
                 />
                 <div className="flex items-center gap-2 flex-wrap">
                   <Button
