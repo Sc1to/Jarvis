@@ -41,6 +41,16 @@ and sentence structure intact. Use the same tense and voice.
 
 Only return the rephrased text, nothing else."""
 
+TEXT_OP_TIGHTEN_SYSTEM = """You are an expert prose editor.
+
+Cut the text to the target length given in the instruction.
+Keep every plot event, decision, and the state of things at the end of the scene.
+Remove, in this order: restated facts and reminders of what the reader already knows,
+repeated beats, redundant description, filler dialogue, and throat-clearing.
+Keep the writing style, tense, and voice exactly — edit by cutting, not by rewriting.
+
+Only return the tightened text, nothing else."""
+
 TEXT_OP_NOTES_SYSTEM = """You are an expert editor familiar with {genre} fiction.
 
 The author has provided a scene for feedback. Give specific, actionable notes on:
@@ -83,6 +93,40 @@ class ExpandBody(BaseModel):
 class RephraseBody(BaseModel):
     scene_prose: str
     instruction: str
+
+
+class TightenBody(BaseModel):
+    scene_prose: str
+    target_words: int | None = None
+
+
+def _tighten_model() -> tuple[str | None, str | None]:
+    provider = db.get_setting("agent_text_op_rephrase_provider") or db.get_setting("agent_writer_agent_provider")
+    model = db.get_setting("agent_text_op_rephrase_model") or db.get_setting("agent_writer_agent_model")
+    return provider, model
+
+
+def _tighten_message(prose: str, target_words: int) -> str:
+    return (
+        f"Instruction: cut this to about {target_words} words "
+        f"(it is currently {len(prose.split())} words).\n\nText to tighten:\n\n{prose}"
+    )
+
+
+async def tighten_prose(prose: str, target_words: int, user: str) -> str:
+    """Cut prose to roughly target_words. Returns the original text if no model is configured."""
+    provider, model = _tighten_model()
+    if not provider or not model:
+        return prose
+    result = ""
+    async for token in llm.provider_tokens(
+        provider, model,
+        [{"role": "user", "content": _tighten_message(prose, target_words)}],
+        prompt_store.get("text_op_tighten", TEXT_OP_TIGHTEN_SYSTEM),
+        user,
+    ):
+        result += token
+    return result.strip() or prose
 
 
 class EditorialNotesBody(BaseModel):
@@ -142,6 +186,34 @@ async def rephrase_selection(book_id: str, body: RephraseBody, user: str = Depen
                 system,
                 user,
             ):
+                full_text += token
+                job["tokens"] += token
+            job["status"] = "done"
+            job["result"] = full_text
+        except Exception as e:
+            job["status"] = "error"
+            job["error"] = str(e) or type(e).__name__
+
+    asyncio.create_task(_bg())
+    return {"job_id": job_id}
+
+
+@router.post("/books/{book_id}/text-ops/tighten")
+async def tighten_selection(book_id: str, body: TightenBody, user: str = Depends(current_user)):
+    from fastapi import HTTPException
+    provider, model = _tighten_model()
+    if not provider or not model:
+        raise HTTPException(400, "No model configured — assign one in Settings or configure the Writer agent.")
+
+    target = body.target_words or max(100, round(len(body.scene_prose.split()) * 0.7))
+    system = prompt_store.get("text_op_tighten", TEXT_OP_TIGHTEN_SYSTEM)
+    user_msg = _tighten_message(body.scene_prose, target)
+    job_id, job = job_store.create()
+
+    async def _bg():
+        full_text = ""
+        try:
+            async for token in llm.provider_tokens(provider, model, [{"role": "user", "content": user_msg}], system, user):
                 full_text += token
                 job["tokens"] += token
             job["status"] = "done"

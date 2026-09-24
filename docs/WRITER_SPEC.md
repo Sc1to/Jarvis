@@ -325,6 +325,14 @@ For a long novel, QA context will grow scene by scene and will hit model context
 | Does NOT see | Full story arc, future scene briefs, future ledger events, seed payoff references |
 | Output | Prose scene in established narrative voice |
 
+> **As implemented — Writer context and steering:**
+> - **Prior scenes are condensed.** Earlier scenes in the chapter appear as one line each (planned brief + exit state), marked "the reader knows this — do not restate it"; only the immediately preceding scene is included in full (last ~1,200 words). Previous-chapter context is the last ~250 words of the previous chapter only. QA still sees full prior prose.
+> - **Ledger without history.** The Writer's ledger entries have `eventLog` removed; QA keeps the full ledger.
+> - **Economy rules.** The Writer prompt forbids restating goals, tasks, backstory or established facts; QA checks this as a `redundancy` issue.
+> - **Length target.** Per book, `steering.json` holds `target_chapter_words`; each scene's target is that divided by the chapter's scene count (minimum 150; ~750 when unset), sent in the scene contract with a hard limit of 1.25×. Over-limit scenes are trimmed by the Tighten text op in automatic mode (and manual mode with QA retry on), and flagged as a `length` QA error otherwise.
+> - **Standing notes.** `steering.json` also holds book-wide and per-chapter author notes, sent to the Writer (overriding brief and preferences) and to QA (violations are errors) on every scene until removed. Edited under *Length & notes* in the Writing Loop.
+> - **Course-correction.** *Pause each scene* stops Write Chapter after every new scene (chapter status `in_progress`); *Continue writing* resumes and picks up any edits or rewrites made meanwhile. *Regenerate later scenes* (`POST …/chapter/{ch}/regenerate-after/{scene}`) discards every scene after the chosen one and writes them again from the corrected story. In-progress chapters cannot be approved; Auto-write all finishes them first.
+
 ### 6.4 QA Agent
 
 | Property | Value |
