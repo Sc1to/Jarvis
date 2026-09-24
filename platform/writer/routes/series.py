@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 from datetime import datetime, timezone
@@ -146,6 +147,54 @@ def save_series_style_sheet(series_id: str, body: TextBody):
         raise HTTPException(404, "Not found")
     _write_series_text(series_id, "style_sheet.md", body.content)
     return {"ok": True}
+
+
+# ── Style digest (compressed style sheet for QA) ──────────────────────────────
+# QA checks style alignment on a sampled cadence rather than every scene, and
+# uses this short digest rather than the full style sheet to keep its prompt
+# small. The digest is cached and only regenerated when the style sheet text
+# changes.
+
+_STYLE_DIGEST_SYSTEM = """Compress this series style sheet into a short checklist a QA reviewer can use to judge whether a scene matches the series voice.
+
+5-8 bullet points max. Cover POV/tense conventions, prose rhythm, recurring motifs, and any hard naming or wording rules. Drop rationale and examples — rules only.
+
+Output the bullet list only. No preamble, no headers."""
+
+
+def _style_digest_path(series_id: str) -> str:
+    return os.path.join(db.series_data_dir(series_id), "style_digest.json")
+
+
+async def get_style_digest(series_id: str, provider: str, model: str, user: str = "local") -> str:
+    """Short, cached digest of the series style sheet for use in QA prompts.
+
+    Regenerated only when the style sheet's content changes (tracked via hash),
+    so QA runs against a stable, low-token summary instead of re-compressing
+    the full style sheet on every check.
+    """
+    style_sheet = read_series_text(series_id, "style_sheet.md")
+    if not style_sheet.strip():
+        return ""
+
+    source_hash = hashlib.sha256(style_sheet.encode()).hexdigest()
+    cache_path = _style_digest_path(series_id)
+    if os.path.exists(cache_path):
+        with open(cache_path) as f:
+            cached = json.load(f)
+        if cached.get("source_hash") == source_hash and cached.get("digest"):
+            return cached["digest"]
+
+    messages = [{"role": "user", "content": f"Series style sheet:\n\n{style_sheet}"}]
+    digest = ""
+    async for token in llm.provider_tokens(provider, model, messages, _STYLE_DIGEST_SYSTEM, user):
+        digest += token
+    digest = digest.strip()
+
+    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+    with open(cache_path, "w") as f:
+        json.dump({"source_hash": source_hash, "digest": digest}, f, indent=2)
+    return digest
 
 
 # ── Promote book entity → series ─────────────────────────────────────────────

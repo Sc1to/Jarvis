@@ -15,6 +15,7 @@ from deps import current_user
 import llm
 import prompt_store
 from prompt_blocks import assemble_writer_context, condense_prior_scenes, _truncate_prior_scenes
+from routes.series import get_style_digest
 import steering
 
 log = logging.getLogger(__name__)
@@ -77,6 +78,16 @@ Return ONLY valid JSON — no preamble, no fences:
 {"pass": true, "issues": [{"type": "entity|continuity|contract|voice|redundancy|notes", "description": "...", "severity": "warning|error"}], "notes": "brief overall assessment"}
 
 pass = true when there are zero error-severity issues. Warnings alone do not fail."""
+
+# Appended to QA_SYSTEM only on scenes sampled for series style-alignment checking
+# (see _style_check_cadence) — keeps the always-on QA prompt from growing on every
+# scene just to cover something as slow-moving as series voice.
+STYLE_CHECK_ADDENDUM = """
+
+Additionally check:
+7. Style alignment — does this scene stay consistent with the series style digest provided below?
+
+Add style issues to "issues" with type "style"."""
 
 BIBLE_UPDATER_SYSTEM = """You are the Bible Updater. Update the entity ledger with facts from this approved chapter.
 
@@ -314,10 +325,11 @@ def _apply_length_check(qa_result: dict, text: str, target: int, severity: str) 
     return qa_result
 
 def _qa_user_message(writing_prefs: str, ledger_json: str, prior_text: str, exit_state: str,
-                     scene_text: str, author_notes: str = "") -> str:
+                     scene_text: str, author_notes: str = "", style_digest: str = "") -> str:
     return (
         (f"## Writing Preferences\n\n{writing_prefs}\n\n" if writing_prefs else "")
         + (f"## Author standing notes\n\n{author_notes}\n\n" if author_notes else "")
+        + (f"## Series Style Digest\n\n{style_digest}\n\n" if style_digest else "")
         + f"## Entity Ledger\n\n{ledger_json}\n\n"
         f"## Prior scenes in this chapter\n\n{prior_text}\n\n"
         f"## Exit state contract\n\n{exit_state}\n\n"
@@ -326,6 +338,33 @@ def _qa_user_message(writing_prefs: str, ledger_json: str, prior_text: str, exit
 
 def _manual_retry_enabled() -> bool:
     return db.get_setting("qa_retry_manual") == "true"
+
+def _style_check_cadence() -> int:
+    """Check series style alignment every Nth scene rather than every scene."""
+    raw = db.get_setting("qa_style_check_every_n_scenes")
+    try:
+        n = int(raw)
+        return n if n > 0 else 3
+    except (TypeError, ValueError):
+        return 3
+
+async def _load_style_digest(book_id: str, qa_provider: str, qa_model: str, user: str) -> str:
+    """Series style digest for QA, or "" if the book isn't in a series or has no style sheet."""
+    book = db.get_book(book_id)
+    series_id = book and book.get("series_id")
+    if not series_id:
+        return ""
+    try:
+        return await get_style_digest(series_id, qa_provider, qa_model, user)
+    except Exception as e:
+        log.warning(f"Style digest unavailable for series {series_id}: {e}")
+        return ""
+
+def _qa_prompt_for_scene(scene_num: int, style_digest: str) -> tuple[str, bool]:
+    """QA system prompt for a scene, plus whether this scene is sampled for style checking."""
+    include_style = bool(style_digest) and scene_num % _style_check_cadence() == 0
+    system = prompt_store.get("qa", QA_SYSTEM) + (STYLE_CHECK_ADDENDUM if include_style else "")
+    return system, include_style
 
 
 # ── Chapter writer (shared by manual Write Chapter and Auto-write all) ────────
@@ -370,6 +409,7 @@ async def _write_chapter_core(
     bible = _read_bible(book_id)
     ledger_json = json.dumps(bible.get("ledger", {}))
     author_notes = steering.notes_for(book_id, chapter)
+    style_digest = await _load_style_digest(book_id, qa_provider, qa_model, user)
 
     # Resume from checkpoint if a previous run was interrupted or paused
     progress_path = _chapter_progress_path(book_id, chapter)
@@ -484,9 +524,11 @@ async def _write_chapter_core(
                     await emit({"type": "status", "message": f"Tighten failed, keeping the long draft: {e}"})
 
             await emit({"type": "qa_start", "scene": scene_num, "attempt": attempt})
-            qa_user = _qa_user_message(writing_prefs, ledger_json, qa_prior, exit_state, scene_text, author_notes)
+            qa_system, include_style = _qa_prompt_for_scene(scene_num, style_digest)
+            qa_user = _qa_user_message(writing_prefs, ledger_json, qa_prior, exit_state, scene_text, author_notes,
+                                        style_digest if include_style else "")
             try:
-                qa_text = await _call(qa_provider, qa_model, [{"role": "user", "content": qa_user}], prompt_store.get("qa", QA_SYSTEM), user, json_mode=True)
+                qa_text = await _call(qa_provider, qa_model, [{"role": "user", "content": qa_user}], qa_system, user, json_mode=True)
                 qa_result = _extract_json(qa_text)
             except Exception as e:
                 qa_result = {"pass": True, "issues": [{"type": "system", "description": str(e), "severity": "warning"}], "notes": "QA skipped"}
@@ -1059,6 +1101,7 @@ async def rewrite_scene(book_id: str, chapter: int, scene: int, body: RewriteBod
     plan_path = _chapter_plan_path(book_id, chapter)
     scene_plan = json.load(open(plan_path)) if os.path.exists(plan_path) else []
     scene_def = next((s for s in scene_plan if s.get("scene") == scene), {})
+    style_digest = await _load_style_digest(book_id, qa_provider, qa_model, user)
 
     sections = _scene_sections(open(chapter_path).read())
     # QA checks against every other scene; the Writer gets a condensed view of the scenes before this one
@@ -1111,9 +1154,11 @@ async def rewrite_scene(book_id: str, chapter: int, scene: int, body: RewriteBod
 
             events.append({"type": "scene_written", "scene": scene, "word_count": len(scene_text.split()), "word_target": word_target})
 
-            qa_user = _qa_user_message(writing_prefs, ledger_json, qa_prior, exit_state, scene_text, author_notes)
+            qa_system, include_style = _qa_prompt_for_scene(scene, style_digest)
+            qa_user = _qa_user_message(writing_prefs, ledger_json, qa_prior, exit_state, scene_text, author_notes,
+                                        style_digest if include_style else "")
             try:
-                qa_result = _extract_json(await _call(qa_provider, qa_model, [{"role": "user", "content": qa_user}], prompt_store.get("qa", QA_SYSTEM), user, json_mode=True))
+                qa_result = _extract_json(await _call(qa_provider, qa_model, [{"role": "user", "content": qa_user}], qa_system, user, json_mode=True))
             except Exception as e:
                 qa_result = {"pass": True, "issues": [], "notes": f"QA error: {e}"}
             qa_result = _apply_length_check(qa_result, scene_text, word_target, "error")
