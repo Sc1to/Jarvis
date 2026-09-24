@@ -10,24 +10,26 @@ import { API } from '@/lib/api'
 import { runJob, sleep } from '@/lib/jobs'
 import { ChevronRight, Play, CheckCircle, Lock, Loader2, BookOpen, MapPin, Users, Plus, ListOrdered, Layers } from 'lucide-react'
 
-type Stage = 'book' | 'acts' | 'consolidate' | 'chapters' | 'scenes'
+type Stage = 'book' | 'acts' | 'consolidate' | 'foreshadowing' | 'chapters' | 'scenes'
 type TierStatus = 'locked' | 'active' | 'running' | 'review' | 'approved'
 type P2Step = 'idle' | 'consolidating' | 'researching' | 'done'
 
 const STAGES: { id: Stage; label: string }[] = [
-  { id: 'book',        label: 'Book'        },
-  { id: 'acts',        label: 'Acts'        },
-  { id: 'consolidate', label: 'Consolidate' },
-  { id: 'chapters',    label: 'Chapters'    },
-  { id: 'scenes',      label: 'Scenes'      },
+  { id: 'book',          label: 'Book'          },
+  { id: 'acts',          label: 'Acts'          },
+  { id: 'consolidate',   label: 'Consolidate'   },
+  { id: 'foreshadowing', label: 'Foreshadowing' },
+  { id: 'chapters',      label: 'Chapters'      },
+  { id: 'scenes',        label: 'Scenes'        },
 ]
 
 const STAGE_QUESTIONS: Record<Stage, string> = {
-  book:        'What happens in this book?',
-  acts:        'What happens in each act?',
-  consolidate: 'Extract the story bible skeleton.',
-  chapters:    'What happens in each chapter?',
-  scenes:      'What happens in each scene?',
+  book:          'What happens in this book?',
+  acts:          'What happens in each act?',
+  consolidate:   'Extract the story bible skeleton.',
+  foreshadowing: 'What needs to be planted ahead of time?',
+  chapters:      'What happens in each chapter?',
+  scenes:        'What happens in each scene?',
 }
 
 interface TierEntry { content: string | null; approved: boolean; draft?: string | null }
@@ -38,6 +40,13 @@ interface BibleEntity {
   lifecycle?: number[]
 }
 interface Bible { ledger: Record<string, BibleEntity>; metadata?: Record<string, unknown> }
+interface Seed {
+  id: string; description: string
+  plant_act_range: { from: number; to: number }; payoff_act: number
+  status: 'unplanted' | 'planted' | 'resolved'
+  planted_at?: { chapter: number; act: number } | null
+  resolved_at?: { chapter: number; act: number } | null
+}
 interface SkeletonEntity { id: string; name: string; type: string; aliases?: string[]; coreFacts?: Record<string, string>; appearsInActs?: number[] }
 interface Skeleton { acts: { number: number; title: string }[]; entities: SkeletonEntity[] }
 interface ActStatus { act: number; title: string; approved: boolean; chapters: { number: number; title: string }[]; has_content?: boolean }
@@ -82,6 +91,11 @@ export default function BibleWorkshopPage() {
     queryFn: () => fetch(`${API}/books/${bookId}/phase1/bible-skeleton`).then(r => r.json()),
   })
 
+  const { data: foreshadowing, refetch: refetchForeshadowing } = useQuery<{ seeds: Seed[] }>({
+    queryKey: ['foreshadowing', bookId],
+    queryFn: () => fetch(`${API}/books/${bookId}/phase1/foreshadowing`).then(r => r.json()),
+  })
+
   const { data: tier3Status, refetch: refetchTier3 } = useQuery<{ acts: ActStatus[] } | null>({
     queryKey: ['tier3-status', bookId],
     queryFn: () => fetch(`${API}/books/${bookId}/phase1/tier3/status`).then(r => r.json()),
@@ -105,6 +119,10 @@ export default function BibleWorkshopPage() {
   // ── Mini-consolidation state ─────────────────────────────────────────────────
   const [miniConsolRunning, setMiniConsolRunning] = useState(false)
   const [miniConsolError, setMiniConsolError] = useState<string | null>(null)
+
+  // ── Foreshadowing seed state ─────────────────────────────────────────────────
+  const [foreshadowingRunning, setForeshadowingRunning] = useState(false)
+  const [foreshadowingError, setForeshadowingError] = useState<string | null>(null)
 
   // ── Act management state (Tier 3) ────────────────────────────────────────────
   const [activeActNum, setActiveActNum] = useState<number | null>(null)
@@ -161,6 +179,7 @@ export default function BibleWorkshopPage() {
     if (s === 'book') return tier1Approved
     if (s === 'acts') return tier2Approved
     if (s === 'consolidate') return skeletonExists
+    if (s === 'foreshadowing') return !!(foreshadowing?.seeds?.length)
     if (s === 'chapters') return allActsApproved
     if (s === 'scenes') return allChaptersApproved
     return false
@@ -170,6 +189,8 @@ export default function BibleWorkshopPage() {
     if (s === 'book') return false
     if (s === 'acts') return !tier1Approved
     if (s === 'consolidate') return !tier2Approved
+    // Optional stage — never blocks Chapters, which only needs the skeleton.
+    if (s === 'foreshadowing') return !skeletonExists
     if (s === 'chapters') return !skeletonExists
     if (s === 'scenes') return !allActsApproved
     return true
@@ -345,6 +366,24 @@ export default function BibleWorkshopPage() {
       setMiniConsolError('Connection error — is the server running?')
     } finally {
       setMiniConsolRunning(false)
+    }
+  }
+
+  // ── Foreshadowing seed actions ───────────────────────────────────────────────
+  async function runForeshadowing() {
+    setForeshadowingRunning(true)
+    setForeshadowingError(null)
+    try {
+      const state = await runJob(`${API}/books/${bookId}/phase1/foreshadowing/generate`, {})
+      if (state.status === 'error') {
+        setForeshadowingError(state.error ?? 'Unknown error')
+      } else {
+        await refetchForeshadowing()
+      }
+    } catch {
+      setForeshadowingError('Connection error — is the server running?')
+    } finally {
+      setForeshadowingRunning(false)
     }
   }
 
@@ -1039,6 +1078,69 @@ export default function BibleWorkshopPage() {
                     </div>
                   </div>
                 </>
+              )}
+            </div>
+          )}
+
+          {/* ── Foreshadowing panel ── */}
+          {activeStage === 'foreshadowing' && (
+            <div className="space-y-5">
+              <div className="flex items-start justify-between">
+                <div>
+                  <h2 className="font-semibold">Foreshadowing Seeds</h2>
+                  <p className="text-sm text-muted-foreground mt-0.5">
+                    What needs to be planted ahead of time so later reveals land honestly.
+                    Optional — the Chapters stage works with or without these.
+                  </p>
+                </div>
+                <Button size="sm" onClick={runForeshadowing} className="gap-2 shrink-0 ml-4" disabled={foreshadowingRunning}>
+                  {foreshadowingRunning
+                    ? <><Loader2 size={13} className="animate-spin" />Generating…</>
+                    : <><Play size={13} />{foreshadowing?.seeds?.length ? 'Generate more' : 'Generate seeds'}</>
+                  }
+                </Button>
+              </div>
+
+              {foreshadowingError && (
+                <p className="text-sm text-destructive">⚠ {foreshadowingError}</p>
+              )}
+
+              {foreshadowingRunning && (
+                <Card className="bg-muted/30">
+                  <CardContent className="p-4">
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 size={14} className="animate-spin" />
+                      Agent reading the act breakdown, identifying what needs planting…
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {!!foreshadowing?.seeds?.length && !foreshadowingRunning && (
+                <div className="space-y-2">
+                  {foreshadowing.seeds.map(s => (
+                    <Card key={s.id} className="bg-muted/20">
+                      <CardContent className="p-3 space-y-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-mono text-muted-foreground">{s.id}</span>
+                          <Badge variant={s.status === 'resolved' ? 'success' : s.status === 'planted' ? 'secondary' : 'warning'}>
+                            {s.status}
+                          </Badge>
+                        </div>
+                        <p className="text-sm">{s.description}</p>
+                        <p className="text-[11px] text-muted-foreground">
+                          Plant: Act {s.plant_act_range.from}–{s.plant_act_range.to} · Payoff: Act {s.payoff_act}
+                          {s.planted_at && ` · Planted Ch.${s.planted_at.chapter}`}
+                          {s.resolved_at && ` · Resolved Ch.${s.resolved_at.chapter}`}
+                        </p>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+
+              {!foreshadowing?.seeds?.length && !foreshadowingRunning && (
+                <p className="text-sm text-muted-foreground italic">No seeds yet.</p>
               )}
             </div>
           )}

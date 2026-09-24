@@ -143,9 +143,17 @@ def block_author_notes(notes: str) -> str:
     )
 
 
-def block_foreshadowing() -> str:
-    # Stub — returns "" until foreshadowing_brief.json is implemented (per WRITER_SPEC.md §4.4)
-    return ""
+def block_foreshadowing(plant_seeds: list[dict], resolve_seeds: list[dict]) -> str:
+    """Seeds assigned to THIS scene only — a plant-only scene never sees a seed's
+    payoff act/chapter, matching WRITER_SPEC.md §4.4's "hidden from the Writer" rule."""
+    if not plant_seeds and not resolve_seeds:
+        return ""
+    lines = ["## Foreshadowing for this scene"]
+    for s in plant_seeds:
+        lines.append(f"- Plant, without drawing attention to it: {s['description']}")
+    for s in resolve_seeds:
+        lines.append(f"- This is where it pays off: {s['description']}")
+    return "\n".join(lines)
 
 
 def block_scene_contract(
@@ -194,6 +202,8 @@ def assemble_writer_context(
     author_notes: str = "",
     word_target: int | None = None,
     word_limit: int | None = None,
+    plant_seeds: list[dict] | None = None,
+    resolve_seeds: list[dict] | None = None,
 ) -> str:
     # Filter the ledger to only entities referenced in this scene's context,
     # and drop their event history (see strip_event_logs)
@@ -204,7 +214,7 @@ def assemble_writer_context(
         block_writing_rules(north_star, writing_prefs),
         block_active_entities(filtered_ledger),
         block_story_history(prior_text, prior_bridge),
-        block_foreshadowing(),
+        block_foreshadowing(plant_seeds or [], resolve_seeds or []),
         block_author_notes(author_notes),
         block_scene_contract(chapter, scene_num, brief, entry_state, exit_state, rewrite_note,
                              word_target, word_limit),

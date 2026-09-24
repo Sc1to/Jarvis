@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 import db
+import foreshadowing
 import jobs as job_store
 from deps import current_user
 import llm
@@ -39,12 +40,15 @@ Return ONLY valid JSON — a list of scene objects. No preamble, no fences:
     "brief": "one-sentence scene summary",
     "entry_state": "what must be true when the scene begins",
     "exit_state": "what must be true when the scene ends",
-    "pov_character": "name of the POV character, or null if not determinable"
+    "pov_character": "name of the POV character, or null if not determinable",
+    "plants": ["seed IDs from a **Plants:** line, or [] if none"],
+    "resolves": ["seed IDs from a **Resolves:** line, or [] if none"]
   }
 ]
 
 Extract ONLY the scenes belonging to the requested chapter number.
-For pov_character: use the character name exactly as it appears in the scene bible. Set null only if the scene bible gives no indication of POV."""
+For pov_character: use the character name exactly as it appears in the scene bible. Set null only if the scene bible gives no indication of POV.
+For plants/resolves: copy the seed IDs exactly as listed on that scene's **Plants:**/**Resolves:** line. Omit the key or use [] if the scene has no such line."""
 
 WRITER_SYSTEM = """You are a literary novelist. Your sole task is to write scene prose.
 
@@ -73,9 +77,10 @@ Check:
 4. Voice — dialogue and behaviour consistent with character coreFacts
 5. Redundancy — the scene restates goals, tasks, backstory or facts the reader already knows from prior scenes or the ledger (recaps, reminders, characters re-explaining what both know). Error when an established fact is restated rather than advanced; warning for minor echoes. Quote the offending sentence.
 6. Author standing notes — if provided, any violation is an error
+7. Foreshadowing — if this scene is assigned to plant or resolve a seed (given below), verify the prose actually does so. If this scene is not the assigned resolution scene for a seed, verify it doesn't prematurely reveal that seed's payoff.
 
 Return ONLY valid JSON — no preamble, no fences:
-{"pass": true, "issues": [{"type": "entity|continuity|contract|voice|redundancy|notes", "description": "...", "severity": "warning|error"}], "notes": "brief overall assessment"}
+{"pass": true, "issues": [{"type": "entity|continuity|contract|voice|redundancy|notes|foreshadowing", "description": "...", "severity": "warning|error"}], "notes": "brief overall assessment"}
 
 pass = true when there are zero error-severity issues. Warnings alone do not fail."""
 
@@ -153,6 +158,17 @@ def _read_writing_prefs(book_id: str) -> str:
 def _read_bible(book_id: str) -> dict:
     p = os.path.join(db.data_dir(book_id), "bible.json")
     return json.load(open(p)) if os.path.exists(p) else {"ledger": {}}
+
+def _chapter_act_num(book_id: str, chapter: int) -> int | None:
+    p = os.path.join(db.data_dir(book_id), "tier3", "status.json")
+    if not os.path.exists(p):
+        return None
+    status = json.load(open(p))
+    return next(
+        (a["act"] for a in status.get("acts", [])
+         for ch in a.get("chapters", []) if ch["number"] == chapter),
+        None
+    )
 
 def _extract_json(text: str) -> dict:
     from json_repair import repair_json
@@ -253,6 +269,31 @@ def _scene_sections(content: str) -> dict[int, str]:
         for m in re.finditer(r"^## Scene (\d+)\n\n(.*?)(?=\n\n---\n\n## Scene |\Z)", content, re.MULTILINE | re.DOTALL)
     }
 
+def _parse_seed_ids(block: str, field: str) -> list[str]:
+    """Extract seed IDs from a **Plants:**/**Resolves:** line within a Tier 4 scene block."""
+    m = re.search(rf'\*\*{field}:\*\*\s*(.+)', block)
+    if not m:
+        return []
+    value = m.group(1).strip()
+    if not value or value.lower() in ("none", "n/a", "-"):
+        return []
+    return [s.strip() for s in re.split(r'[,\s]+', value) if s.strip().upper().startswith("SEED_")]
+
+def _seed_fields_for_scene(chapter_plan: str, scene: int) -> tuple[list[str], list[str]]:
+    """Plants/resolves seed IDs for one scene, extracted from the raw Tier 4 chapter plan markdown."""
+    m = re.search(
+        r'^(### Scene ' + str(scene) + r'\s*[—–-].*?)(?=^### Scene \d+|\Z)',
+        chapter_plan, re.MULTILINE | re.DOTALL
+    )
+    if not m:
+        return [], []
+    block = m.group(1)
+    return _parse_seed_ids(block, "Plants"), _parse_seed_ids(block, "Resolves")
+
+def _resolve_seeds(book_id: str, seed_ids: list[str]) -> list[dict]:
+    """Seed IDs -> full seed dicts, dropping any that no longer exist in the catalog."""
+    return [s for sid in seed_ids if (s := foreshadowing.seed_by_id(book_id, sid))]
+
 def _replace_scene_section(content: str, scene: int, text: str) -> str:
     """Replace one scene's prose, or append the scene if it is not in the chapter yet.
 
@@ -324,12 +365,24 @@ def _apply_length_check(qa_result: dict, text: str, target: int, severity: str) 
             qa_result["pass"] = False
     return qa_result
 
+def _qa_foreshadowing_section(plant_seeds: list[dict], resolve_seeds: list[dict]) -> str:
+    if not plant_seeds and not resolve_seeds:
+        return ""
+    lines = ["## Foreshadowing assigned to this scene"]
+    for s in plant_seeds:
+        lines.append(f"- Should plant: {s['description']}")
+    for s in resolve_seeds:
+        lines.append(f"- Should resolve (this is the payoff scene): {s['description']}")
+    return "\n".join(lines) + "\n\n"
+
 def _qa_user_message(writing_prefs: str, ledger_json: str, prior_text: str, exit_state: str,
-                     scene_text: str, author_notes: str = "", style_digest: str = "") -> str:
+                     scene_text: str, author_notes: str = "", style_digest: str = "",
+                     plant_seeds: list[dict] | None = None, resolve_seeds: list[dict] | None = None) -> str:
     return (
         (f"## Writing Preferences\n\n{writing_prefs}\n\n" if writing_prefs else "")
         + (f"## Author standing notes\n\n{author_notes}\n\n" if author_notes else "")
         + (f"## Series Style Digest\n\n{style_digest}\n\n" if style_digest else "")
+        + _qa_foreshadowing_section(plant_seeds or [], resolve_seeds or [])
         + f"## Entity Ledger\n\n{ledger_json}\n\n"
         f"## Prior scenes in this chapter\n\n{prior_text}\n\n"
         f"## Exit state contract\n\n{exit_state}\n\n"
@@ -496,6 +549,8 @@ async def _write_chapter_core(
                 author_notes=author_notes,
                 word_target=word_target,
                 word_limit=word_limit,
+                plant_seeds=_resolve_seeds(book_id, scene_def.get("plants", [])),
+                resolve_seeds=_resolve_seeds(book_id, scene_def.get("resolves", [])),
             )
 
             messages: list[dict] = [{"role": "user", "content": context_block}]
@@ -526,7 +581,9 @@ async def _write_chapter_core(
             await emit({"type": "qa_start", "scene": scene_num, "attempt": attempt})
             qa_system, include_style = _qa_prompt_for_scene(scene_num, style_digest)
             qa_user = _qa_user_message(writing_prefs, ledger_json, qa_prior, exit_state, scene_text, author_notes,
-                                        style_digest if include_style else "")
+                                        style_digest if include_style else "",
+                                        plant_seeds=_resolve_seeds(book_id, scene_def.get("plants", [])),
+                                        resolve_seeds=_resolve_seeds(book_id, scene_def.get("resolves", [])))
             try:
                 qa_text = await _call(qa_provider, qa_model, [{"role": "user", "content": qa_user}], qa_system, user, json_mode=True)
                 qa_result = _extract_json(qa_text)
@@ -782,11 +839,41 @@ async def _approve_chapter_bg(book_id: str, chapter: int, user: str, log_cb) -> 
     except Exception as e:
         log_cb(f"  ⚠ Bible Updater parse failed (chapter still approved): {e}")
 
+    meta = _read_meta(book_id, chapter) or {}
+
+    # Foreshadowing: flip seed status for any Plants:/Resolves: assignments (set during
+    # Tier 4 planning) on scenes actually included in this approved chapter. Deterministic —
+    # the plan assignment is the source of truth; QA (at write time) is what checks the
+    # assignment was actually honored in prose, so skip a scene QA flagged as not honoring it.
+    seeds_changed = False
+    act_num = _chapter_act_num(book_id, chapter)
+    if act_num is not None:
+        t4 = _read_json(os.path.join(book_dir, "tier4", "status.json"), {"chapters": []})
+        t4_chapter = next((c for c in t4.get("chapters", []) if c["number"] == chapter), None)
+        scene_meta_by_num = {s["scene"]: s for s in meta.get("scenes", [])}
+        if t4_chapter:
+            plant_ids, resolve_ids = set(), set()
+            for sc in t4_chapter.get("scenes", []):
+                sm = scene_meta_by_num.get(sc["number"])
+                if not sm:
+                    continue
+                if any(i.get("type") == "foreshadowing" and i.get("severity") == "error" for i in sm.get("qa_issues", [])):
+                    continue
+                plant_ids.update(sc.get("plants", []))
+                resolve_ids.update(sc.get("resolves", []))
+            if plant_ids:
+                foreshadowing.mark_planted(book_id, list(plant_ids), chapter, act_num)
+                seeds_changed = True
+            if resolve_ids:
+                foreshadowing.mark_resolved(book_id, list(resolve_ids), chapter, act_num)
+                seeds_changed = True
+
     git_files = [f"chapter_{chapter:02d}_meta.json"]
     if bible_updated:
         git_files.append("bible.json")
+    if seeds_changed:
+        git_files.append(foreshadowing.FILE_NAME)
 
-    meta = _read_meta(book_id, chapter) or {}
     meta.update({"status": "approved", "approved_at": datetime.now(timezone.utc).isoformat(), "bible_updated": bible_updated})
     with open(_chapter_meta_path(book_id, chapter), "w") as f:
         json.dump(meta, f, indent=2)
@@ -1133,6 +1220,8 @@ async def rewrite_scene(book_id: str, chapter: int, scene: int, body: RewriteBod
         author_notes=author_notes,
         word_target=word_target,
         word_limit=steering.word_limit(word_target),
+        plant_seeds=_resolve_seeds(book_id, scene_def.get("plants", [])),
+        resolve_seeds=_resolve_seeds(book_id, scene_def.get("resolves", [])),
     )
 
     job_id, job = job_store.create(meta={"events": [], "qa_result": None})
@@ -1156,7 +1245,9 @@ async def rewrite_scene(book_id: str, chapter: int, scene: int, body: RewriteBod
 
             qa_system, include_style = _qa_prompt_for_scene(scene, style_digest)
             qa_user = _qa_user_message(writing_prefs, ledger_json, qa_prior, exit_state, scene_text, author_notes,
-                                        style_digest if include_style else "")
+                                        style_digest if include_style else "",
+                                        plant_seeds=_resolve_seeds(book_id, scene_def.get("plants", [])),
+                                        resolve_seeds=_resolve_seeds(book_id, scene_def.get("resolves", [])))
             try:
                 qa_result = _extract_json(await _call(qa_provider, qa_model, [{"role": "user", "content": qa_user}], qa_system, user, json_mode=True))
             except Exception as e:
@@ -1432,6 +1523,8 @@ async def write_scene_sequential(book_id: str, chapter: int, scene: int, body: W
         if m:
             scene_plan_section = m.group(1).strip()
 
+    plants, resolves = _seed_fields_for_scene(chapter_plan, scene)
+
     north_star = _read_north_star(book_id)
     writing_prefs = _read_writing_prefs(book_id)
     ledger_json = json.dumps(_read_bible(book_id).get("ledger", {}))
@@ -1462,6 +1555,8 @@ async def write_scene_sequential(book_id: str, chapter: int, scene: int, body: W
         author_notes=steering.notes_for(book_id, chapter),
         word_target=word_target,
         word_limit=steering.word_limit(word_target),
+        plant_seeds=_resolve_seeds(book_id, plants),
+        resolve_seeds=_resolve_seeds(book_id, resolves),
     )
 
     messages: list[dict] = [{"role": "user", "content": context_block}]
@@ -1613,6 +1708,10 @@ async def write_scene_with_beats(book_id: str, chapter: int, scene: int, body: W
     brief_path = os.path.join(book_dir, "tier4", f"chapter_{chapter:02d}_scene_{scene:02d}.md")
     brief_content = open(brief_path).read() if os.path.exists(brief_path) else ""
 
+    tier4_path = os.path.join(book_dir, "tier4", f"chapter_{chapter:02d}.md")
+    chapter_plan = open(tier4_path).read() if os.path.exists(tier4_path) else ""
+    plants, resolves = _seed_fields_for_scene(chapter_plan, scene)
+
     north_star = _read_north_star(book_id)
     writing_prefs = _read_writing_prefs(book_id)
     ledger_json = json.dumps(_read_bible(book_id).get("ledger", {}))
@@ -1659,6 +1758,8 @@ async def write_scene_with_beats(book_id: str, chapter: int, scene: int, body: W
                 author_notes=author_notes,
                 word_target=word_target,
                 word_limit=steering.word_limit(word_target),
+                plant_seeds=_resolve_seeds(book_id, plants),
+                resolve_seeds=_resolve_seeds(book_id, resolves),
             )
             expand_user = f"{expand_context}\n\n## Beat list\n\n{beats_formatted}\n\nExpand these beats into continuous prose now."
 

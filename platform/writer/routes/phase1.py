@@ -10,6 +10,7 @@ from git import Repo
 from pydantic import BaseModel
 
 import db
+import foreshadowing
 import jobs as job_store
 import llm
 import prompt_store
@@ -191,6 +192,26 @@ Rules:
 - appearsInActs: list act numbers where the entity is explicitly mentioned
 - Include every named character, named location, faction, and significant named object"""
 
+FORESHADOWING_SEEDS_SYSTEM = """You are a mystery/plot structure editor. Given a novel's act breakdown, identify what needs to be planted ahead of time so later reveals land honestly instead of arriving from nowhere.
+
+Output ONLY valid JSON — a list of seeds. No preamble, no fences:
+[
+  {
+    "id": "SEED_001",
+    "description": "Establish that Peter carries a silver pocket watch.",
+    "plant_act_range": {"from": 1, "to": 2},
+    "payoff_act": 3
+  }
+]
+
+Rules:
+- description is written WITHOUT plot context — state only what to plant, never why it matters later. It must read as an ordinary, unremarkable detail on its own.
+- Only seed things the payoff act's key events actually require — do not invent clues, suspects, or red herrings beyond what the act breakdown's own events call for.
+- plant_act_range must end before payoff_act — a seed cannot be planted in or after the act it pays off in.
+- Use real character, location, and object names from the entity ledger.
+- IDs continue from the highest existing SEED_XXX id, if any.
+- Most acts need only a handful of seeds. Do not manufacture a seed for every event — only ones the reader needs prepared for in advance."""
+
 TIER_LABELS = ["Book", "Acts", "Chapters", "Scenes"]
 
 TIER_INSTRUCTIONS = [
@@ -224,23 +245,40 @@ Critical rules:
 
     """Write the scene list for the current chapter only (see ## Current Chapter above).
 
-List every scene in this chapter. For each scene:
+Step 1 — Identify this chapter's developments.
+Before listing scenes, list 2-4 irreversible developments: concrete changes to the story world that, once they happen, cannot be undone (a decision made, a fact discovered, a relationship shifted, an action taken with a consequence). This is the chapter's actual movement — not a restatement of its Entry or Exit, the causal chain between them.
+
+Format:
+## Chapter Developments
+1. [development]
+2. [development]
+...
+
+Step 2 — Allocate scenes.
+Give each development exactly one scene responsible for advancing it (a long or complex development may span two scenes in sequence — never split one development's responsibility across scenes that don't follow each other). Every scene's Entry must be the same concrete state as the previous scene's Exit — this chapter's scenes are a causal chain, not an independent list.
 
 ### Scene N — [Title]
 **Chapter:** {chapter} | **Setting:** [specific named location] | **POV:** [character name]
 **Entry:** [exact world state — named characters, place, situation]
 **Exit:** [exact world state — what has changed; this is the QA contract]
+**Plants:** [seed IDs from ## Available Foreshadowing Seeds this scene naturally plants, if any — omit if none]
+**Resolves:** [seed IDs this scene naturally resolves, if any — omit if none]
 
 [1-2 sentence summary using specific character names and events]
 
 Critical rules:
 - This chapter only — typically 3-6 scenes per chapter
+- Each scene advances exactly one development from Step 1. No two scenes serve the same narrative function (both "investigation," both "exposition," etc.) — if two scenes would do the same job, that's one development with one scene, not two.
+- A scene may not simply restate a fact already established by this chapter's own Entry state or by an earlier chapter — every scene must advance the story past what's already known, not re-cover it.
+- Derive each scene from what these specific characters would naturally do next, given their established role, knowledge, and relationships — never construct a scene because a future chapter needs a clue, suspect, or red herring to exist. If the story needs something planted ahead of when it would naturally arise, use ## Available Foreshadowing Seeds below, not an invented scene.
+- Characters act only within the authority, access, and knowledge already established for them in the entity ledger. Do not stretch a character's role to make a scene work.
 - Entry and Exit are QA contracts — concrete, verifiable facts about the story world at that moment
 - Entry and Exit must be meaningfully different — Exit is not a restatement of Entry
 - Setting must be a specific named location from the entity ledger, not a vague description
 - POV must be a named character from the entity ledger
+- The next-chapter context (if provided) is for continuity only — so this chapter's final scene can lead naturally into it. It is never a reason to introduce a clue, suspect, or red herring.
 - Scene numbers are continuous across the whole novel — the starting number for this chapter is given in ## Scene Numbering above; use it for the first scene
-- No preamble, no commentary — start directly with ### Scene {N} using the starting number from context""",
+- No preamble, no commentary — start directly with ## Chapter Developments""",
 ]
 
 
@@ -538,6 +576,21 @@ def _extract_json_skeleton(text: str) -> dict:
     return json.loads(text[start:end])
 
 
+def _extract_json_list(text: str) -> list:
+    text = text.strip()
+    if "```json" in text:
+        text = text[text.index("```json") + 7:]
+        text = text[:text.index("```")]
+    elif "```" in text:
+        text = text[text.index("```") + 3:]
+        text = text[:text.rindex("```")]
+    start = text.find("[")
+    end = text.rfind("]") + 1
+    if start == -1 or end == 0:
+        raise ValueError(f"No JSON array found in response (got {len(text)} chars)")
+    return json.loads(text[start:end])
+
+
 @router.get("/books/{book_id}/phase1/bible-skeleton")
 def get_bible_skeleton(book_id: str):
     p = _skeleton_path(book_id)
@@ -670,6 +723,92 @@ def patch_skeleton_entity(book_id: str, entity_id: str, body: PatchEntityBody):
     with open(_skeleton_path(book_id), "w") as f:
         json.dump(skeleton, f, indent=2)
     return entity
+
+
+# ── Foreshadowing seeds ─────────────────────────────────────────────────────────
+
+@router.get("/books/{book_id}/phase1/foreshadowing")
+def get_foreshadowing(book_id: str):
+    return foreshadowing.read(book_id)
+
+
+class ForeshadowingBody(BaseModel):
+    seeds: list[dict] = []
+
+
+@router.put("/books/{book_id}/phase1/foreshadowing")
+def put_foreshadowing(book_id: str, body: ForeshadowingBody):
+    data = foreshadowing.write(book_id, body.model_dump())
+    book_dir = db.data_dir(book_id)
+    repo = Repo(book_dir)
+    repo.index.add([foreshadowing.FILE_NAME])
+    if repo.is_dirty(index=True, working_tree=False):
+        repo.index.commit("Update foreshadowing seeds")
+    return data
+
+
+@router.post("/books/{book_id}/phase1/foreshadowing/generate")
+async def generate_foreshadowing(book_id: str, user: str = Depends(current_user)):
+    from fastapi import HTTPException
+    book_dir = db.data_dir(book_id)
+
+    tiers = _read_tiers(book_id)
+    tier2 = tiers[1].get("content") or "" if len(tiers) > 1 else ""
+    if not tier2:
+        raise HTTPException(400, "Tier 2 (Acts) must be approved before generating foreshadowing seeds")
+
+    skeleton = _read_skeleton(book_id)
+    if not skeleton.get("entities"):
+        raise HTTPException(400, "Entity skeleton not found — run mini-consolidate first")
+
+    ns_path = os.path.join(book_dir, "north_star.md")
+    north_star = open(ns_path).read() if os.path.exists(ns_path) else "[North Star not yet written]"
+
+    entity_summary = _format_skeleton_for_context(skeleton)
+    existing_seeds = foreshadowing.read(book_id)["seeds"]
+
+    provider = db.get_setting("agent_bible_agent_provider")
+    model = db.get_setting("agent_bible_agent_model")
+    if not provider or not model:
+        raise HTTPException(400, "Bible Agent has no model assigned — go to Settings.")
+
+    context = f"## North Star\n\n{north_star}\n\n## Act Breakdown (Tier 2)\n\n{tier2}"
+    if entity_summary:
+        context += f"\n\n## Story Bible — Entities\n\n{entity_summary}"
+    if existing_seeds:
+        context += f"\n\n## Existing Seeds\n\n{json.dumps(existing_seeds, indent=2)}"
+
+    messages = [{"role": "user", "content": context}]
+    system = prompt_store.get("foreshadowing_seeds", FORESHADOWING_SEEDS_SYSTEM)
+
+    job_id, job = job_store.create()
+
+    async def _bg():
+        full_text = ""
+        try:
+            async for token in llm.provider_tokens(provider, model, messages, system, user):
+                full_text += token
+                job["tokens"] += token
+            new_seeds = _extract_json_list(full_text)
+            data = foreshadowing.read(book_id)
+            existing_ids = {s["id"] for s in data["seeds"]}
+            data["seeds"].extend(s for s in new_seeds if isinstance(s, dict) and s.get("id") not in existing_ids)
+            saved = foreshadowing.write(book_id, data)
+
+            repo = Repo(book_dir)
+            repo.index.add([foreshadowing.FILE_NAME])
+            if repo.is_dirty(index=True, working_tree=False):
+                repo.index.commit(f"Generate foreshadowing seeds — {len(saved['seeds'])} total")
+
+            job["status"] = "done"
+            job["result"] = full_text
+            job["meta"] = {"seed_count": len(saved["seeds"])}
+        except Exception as e:
+            job["status"] = "error"
+            job["error"] = str(e) or type(e).__name__
+
+    asyncio.create_task(_bg())
+    return {"job_id": job_id}
 
 
 # ── Tier 3 — per-act chapter summaries ────────────────────────────────────────
@@ -963,6 +1102,39 @@ def _get_chapter_summary(book_id: str, chapter_number: int) -> str:
     return ""
 
 
+def _chapter_act_num(book_id: str, chapter_number: int) -> int | None:
+    tier3_status = _read_tier3_status(book_id)
+    return next(
+        (a["act"] for a in tier3_status.get("acts", [])
+         for ch in a.get("chapters", []) if ch["number"] == chapter_number),
+        None
+    )
+
+
+def _foreshadowing_context_block(book_id: str, chapter_number: int) -> str:
+    """## Available Foreshadowing Seeds block for the Tier 4 scene-list prompt — seeds
+    open for planting or resolution in this chapter's act. Empty string if none or if
+    the chapter isn't yet assigned to an act."""
+    act_num = _chapter_act_num(book_id, chapter_number)
+    if act_num is None:
+        return ""
+    planting = foreshadowing.seeds_open_for_planting(book_id, act_num)
+    resolving = foreshadowing.seeds_open_for_resolution(book_id, act_num)
+    if not planting and not resolving:
+        return ""
+    lines = [
+        "## Available Foreshadowing Seeds",
+        "",
+        "Plant or resolve these only if they fit naturally in this chapter's own events. Not required to use any of them here.",
+        "",
+    ]
+    for s in planting:
+        lines.append(f"- To plant: {s['id']} — {s['description']}")
+    for s in resolving:
+        lines.append(f"- To resolve: {s['id']} — {s['description']}")
+    return "\n".join(lines)
+
+
 @router.get("/books/{book_id}/phase1/tier4/status")
 def get_tier4_status(book_id: str):
     status = _read_tier4_status(book_id)
@@ -1012,6 +1184,10 @@ async def run_tier4_chapter(book_id: str, body: RunChapterBody, user: str = Depe
         context += f"\n\n## Current Chapter\n\nChapter {body.chapter} — {chapter_title}"
     if next_summary:
         context += f"\n\n## Next Chapter (Chapter {body.chapter + 1}) — forward context\n\n{next_summary}"
+
+    seeds_block = _foreshadowing_context_block(book_id, body.chapter)
+    if seeds_block:
+        context += f"\n\n{seeds_block}"
 
     start_scene = 1 + sum(
         len(ch.get("scenes", []))
@@ -1075,6 +1251,32 @@ def get_tier4_chapter_plan(book_id: str, chapter_num: int):
         return {"content": f.read()}
 
 
+def _parse_seed_ids(block: str, field: str) -> list[str]:
+    """Extract seed IDs from a **Plants:**/**Resolves:** line within a scene block."""
+    m = re.search(rf'\*\*{field}:\*\*\s*(.+)', block)
+    if not m:
+        return []
+    value = m.group(1).strip()
+    if not value or value.lower() in ("none", "n/a", "-"):
+        return []
+    return [s.strip() for s in re.split(r'[,\s]+', value) if s.strip().upper().startswith("SEED_")]
+
+
+def _parse_tier4_scenes(content: str) -> list[dict]:
+    """Parse '### Scene N — Title' headers (plus optional Plants:/Resolves: fields) into scene entries."""
+    scene_pattern = re.compile(r'^### Scene (\d+)\s*[—–:\-]+\s*(.+)', re.MULTILINE)
+    headers = list(scene_pattern.finditer(content))
+    scenes = []
+    for i, m in enumerate(headers):
+        block_end = headers[i + 1].start() if i + 1 < len(headers) else len(content)
+        block = content[m.end():block_end]
+        scenes.append({
+            "number": int(m.group(1)), "title": m.group(2).strip(), "approved": False,
+            "plants": _parse_seed_ids(block, "Plants"), "resolves": _parse_seed_ids(block, "Resolves"),
+        })
+    return scenes
+
+
 class ApproveChapterBody(BaseModel):
     chapter: int
     content: str
@@ -1086,12 +1288,7 @@ def approve_tier4_chapter(book_id: str, body: ApproveChapterBody):
     with open(_tier4_chapter_path(book_id, body.chapter), "w") as f:
         f.write(body.content)
 
-    # Parse scene headings from the plan to create scene entries
-    scene_pattern = re.compile(r'^### Scene (\d+)\s*[—–:\-]+\s*(.+)', re.MULTILINE)
-    scenes = [
-        {"number": int(m.group(1)), "title": m.group(2).strip(), "approved": False}
-        for m in scene_pattern.finditer(body.content)
-    ]
+    scenes = _parse_tier4_scenes(body.content)
     if not scenes:
         from fastapi import HTTPException
         raise HTTPException(422, "No scene headers found in plan — ensure the agent output uses '### Scene N — Title' format")
@@ -1608,6 +1805,10 @@ async def _bg_run_tier4_chapter(book_id: str, chapter: int, user: str, log_cb) -
     if next_summary:
         context += f"\n\n## Next Chapter (Chapter {chapter + 1}) — forward context\n\n{next_summary}"
 
+    seeds_block = _foreshadowing_context_block(book_id, chapter)
+    if seeds_block:
+        context += f"\n\n{seeds_block}"
+
     start_scene = 1 + sum(
         len(ch.get("scenes", []))
         for ch in tier4_status.get("chapters", [])
@@ -1629,11 +1830,7 @@ def _bg_approve_tier4_chapter(book_id: str, chapter: int, content: str) -> list:
     with open(_tier4_chapter_path(book_id, chapter), "w") as f:
         f.write(content)
 
-    scene_pattern = re.compile(r'^### Scene (\d+)\s*[—–:\-]+\s*(.+)', re.MULTILINE)
-    scenes = [
-        {"number": int(m.group(1)), "title": m.group(2).strip(), "approved": False}
-        for m in scene_pattern.finditer(content)
-    ]
+    scenes = _parse_tier4_scenes(content)
     if not scenes:
         raise RuntimeError(f"No scene headers found in Tier 4 Chapter {chapter} output — ensure agent uses '### Scene N — Title' format")
 
