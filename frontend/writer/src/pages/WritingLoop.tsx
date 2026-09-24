@@ -8,12 +8,13 @@ import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 import { startJob, pollJob, sleep } from '@/lib/jobs'
 import { API } from '@/lib/api'
-import { Play, CheckCircle, Loader2, Lock, AlertTriangle, Zap, ChevronLeft, ChevronRight, Save, PenLine } from 'lucide-react'
+import { Play, CheckCircle, Loader2, Lock, AlertTriangle, Zap, ChevronLeft, ChevronRight, Save, PenLine, SlidersHorizontal, RefreshCw } from 'lucide-react'
 import ProseEditor from '@/components/ProseEditor'
+import SteeringPanel from '@/components/SteeringPanel'
 
 interface ChapterSummary {
   chapter: number
-  status: 'written' | 'approved' | 'unknown'
+  status: 'written' | 'approved' | 'in_progress' | 'unknown'
   scene_count: number
   approved: boolean
   bible_updated: boolean
@@ -35,6 +36,7 @@ interface SceneResult {
   qa_notes: string
   qa_issues?: QaIssue[]
   author_edited?: boolean
+  word_target?: number
   word_count: number
 }
 
@@ -57,6 +59,8 @@ interface ProgressEvent {
   notes?: string
   issues?: QaIssue[]
   word_count?: number
+  word_target?: number
+  remaining?: number
   scene_count?: number
   message?: string
   entity_count?: number
@@ -82,7 +86,9 @@ function EventFeed({ events }: { events: ProgressEvent[] }) {
           <p key={i} className="text-amber-500">↩ Rewrite scene {ev.scene} (attempt {ev.attempt})</p>
         )
         if (ev.type === 'scene_written') return (
-          <p key={i} className="text-muted-foreground">Written — {ev.word_count} words</p>
+          <p key={i} className="text-muted-foreground">
+            Written — {ev.word_count} words{ev.word_target ? ` (target ~${ev.word_target})` : ''}
+          </p>
         )
         if (ev.type === 'qa_start') return (
           <p key={i} className="text-muted-foreground">QA checking…</p>
@@ -96,6 +102,11 @@ function EventFeed({ events }: { events: ProgressEvent[] }) {
               <p key={j} className="pl-4 text-muted-foreground">· [{iss.severity}] {iss.description}</p>
             ))}
           </div>
+        )
+        if (ev.type === 'paused') return (
+          <p key={i} className="text-sky-500 font-medium mt-2">
+            ⏸ Paused after scene {ev.scene} — {ev.remaining} to go. Review, edit or rewrite it, then Continue writing.
+          </p>
         )
         if (ev.type === 'qa_held') return (
           <p key={i} className="text-amber-500">⏸ Scene {ev.scene} kept for your review — no automatic retry</p>
@@ -190,6 +201,15 @@ export default function WritingLoopPage() {
   const [saveError, setSaveError] = useState<string | null>(null)
   // Beats mode: scenes that should use beat-based expansion on rewrite
   const [beatScenes, setBeatScenes] = useState<Set<number>>(new Set())
+  const [showSteering, setShowSteering] = useState(false)
+  const pauseKey = `pause_each_scene_${bookId}`
+  const [pauseEachScene, setPauseEachScene] = useState(() => {
+    try { return localStorage.getItem(pauseKey) === 'true' } catch { return false }
+  })
+  function togglePauseEachScene(v: boolean) {
+    setPauseEachScene(v)
+    try { localStorage.setItem(pauseKey, String(v)) } catch { /* storage unavailable */ }
+  }
   const [leftCollapsed, setLeftCollapsed] = useState(false)
   const [rightCollapsed, setRightCollapsed] = useState(false)
 
@@ -200,7 +220,7 @@ export default function WritingLoopPage() {
   const [jobLog, setJobLog] = useState<string[]>([])
   const [jobError, setJobError] = useState<string | null>(null)
 
-  const { data: chapterData, refetch: refetchChapter } = useQuery<{ chapter: number; content: string; meta: ChapterMeta } | null>({
+  const { data: chapterData, refetch: refetchChapter } = useQuery<{ chapter: number; content: string; meta: ChapterMeta; scene_word_target?: number } | null>({
     queryKey: ['chapter', bookId, activeChapter],
     queryFn: () => activeChapter
       ? fetch(`${API}/books/${bookId}/phase3/chapter/${activeChapter}`).then(r => r.json())
@@ -301,7 +321,8 @@ export default function WritingLoopPage() {
     })
   }
 
-  async function runWriteChapter(chapter: number, isReconnect = false) {
+  // Starts (or reattaches to) a chapter write job. `regenerateAfter` replaces every scene after that one.
+  async function runWriteChapter(chapter: number, isReconnect = false, regenerateAfter?: number) {
     setWriting(true)
     if (!isReconnect) {
       setEvents([])
@@ -309,12 +330,22 @@ export default function WritingLoopPage() {
     }
 
     try {
-      const resp = await fetch(`${API}/books/${bookId}/phase3/write-chapter`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chapter }),
-      })
-      if (!resp.ok) return
+      const resp = regenerateAfter !== undefined
+        ? await fetch(`${API}/books/${bookId}/phase3/chapter/${chapter}/regenerate-after/${regenerateAfter}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pause_after_scene: pauseEachScene }),
+          })
+        : await fetch(`${API}/books/${bookId}/phase3/write-chapter`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chapter, pause_after_scene: pauseEachScene }),
+          })
+      if (!resp.ok) {
+        const d = await resp.json().catch(() => ({}))
+        setEvents([{ type: 'error', message: d.detail ?? 'Could not start writing' }])
+        return
+      }
       const { job_id } = await resp.json()
 
       let shownCount = 0
@@ -349,6 +380,14 @@ export default function WritingLoopPage() {
 
   function writeChapter(chapter: number) {
     return runWriteChapter(chapter, false)
+  }
+
+  function regenerateAfter(chapter: number, scene: number) {
+    const later = scenes.filter(s => s.scene > scene).map(s => s.scene)
+    if (proseDirty) { window.alert('Save or revert your edits to this scene first.'); return }
+    if (!window.confirm(`Replace scene${later.length === 1 ? '' : 's'} ${later.join(', ')} with new ones written from Scene ${scene} as it is now?`)) return
+    setRewriteScene(null)
+    return runWriteChapter(chapter, false, scene)
   }
 
   async function runApproveChapter(chapter: number, isReconnect = false) {
@@ -511,6 +550,8 @@ export default function WritingLoopPage() {
   const scenes = meta?.scenes ?? []
   const isWritten = !!chapterData?.content
   const isApproved = meta?.status === 'approved'
+  const isInProgress = meta?.status === 'in_progress'
+  const sceneWordTarget = chapterData?.scene_word_target
   const flaggedScenes = scenes.filter(s => !s.qa_pass)
   const editingSceneMeta = rewriteScene !== null ? scenes.find(s => s.scene === rewriteScene) : undefined
   const autoWriting = jobStatus === 'running'
@@ -599,7 +640,7 @@ export default function WritingLoopPage() {
       {/* Main content */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Top bar */}
-        <div className="flex items-center gap-3 px-5 py-3 border-b border-border shrink-0">
+        <div className="flex items-center gap-x-3 gap-y-2 flex-wrap px-4 sm:px-5 py-3 border-b border-border shrink-0">
           {/* Mobile chapter picker */}
           {!isLocked && (
             <select
@@ -620,9 +661,23 @@ export default function WritingLoopPage() {
               {activeChapter ? `Chapter ${activeChapter}` : 'Writing Loop'}
             </h2>
             <p className="text-xs text-muted-foreground">
-              {isApproved ? 'Approved' : meta ? `${scenes.length} scenes` : activeChapter === nextChapter ? 'Not yet written' : ''}
+              {isApproved ? 'Approved'
+                : isInProgress ? `In progress — ${scenes.length} of ${meta?.scene_count ?? '?'} scenes`
+                : meta ? `${scenes.length} scenes · ${scenes.reduce((a, s) => a + s.word_count, 0).toLocaleString()} words`
+                : activeChapter === nextChapter ? 'Not yet written' : ''}
             </p>
           </div>
+
+          <button
+            onClick={() => setShowSteering(v => !v)}
+            className={cn(
+              'flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border transition-colors',
+              showSteering ? 'border-foreground text-foreground' : 'border-border text-muted-foreground hover:text-foreground hover:border-foreground',
+            )}
+            title="Length target and standing notes for the Writer"
+          >
+            <SlidersHorizontal size={11} />Length &amp; notes
+          </button>
 
           {/* Auto-write all */}
           {!isLocked && (
@@ -644,10 +699,26 @@ export default function WritingLoopPage() {
 
           {activeChapter !== null && (
             <>
+              {(activeChapter === nextChapter || isInProgress) && !writing && (
+                <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none" title="Stop after each new scene so you can review, edit or rewrite it before the next one is written">
+                  <input
+                    type="checkbox"
+                    checked={pauseEachScene}
+                    onChange={e => togglePauseEachScene(e.target.checked)}
+                    className="accent-current"
+                  />
+                  Pause each scene
+                </label>
+              )}
               {/* Write button (first write or already written chapter — can re-run) */}
               {activeChapter === nextChapter && !writing && (
                 <Button size="sm" onClick={() => writeChapter(activeChapter)} className="gap-2" disabled={busy}>
                   <Play size={13} />Write Chapter {activeChapter}
+                </Button>
+              )}
+              {isInProgress && !writing && (
+                <Button size="sm" onClick={() => writeChapter(activeChapter)} className="gap-2" disabled={busy}>
+                  <Play size={13} />Continue writing
                 </Button>
               )}
               {writing && (
@@ -656,7 +727,7 @@ export default function WritingLoopPage() {
                 </Badge>
               )}
               {/* Approve button — shown for written, unapproved chapters */}
-              {isWritten && !isApproved && !approving && !writing && (
+              {isWritten && !isApproved && !isInProgress && !approving && !writing && (
                 <Button size="sm" onClick={() => approveChapter(activeChapter)} className="gap-2" disabled={busy}>
                   <Lock size={13} />Approve Chapter
                 </Button>
@@ -670,6 +741,15 @@ export default function WritingLoopPage() {
             </>
           )}
         </div>
+
+        {showSteering && bookId && (
+          <SteeringPanel
+            bookId={bookId}
+            chapter={activeChapter}
+            sceneCount={meta?.scene_count ?? scenes.length}
+            onClose={() => setShowSteering(false)}
+          />
+        )}
 
         {/* Body */}
         {!activeChapter && (
@@ -732,6 +812,7 @@ export default function WritingLoopPage() {
                     value={sceneProse}
                     onChange={setSceneProse}
                     disabled={savingProse || rewriting}
+                    targetWords={editingSceneMeta?.word_target ?? sceneWordTarget}
                   />
                   <div className="flex items-center gap-2 flex-wrap">
                     <Button
@@ -749,6 +830,17 @@ export default function WritingLoopPage() {
                       </>
                     )}
                     {saveError && <span className="text-xs text-destructive">{saveError}</span>}
+                    {scenes.some(s => s.scene > rewriteScene) && (
+                      <Button
+                        variant="outline" size="sm"
+                        onClick={() => regenerateAfter(activeChapter, rewriteScene)}
+                        disabled={savingProse || rewriting || busy}
+                        className="gap-2 ml-auto"
+                        title="Replace every later scene in this chapter with new ones that follow on from this scene as it is now"
+                      >
+                        <RefreshCw size={12} />Regenerate later scenes
+                      </Button>
+                    )}
                   </div>
 
                   <Separator />
@@ -873,7 +965,13 @@ export default function WritingLoopPage() {
                       <p className="text-[10px] text-muted-foreground/70 italic line-clamp-2">{s.qa_notes}</p>
                     )}
                     <div className="flex items-center justify-between pt-0.5">
-                      <span className="text-[10px] text-muted-foreground">{s.word_count.toLocaleString()} words</span>
+                      <span className={cn(
+                        'text-[10px]',
+                        (s.word_target ?? sceneWordTarget) && s.word_count > (s.word_target ?? sceneWordTarget)! * 1.25
+                          ? 'text-amber-500' : 'text-muted-foreground',
+                      )}>
+                        {s.word_count.toLocaleString()}{(s.word_target ?? sceneWordTarget) ? ` / ~${(s.word_target ?? sceneWordTarget)!.toLocaleString()}` : ''} words
+                      </span>
                       {isWritten && !isApproved && (
                         <button
                           onClick={() => {

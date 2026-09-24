@@ -26,7 +26,7 @@ from routes.git import router as git_router
 from routes.phase1 import router as phase1_router
 from routes.phase2 import router as phase2_router
 from routes.phase3 import router as phase3_router
-from routes.text_ops import (TEXT_OP_EXPAND_SYSTEM, TEXT_OP_REPHRASE_SYSTEM, TEXT_OP_NOTES_SYSTEM,
+from routes.text_ops import (TEXT_OP_EXPAND_SYSTEM, TEXT_OP_REPHRASE_SYSTEM, TEXT_OP_TIGHTEN_SYSTEM, TEXT_OP_NOTES_SYSTEM,
                               router as text_ops_router)
 from routes.exports import router as exports_router
 from routes.jobs_router import router as jobs_router
@@ -74,6 +74,7 @@ _WRITER_DEFAULTS = {
     "beat_expander": BEAT_EXPANDER_SYSTEM,
     "text_op_expand": TEXT_OP_EXPAND_SYSTEM,
     "text_op_rephrase": TEXT_OP_REPHRASE_SYSTEM,
+    "text_op_tighten": TEXT_OP_TIGHTEN_SYSTEM,
     "text_op_notes": TEXT_OP_NOTES_SYSTEM,
 }
 
