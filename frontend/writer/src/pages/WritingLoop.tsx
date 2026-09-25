@@ -136,7 +136,7 @@ function QaFindings({ scene, onUseAsDirective }: { scene: SceneResult; onUseAsDi
     ...issues.map(i => {
       const lines = [`- ${i.description}`]
       if (i.quote) lines.push(`  Offending text: "${i.quote}"`)
-      if (i.fix) lines.push(`  Correct it to: ${i.fix}`)
+      if (i.fix) lines.push(`  Fix: ${i.fix}`)
       return lines.join('\n')
     }),
     ...(issues.length === 0 && scene.qa_notes ? [`- ${scene.qa_notes}`] : []),

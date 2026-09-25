@@ -62,6 +62,7 @@ Write prose that is:
 
 Economy:
 - Assume the reader remembers everything in earlier scenes and chapters. Never restate a character's goal, task, backstory, or any fact already established — no recaps, no reminders, no characters re-explaining what they both know.
+- Scenes still need to connect to each other. Reference an established person, object, or fact in one plain clause when the current action needs it — "Clara collected her case from the porter" is fine. Do not re-narrate how or when it became true — "from the porter who had found it among the trunks the previous evening" repeats an event the reader already watched and risks getting its details wrong. State the current fact; leave its history where it already lives, in the earlier scene.
 - The ledger and brief exist for your consistency, not for narration. Put a fact on the page only when it matters in this moment and has not been shown before.
 - Respect the length target in the scene contract. Cover the beats economically; cut rather than pad.
 - Follow the author standing notes. They override the brief and the writing preferences.
@@ -75,14 +76,14 @@ Check:
 2. Exit state contract — specified conditions are established by scene end
 3. Continuity — no contradictions with prior scenes in this chapter
 4. Voice — dialogue and behaviour consistent with character coreFacts
-5. Redundancy — the scene restates goals, tasks, backstory or facts the reader already knows from prior scenes or the ledger (recaps, reminders, characters re-explaining what both know). Error when an established fact is restated rather than advanced; warning for minor echoes. Quote the offending sentence.
+5. Redundancy — the scene restates goals, tasks, backstory or facts the reader already knows from prior scenes or the ledger (recaps, reminders, characters re-explaining what both know). Error when an established fact is restated rather than advanced; warning for minor echoes. Quote the offending sentence. A short, unadorned reference to an established fact that the current action requires is not redundant — only flag when the prose re-narrates how, when, or why something became true, or restates more than this moment needs.
 6. Author standing notes — if provided, any violation is an error
 7. Foreshadowing — if this scene is assigned to plant or resolve a seed (given below), verify the prose actually does so. If this scene is not the assigned resolution scene for a seed, verify it doesn't prematurely reveal that seed's payoff.
 
 Return ONLY valid JSON — no preamble, no fences:
 {"pass": true, "issues": [{"type": "entity|continuity|contract|voice|redundancy|notes|foreshadowing", "description": "...", "quote": "...", "fix": "...", "severity": "warning|error"}], "notes": "brief overall assessment"}
 
-For every issue: "quote" is the exact offending sentence or clause copied verbatim from the scene (empty string if the issue is an omission rather than a bad sentence — e.g. a missing exit-state condition). "fix" is the specific correction: the actual fact, detail or relationship from the ledger or prior scenes that the prose should reflect instead, stated concretely enough for the Writer to apply directly — not a restatement of what's wrong.
+For every issue: "quote" is the exact offending sentence or clause copied verbatim from the scene (empty string if the issue is an omission rather than a bad sentence — e.g. a missing exit-state condition). "fix" is the specific correction: the actual fact, detail or relationship from the ledger or prior scenes that the prose should reflect instead, stated concretely enough for the Writer to apply directly — not a restatement of what's wrong. For a redundancy issue, "fix" is not a corrected restatement — restating the same recap accurately is still a recap. Say what to cut, e.g. 'Cut "who had found it among the trunks the previous evening" — keep only: Clara collected her case from the porter.'
 
 pass = true when there are zero error-severity issues. Warnings alone do not fail."""
 
@@ -366,7 +367,7 @@ def _format_qa_issue(issue: dict) -> str:
     if issue.get("quote"):
         lines.append(f'  Offending text: "{issue["quote"]}"')
     if issue.get("fix"):
-        lines.append(f"  Correct it to: {issue['fix']}")
+        lines.append(f"  Fix: {issue['fix']}")
     return "\n".join(lines)
 
 def _apply_length_check(qa_result: dict, text: str, target: int, severity: str) -> dict:
