@@ -62,6 +62,7 @@ Write prose that is:
 
 Economy:
 - Assume the reader remembers everything in earlier scenes and chapters. Never restate a character's goal, task, backstory, or any fact already established — no recaps, no reminders, no characters re-explaining what they both know.
+- Scenes still need to connect to each other. Reference an established person, object, or fact in one plain clause when the current action needs it — "Clara collected her case from the porter" is fine. Do not re-narrate how or when it became true — "from the porter who had found it among the trunks the previous evening" repeats an event the reader already watched and risks getting its details wrong. State the current fact; leave its history where it already lives, in the earlier scene.
 - The ledger and brief exist for your consistency, not for narration. Put a fact on the page only when it matters in this moment and has not been shown before.
 - Respect the length target in the scene contract. Cover the beats economically; cut rather than pad.
 - Follow the author standing notes. They override the brief and the writing preferences.
@@ -75,12 +76,14 @@ Check:
 2. Exit state contract — specified conditions are established by scene end
 3. Continuity — no contradictions with prior scenes in this chapter
 4. Voice — dialogue and behaviour consistent with character coreFacts
-5. Redundancy — the scene restates goals, tasks, backstory or facts the reader already knows from prior scenes or the ledger (recaps, reminders, characters re-explaining what both know). Error when an established fact is restated rather than advanced; warning for minor echoes. Quote the offending sentence.
+5. Redundancy — the scene restates goals, tasks, backstory or facts the reader already knows from prior scenes or the ledger (recaps, reminders, characters re-explaining what both know). Error when an established fact is restated rather than advanced; warning for minor echoes. Quote the offending sentence. A short, unadorned reference to an established fact that the current action requires is not redundant — only flag when the prose re-narrates how, when, or why something became true, or restates more than this moment needs.
 6. Author standing notes — if provided, any violation is an error
 7. Foreshadowing — if this scene is assigned to plant or resolve a seed (given below), verify the prose actually does so. If this scene is not the assigned resolution scene for a seed, verify it doesn't prematurely reveal that seed's payoff.
 
 Return ONLY valid JSON — no preamble, no fences:
-{"pass": true, "issues": [{"type": "entity|continuity|contract|voice|redundancy|notes|foreshadowing", "description": "...", "severity": "warning|error"}], "notes": "brief overall assessment"}
+{"pass": true, "issues": [{"type": "entity|continuity|contract|voice|redundancy|notes|foreshadowing", "description": "...", "quote": "...", "fix": "...", "severity": "warning|error"}], "notes": "brief overall assessment"}
+
+For every issue: "quote" is the exact offending sentence or clause copied verbatim from the scene (empty string if the issue is an omission rather than a bad sentence — e.g. a missing exit-state condition). "fix" is the specific correction: the actual fact, detail or relationship from the ledger or prior scenes that the prose should reflect instead, stated concretely enough for the Writer to apply directly — not a restatement of what's wrong. For a redundancy issue, "fix" is not a corrected restatement — restating the same recap accurately is still a recap. Say what to cut, e.g. 'Cut "who had found it among the trunks the previous evening" — keep only: Clara collected her case from the porter.'
 
 pass = true when there are zero error-severity issues. Warnings alone do not fail."""
 
@@ -357,6 +360,16 @@ def _length_issue(text: str, target: int, severity: str) -> dict | None:
     return {"type": "length", "severity": severity,
             "description": f"Scene is {wc} words; target is about {target} (limit {limit})."}
 
+def _format_qa_issue(issue: dict) -> str:
+    """Render one QA issue as a self-contained instruction: what's wrong, the
+    exact text it's in, and the concrete correction — not just the diagnosis."""
+    lines = [f"- {issue.get('description', '')}"]
+    if issue.get("quote"):
+        lines.append(f'  Offending text: "{issue["quote"]}"')
+    if issue.get("fix"):
+        lines.append(f"  Fix: {issue['fix']}")
+    return "\n".join(lines)
+
 def _apply_length_check(qa_result: dict, text: str, target: int, severity: str) -> dict:
     issue = _length_issue(text, target, severity)
     if issue:
@@ -534,9 +547,11 @@ async def _write_chapter_core(
             })
 
             rewrite_note = ""
+            prior_draft = ""
             if attempt > 1 and qa_result:
-                errors = [i["description"] for i in qa_result.get("issues", []) if i.get("severity") == "error"]
-                rewrite_note = "\n\nPrevious attempt issues — address in rewrite:\n" + "\n".join(f"- {e}" for e in errors)
+                errors = [i for i in qa_result.get("issues", []) if i.get("severity") == "error"]
+                rewrite_note = "\n\nPrevious attempt issues — address in this revision:\n" + "\n".join(_format_qa_issue(e) for e in errors)
+                prior_draft = scene_text
 
             context_block = assemble_writer_context(
                 north_star=north_star,
@@ -555,6 +570,7 @@ async def _write_chapter_core(
                 word_limit=word_limit,
                 plant_seeds=_resolve_seeds(book_id, scene_def.get("plants", [])),
                 resolve_seeds=_resolve_seeds(book_id, scene_def.get("resolves", [])),
+                current_draft=prior_draft,
             )
 
             messages: list[dict] = [{"role": "user", "content": context_block}]
@@ -1220,7 +1236,8 @@ async def rewrite_scene(book_id: str, chapter: int, scene: int, body: RewriteBod
     author_notes = steering.notes_for(book_id, chapter)
     word_target = steering.scene_word_target(book_id, len(scene_plan) or steering.planned_scene_count(book_id, chapter))
 
-    rewrite_note = f"\n\n## Author directive\n\n{body.directive}\n\nRewrite this scene addressing the directive."
+    current_draft = sections.get(scene, "")
+    rewrite_note = f"\n\n## Author directive\n\n{body.directive}\n\nApply this as a targeted revision of the current draft above."
     context_block = assemble_writer_context(
         north_star=north_star,
         writing_prefs=writing_prefs,
@@ -1238,6 +1255,7 @@ async def rewrite_scene(book_id: str, chapter: int, scene: int, body: RewriteBod
         word_limit=steering.word_limit(word_target),
         plant_seeds=_resolve_seeds(book_id, scene_def.get("plants", [])),
         resolve_seeds=_resolve_seeds(book_id, scene_def.get("resolves", [])),
+        current_draft=current_draft,
     )
 
     job_id, job = job_store.create(meta={"events": [], "qa_result": None})
