@@ -100,9 +100,10 @@ class TightenBody(BaseModel):
     target_words: int | None = None
 
 
-def _tighten_model() -> tuple[str | None, str | None]:
-    provider = db.get_setting("agent_text_op_rephrase_provider") or db.get_setting("agent_writer_agent_provider")
-    model = db.get_setting("agent_text_op_rephrase_model") or db.get_setting("agent_writer_agent_model")
+def _tighten_model(book_id: str | None = None) -> tuple[str | None, str | None]:
+    provider, model = db.resolve_agent("text_op_rephrase", book_id=book_id)
+    if not provider:
+        provider, model = db.resolve_agent("writer_agent", book_id=book_id)
     return provider, model
 
 
@@ -113,9 +114,9 @@ def _tighten_message(prose: str, target_words: int) -> str:
     )
 
 
-async def tighten_prose(prose: str, target_words: int, user: str) -> str:
+async def tighten_prose(prose: str, target_words: int, user: str, book_id: str | None = None) -> str:
     """Cut prose to roughly target_words. Returns the original text if no model is configured."""
-    provider, model = _tighten_model()
+    provider, model = _tighten_model(book_id)
     if not provider or not model:
         return prose
     result = ""
@@ -136,8 +137,9 @@ class EditorialNotesBody(BaseModel):
 @router.post("/books/{book_id}/text-ops/expand")
 async def expand_selection(book_id: str, body: ExpandBody, user: str = Depends(current_user)):
     from fastapi import HTTPException
-    provider = db.get_setting("agent_text_op_expand_provider") or db.get_setting("agent_writer_agent_provider")
-    model = db.get_setting("agent_text_op_expand_model") or db.get_setting("agent_writer_agent_model")
+    provider, model = db.resolve_agent("text_op_expand", book_id=book_id)
+    if not provider:
+        provider, model = db.resolve_agent("writer_agent", book_id=book_id)
     if not provider or not model:
         raise HTTPException(400, "No model configured — assign one in Settings or configure the Writer agent.")
 
@@ -168,8 +170,9 @@ async def expand_selection(book_id: str, body: ExpandBody, user: str = Depends(c
 @router.post("/books/{book_id}/text-ops/rephrase")
 async def rephrase_selection(book_id: str, body: RephraseBody, user: str = Depends(current_user)):
     from fastapi import HTTPException
-    provider = db.get_setting("agent_text_op_rephrase_provider") or db.get_setting("agent_writer_agent_provider")
-    model = db.get_setting("agent_text_op_rephrase_model") or db.get_setting("agent_writer_agent_model")
+    provider, model = db.resolve_agent("text_op_rephrase", book_id=book_id)
+    if not provider:
+        provider, model = db.resolve_agent("writer_agent", book_id=book_id)
     if not provider or not model:
         raise HTTPException(400, "No model configured — assign one in Settings or configure the Writer agent.")
 
@@ -201,7 +204,7 @@ async def rephrase_selection(book_id: str, body: RephraseBody, user: str = Depen
 @router.post("/books/{book_id}/text-ops/tighten")
 async def tighten_selection(book_id: str, body: TightenBody, user: str = Depends(current_user)):
     from fastapi import HTTPException
-    provider, model = _tighten_model()
+    provider, model = _tighten_model(book_id)
     if not provider or not model:
         raise HTTPException(400, "No model configured — assign one in Settings or configure the Writer agent.")
 
@@ -228,8 +231,9 @@ async def tighten_selection(book_id: str, body: TightenBody, user: str = Depends
 
 @router.post("/books/{book_id}/text-ops/editorial-notes")
 async def editorial_notes(book_id: str, body: EditorialNotesBody, user: str = Depends(current_user)):
-    provider = db.get_setting("agent_text_op_notes_provider") or db.get_setting("agent_qa_agent_provider")
-    model = db.get_setting("agent_text_op_notes_model") or db.get_setting("agent_qa_agent_model")
+    provider, model = db.resolve_agent("text_op_notes", book_id=book_id)
+    if not provider:
+        provider, model = db.resolve_agent("qa_agent", book_id=book_id)
     if not provider or not model:
         return {"error": "No model configured — assign one in Settings or configure the QA agent."}
 

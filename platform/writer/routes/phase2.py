@@ -325,8 +325,7 @@ def phase2_job(book_id: str):
 # ── Background task: Consolidate ───────────────────────────────────────────────
 
 async def _consolidate_task(book_id: str, user: str, job_id: str, queue: asyncio.Queue, force: bool) -> None:
-    provider = db.get_setting("agent_bible_agent_provider")
-    model = db.get_setting("agent_bible_agent_model")
+    provider, model = db.resolve_agent("bible_agent", book_id=book_id)
     if not provider or not model:
         raise RuntimeError("Bible Agent has no model assigned — go to Settings")
 
@@ -480,8 +479,7 @@ async def _consolidate_task(book_id: str, user: str, job_id: str, queue: asyncio
 # ── Background task: Research & Complete ───────────────────────────────────────
 
 async def _research_task(book_id: str, user: str, job_id: str, queue: asyncio.Queue, force: bool) -> None:
-    provider = db.get_setting("agent_research_agent_provider")
-    model = db.get_setting("agent_research_agent_model")
+    provider, model = db.resolve_agent("research_agent", book_id=book_id)
     if not provider or not model:
         raise RuntimeError("Research Agent has no model assigned — go to Settings")
 

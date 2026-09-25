@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { ChevronLeft, Plus, Loader2, User, MapPin, Users, Box, Star, Paintbrush, Sparkles } from 'lucide-react'
+import SeriesAgentModels from '@/components/SeriesAgentModels'
 
 async function fetchSeriesText(seriesId: string, endpoint: string): Promise<{ content: string }> {
   const r = await fetch(`${API}/series/${seriesId}/${endpoint}`)
@@ -271,6 +272,9 @@ export default function SeriesBiblePage() {
           seriesId={seriesId!}
           endpoint="style-sheet"
         />
+
+        {/* Agent Models (series-scoped overrides) */}
+        <SeriesAgentModels seriesId={seriesId!} />
 
         {/* Extract from North Star */}
         <div className="flex items-center gap-3">

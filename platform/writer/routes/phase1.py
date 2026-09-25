@@ -343,8 +343,7 @@ def _series_system(book_id: str, base_system: str) -> str:
 @router.post("/books/{book_id}/phase1/north-star/reply")
 async def north_star_reply(book_id: str, body: ReplyBody, user: str = Depends(current_user)):
     from fastapi import HTTPException
-    provider = db.get_setting("agent_story_architect_provider")
-    model = db.get_setting("agent_story_architect_model")
+    provider, model = db.resolve_agent("story_architect", book_id=book_id)
     if not provider or not model:
         raise HTTPException(400, "Story Architect has no model assigned — go to Settings.")
     system = _series_system(book_id, prompt_store.get("story_architect", STORY_ARCHITECT_SYSTEM))
@@ -389,8 +388,8 @@ async def north_star_lock(book_id: str, body: LockBody, user: str = Depends(curr
 
     system = _series_system(book_id, prompt_store.get("story_architect", STORY_ARCHITECT_SYSTEM))
     document, writing_prefs = await asyncio.gather(
-        llm.call_llm("story_architect", synthesis_msgs, system, user),
-        llm.call_llm("story_architect", prefs_msgs, system, user),
+        llm.call_llm("story_architect", synthesis_msgs, system, user, book_id=book_id),
+        llm.call_llm("story_architect", prefs_msgs, system, user, book_id=book_id),
     )
 
     book_dir = db.ensure_data_dir(book_id)
@@ -420,8 +419,7 @@ class RunTierBody(BaseModel):
 @router.post("/books/{book_id}/phase1/bible/run-tier")
 async def run_tier(book_id: str, body: RunTierBody, user: str = Depends(current_user)):
     from fastapi import HTTPException
-    provider = db.get_setting("agent_bible_agent_provider")
-    model = db.get_setting("agent_bible_agent_model")
+    provider, model = db.resolve_agent("bible_agent", book_id=book_id)
     if not provider or not model:
         raise HTTPException(400, "Bible Agent has no model assigned — go to Settings.")
 
@@ -506,8 +504,7 @@ async def edit_tier(book_id: str, body: EditTierBody, user: str = Depends(curren
     if not current:
         raise HTTPException(400, "No tier content to edit — run the agent first")
 
-    provider = db.get_setting("agent_bible_agent_provider")
-    model = db.get_setting("agent_bible_agent_model")
+    provider, model = db.resolve_agent("bible_agent", book_id=book_id)
     if not provider or not model:
         raise HTTPException(400, "Bible Agent has no model assigned — go to Settings.")
     system = prompt_store.get("tier_editor", TIER_EDITOR_SYSTEM)
@@ -614,8 +611,7 @@ async def mini_consolidate(book_id: str, user: str = Depends(current_user)):
     if not tier2:
         raise HTTPException(400, "Tier 2 (Acts) must be approved before mini-consolidation")
 
-    provider = db.get_setting("agent_bible_agent_provider")
-    model = db.get_setting("agent_bible_agent_model")
+    provider, model = db.resolve_agent("bible_agent", book_id=book_id)
     if not provider or not model:
         raise HTTPException(400, "Bible Agent has no model assigned — go to Settings.")
 
@@ -767,8 +763,7 @@ async def generate_foreshadowing(book_id: str, user: str = Depends(current_user)
     entity_summary = _format_skeleton_for_context(skeleton)
     existing_seeds = foreshadowing.read(book_id)["seeds"]
 
-    provider = db.get_setting("agent_bible_agent_provider")
-    model = db.get_setting("agent_bible_agent_model")
+    provider, model = db.resolve_agent("bible_agent", book_id=book_id)
     if not provider or not model:
         raise HTTPException(400, "Bible Agent has no model assigned — go to Settings.")
 
@@ -887,8 +882,7 @@ class RunActBody(BaseModel):
 @router.post("/books/{book_id}/phase1/tier3/run-act")
 async def run_tier3_act(book_id: str, body: RunActBody, user: str = Depends(current_user)):
     from fastapi import HTTPException
-    provider = db.get_setting("agent_bible_agent_provider")
-    model = db.get_setting("agent_bible_agent_model")
+    provider, model = db.resolve_agent("bible_agent", book_id=book_id)
     if not provider or not model:
         raise HTTPException(400, "Bible Agent has no model assigned — go to Settings.")
 
@@ -1006,8 +1000,7 @@ async def edit_tier3_act(book_id: str, body: EditActBody, user: str = Depends(cu
         raise HTTPException(400, "No content for this act — run the agent first")
 
     current = open(act_path).read()
-    provider = db.get_setting("agent_bible_agent_provider")
-    model = db.get_setting("agent_bible_agent_model")
+    provider, model = db.resolve_agent("bible_agent", book_id=book_id)
     if not provider or not model:
         raise HTTPException(400, "Bible Agent has no model assigned — go to Settings.")
     system = prompt_store.get("tier_editor", TIER_EDITOR_SYSTEM)
@@ -1153,8 +1146,7 @@ class RunChapterBody(BaseModel):
 async def run_tier4_chapter(book_id: str, body: RunChapterBody, user: str = Depends(current_user)):
     from fastapi import HTTPException
 
-    provider = db.get_setting("agent_bible_agent_provider")
-    model = db.get_setting("agent_bible_agent_model")
+    provider, model = db.resolve_agent("bible_agent", book_id=book_id)
     if not provider or not model:
         raise HTTPException(400, "Bible Agent has no model assigned — go to Settings.")
 
@@ -1325,8 +1317,7 @@ async def edit_tier4_chapter(book_id: str, body: EditChapterBody, user: str = De
         raise HTTPException(400, "No content for this chapter — run the agent first")
 
     current = open(chapter_path).read()
-    provider = db.get_setting("agent_bible_agent_provider")
-    model = db.get_setting("agent_bible_agent_model")
+    provider, model = db.resolve_agent("bible_agent", book_id=book_id)
     if not provider or not model:
         raise HTTPException(400, "Bible Agent has no model assigned — go to Settings.")
     system = prompt_store.get("tier_editor", TIER_EDITOR_SYSTEM)
@@ -1358,12 +1349,11 @@ async def edit_tier4_chapter(book_id: str, body: EditChapterBody, user: str = De
 
 # ── Individual scene endpoints ─────────────────────────────────────────────────
 
-async def _run_brief_qa(brief_text: str, user: str) -> dict:
+async def _run_brief_qa(brief_text: str, user: str, book_id: str | None = None) -> dict:
     """Review a generated scene brief for beat granularity, manufactured conflict,
     POV discipline, etc. Never blocks brief generation — degrades to a soft pass
     with a system warning if the QA agent isn't configured or the call fails."""
-    qa_provider = db.get_setting("agent_qa_agent_provider")
-    qa_model = db.get_setting("agent_qa_agent_model")
+    qa_provider, qa_model = db.resolve_agent("qa_agent", book_id=book_id)
     if not qa_provider or not qa_model:
         return {"pass": True, "issues": [], "notes": "Brief QA skipped — QA agent not configured"}
     try:
@@ -1385,8 +1375,7 @@ class RunSceneBody(BaseModel):
 @router.post("/books/{book_id}/phase1/tier4/chapter/{chapter_num}/run-scene")
 async def run_scene(book_id: str, chapter_num: int, body: RunSceneBody, user: str = Depends(current_user)):
     from fastapi import HTTPException
-    provider = db.get_setting("agent_bible_agent_provider")
-    model = db.get_setting("agent_bible_agent_model")
+    provider, model = db.resolve_agent("bible_agent", book_id=book_id)
     if not provider or not model:
         raise HTTPException(400, "Bible Agent has no model assigned — go to Settings.")
 
@@ -1440,7 +1429,7 @@ async def run_scene(book_id: str, chapter_num: int, body: RunSceneBody, user: st
             with open(_tier4_scene_path(book_id, chapter_num, body.scene), "w") as f:
                 f.write(full_text)
 
-            brief_qa = await _run_brief_qa(full_text, user)
+            brief_qa = await _run_brief_qa(full_text, user, book_id=book_id)
             with open(_tier4_scene_qa_path(book_id, chapter_num, body.scene), "w") as f:
                 json.dump(brief_qa, f, indent=2)
             job["meta"]["brief_qa"] = brief_qa
@@ -1493,8 +1482,7 @@ async def approve_scene(book_id: str, chapter_num: int, scene_num: int, body: Ap
             job["meta"]["chapter_complete"] = chapter_complete
 
             # Bible sync
-            provider = db.get_setting("agent_bible_agent_provider")
-            model = db.get_setting("agent_bible_agent_model")
+            provider, model = db.resolve_agent("bible_agent", book_id=book_id)
             if not provider or not model:
                 job["meta"]["new_entities"] = 0
                 job["status"] = "done"
@@ -1572,8 +1560,7 @@ async def edit_scene(book_id: str, chapter_num: int, scene_num: int, body: EditS
     scene_path = _tier4_scene_path(book_id, chapter_num, scene_num)
     if not os.path.exists(scene_path):
         raise HTTPException(400, "No scene content yet — run the agent first")
-    provider = db.get_setting("agent_bible_agent_provider")
-    model = db.get_setting("agent_bible_agent_model")
+    provider, model = db.resolve_agent("bible_agent", book_id=book_id)
     if not provider or not model:
         raise HTTPException(400, "Bible Agent has no model assigned — go to Settings.")
     current = open(scene_path).read()
@@ -1613,8 +1600,7 @@ async def _bg_call(provider: str, model: str, messages: list, system: str, user:
 
 async def _bg_run_tier12(book_id: str, tier: int, user: str, log_cb) -> str:
     """Run Tier 1 or Tier 2 using the same context as the SSE endpoint."""
-    provider = db.get_setting("agent_bible_agent_provider")
-    model = db.get_setting("agent_bible_agent_model")
+    provider, model = db.resolve_agent("bible_agent", book_id=book_id)
 
     book_dir = db.data_dir(book_id)
     ns_path = os.path.join(book_dir, "north_star.md")
@@ -1656,8 +1642,7 @@ def _bg_approve_tier12(book_id: str, tier: int, content: str) -> None:
 
 async def _bg_mini_consolidate(book_id: str, user: str, log_cb) -> None:
     """Extract entity skeleton from North Star + Tier 2 (same context as SSE endpoint)."""
-    provider = db.get_setting("agent_bible_agent_provider")
-    model = db.get_setting("agent_bible_agent_model")
+    provider, model = db.resolve_agent("bible_agent", book_id=book_id)
 
     book_dir = db.data_dir(book_id)
     ns_path = os.path.join(book_dir, "north_star.md")
@@ -1697,8 +1682,7 @@ async def _bg_mini_consolidate(book_id: str, user: str, log_cb) -> None:
 
 async def _bg_run_tier3_act(book_id: str, act: int, user: str, log_cb) -> str:
     """Run Tier 3 for one act using the same context as the SSE endpoint."""
-    provider = db.get_setting("agent_bible_agent_provider")
-    model = db.get_setting("agent_bible_agent_model")
+    provider, model = db.resolve_agent("bible_agent", book_id=book_id)
 
     book_dir = db.data_dir(book_id)
     ns_path = os.path.join(book_dir, "north_star.md")
@@ -1776,8 +1760,7 @@ def _bg_approve_tier3_act(book_id: str, act: int, content: str) -> list:
 
 async def _bg_run_tier4_chapter(book_id: str, chapter: int, user: str, log_cb) -> str:
     """Run Tier 4 for one chapter using the same context as the SSE endpoint."""
-    provider = db.get_setting("agent_bible_agent_provider")
-    model = db.get_setting("agent_bible_agent_model")
+    provider, model = db.resolve_agent("bible_agent", book_id=book_id)
 
     book_dir = db.data_dir(book_id)
     ns_path = os.path.join(book_dir, "north_star.md")
@@ -1855,8 +1838,7 @@ def _bg_approve_tier4_chapter(book_id: str, chapter: int, content: str) -> list:
 
 async def _bg_run_scene_brief(book_id: str, chapter_num: int, scene_num: int, user: str, log_cb) -> str:
     """Run a scene brief using the same context as the SSE endpoint."""
-    provider = db.get_setting("agent_bible_agent_provider")
-    model = db.get_setting("agent_bible_agent_model")
+    provider, model = db.resolve_agent("bible_agent", book_id=book_id)
 
     book_dir = db.data_dir(book_id)
     ns_path = os.path.join(book_dir, "north_star.md")
@@ -1921,8 +1903,7 @@ async def _bg_approve_scene_brief(book_id: str, chapter_num: int, scene_num: int
     _save_tier4_status(book_id, status)
 
     # Bible sync — extract new entities (2 attempts)
-    provider = db.get_setting("agent_bible_agent_provider")
-    model = db.get_setting("agent_bible_agent_model")
+    provider, model = db.resolve_agent("bible_agent", book_id=book_id)
     book_dir = db.data_dir(book_id)
     skeleton = _read_skeleton(book_id)
 

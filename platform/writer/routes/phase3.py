@@ -439,12 +439,9 @@ async def _write_chapter_core(
 
     book_dir = db.data_dir(book_id)
 
-    writer_provider = db.get_setting("agent_writer_agent_provider")
-    writer_model = db.get_setting("agent_writer_agent_model")
-    qa_provider = db.get_setting("agent_qa_agent_provider")
-    qa_model = db.get_setting("agent_qa_agent_model")
-    planner_provider = db.get_setting("agent_bible_agent_provider")
-    planner_model = db.get_setting("agent_bible_agent_model")
+    writer_provider, writer_model = db.resolve_agent("writer_agent", book_id=book_id)
+    qa_provider, qa_model = db.resolve_agent("qa_agent", book_id=book_id)
+    planner_provider, planner_model = db.resolve_agent("bible_agent", book_id=book_id)
 
     missing = [k for k, v in [("writer_agent", writer_provider), ("qa_agent", qa_provider), ("bible_agent", planner_provider)] if not v]
     if missing:
@@ -573,7 +570,7 @@ async def _write_chapter_core(
             if retry and len(scene_text.split()) > word_limit:
                 await emit({"type": "status", "message": f"Scene {scene_num} is {len(scene_text.split())} words (target {word_target}) — tightening…"})
                 try:
-                    scene_text = await tighten_prose(scene_text, word_target, user)
+                    scene_text = await tighten_prose(scene_text, word_target, user, book_id=book_id)
                     await emit({"type": "scene_written", "scene": scene_num, "word_count": len(scene_text.split()), "word_target": word_target})
                 except Exception as e:
                     await emit({"type": "status", "message": f"Tighten failed, keeping the long draft: {e}"})
@@ -805,8 +802,7 @@ async def _write_chapter_bg(book_id: str, chapter: int, user: str, log_cb) -> No
 
 
 async def _approve_chapter_bg(book_id: str, chapter: int, user: str, log_cb) -> None:
-    bu_provider = db.get_setting("agent_bible_updater_provider")
-    bu_model = db.get_setting("agent_bible_updater_model")
+    bu_provider, bu_model = db.resolve_agent("bible_updater", book_id=book_id)
     if not bu_provider or not bu_model:
         raise RuntimeError("Bible Updater has no model assigned")
 
@@ -1169,10 +1165,8 @@ class RewriteBody(BaseModel):
 @router.post("/books/{book_id}/phase3/chapter/{chapter}/scene/{scene}/rewrite")
 async def rewrite_scene(book_id: str, chapter: int, scene: int, body: RewriteBody, user: str = Depends(current_user)):
     from fastapi import HTTPException
-    writer_provider = db.get_setting("agent_writer_agent_provider")
-    writer_model = db.get_setting("agent_writer_agent_model")
-    qa_provider = db.get_setting("agent_qa_agent_provider")
-    qa_model = db.get_setting("agent_qa_agent_model")
+    writer_provider, writer_model = db.resolve_agent("writer_agent", book_id=book_id)
+    qa_provider, qa_model = db.resolve_agent("qa_agent", book_id=book_id)
     if not writer_provider or not qa_provider:
         raise HTTPException(400, "Writer or QA agent not configured in Settings.")
 
@@ -1500,8 +1494,7 @@ class WriteSceneSequentialBody(BaseModel):
 @router.post("/books/{book_id}/phase3/chapter/{chapter}/scene/{scene}/write")
 async def write_scene_sequential(book_id: str, chapter: int, scene: int, body: WriteSceneSequentialBody, user: str = Depends(current_user)):
     from fastapi import HTTPException
-    writer_provider = db.get_setting("agent_writer_agent_provider")
-    writer_model = db.get_setting("agent_writer_agent_model")
+    writer_provider, writer_model = db.resolve_agent("writer_agent", book_id=book_id)
     if not writer_provider or not writer_model:
         raise HTTPException(400, "Writer agent not configured in Settings.")
 
@@ -1694,15 +1687,16 @@ class WriteWithBeatsBody(BaseModel):
 @router.post("/books/{book_id}/phase3/chapter/{chapter}/scene/{scene}/write-with-beats")
 async def write_scene_with_beats(book_id: str, chapter: int, scene: int, body: WriteWithBeatsBody, user: str = Depends(current_user)):
     from fastapi import HTTPException
-    writer_provider = db.get_setting("agent_writer_agent_provider")
-    writer_model = db.get_setting("agent_writer_agent_model")
+    writer_provider, writer_model = db.resolve_agent("writer_agent", book_id=book_id)
     if not writer_provider:
         raise HTTPException(400, "Writer agent not configured in Settings.")
 
-    beat_gen_provider = db.get_setting("agent_beat_generator_provider") or writer_provider
-    beat_gen_model = db.get_setting("agent_beat_generator_model") or writer_model
-    beat_exp_provider = db.get_setting("agent_beat_expander_provider") or writer_provider
-    beat_exp_model = db.get_setting("agent_beat_expander_model") or writer_model
+    beat_gen_provider, beat_gen_model = db.resolve_agent("beat_generator", book_id=book_id)
+    if not beat_gen_provider:
+        beat_gen_provider, beat_gen_model = writer_provider, writer_model
+    beat_exp_provider, beat_exp_model = db.resolve_agent("beat_expander", book_id=book_id)
+    if not beat_exp_provider:
+        beat_exp_provider, beat_exp_model = writer_provider, writer_model
 
     book_dir = db.data_dir(book_id)
     brief_path = os.path.join(book_dir, "tier4", f"chapter_{chapter:02d}_scene_{scene:02d}.md")

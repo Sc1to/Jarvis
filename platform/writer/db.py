@@ -64,6 +64,13 @@ def _get_conn() -> sqlite3.Connection:
                 started_at   TEXT NOT NULL,
                 finished_at  TEXT
             );
+            CREATE TABLE IF NOT EXISTS series_agent_models (
+                series_id TEXT NOT NULL,
+                agent_key TEXT NOT NULL,
+                provider  TEXT NOT NULL,
+                model     TEXT NOT NULL,
+                PRIMARY KEY (series_id, agent_key)
+            );
         """)
         # Migrate existing tables — ignore error if columns already exist
         for col in ("series_id TEXT", "series_order INTEGER"):
@@ -179,6 +186,7 @@ def get_series(series_id: str) -> dict | None:
 
 def delete_series(series_id: str) -> None:
     _get_conn().execute("UPDATE books SET series_id = NULL, series_order = NULL WHERE series_id = ?", (series_id,))
+    _get_conn().execute("DELETE FROM series_agent_models WHERE series_id = ?", (series_id,))
     _get_conn().execute("DELETE FROM series WHERE id = ?", (series_id,))
     _get_conn().commit()
 
@@ -198,6 +206,45 @@ def ensure_series_data_dir(series_id: str) -> str:
     d = series_data_dir(series_id)
     os.makedirs(d, exist_ok=True)
     return d
+
+
+# ── Series-scoped agent model overrides ─────────────────────────────────────
+
+def set_series_agent_model(series_id: str, agent_key: str, provider: str, model: str) -> None:
+    _get_conn().execute(
+        "INSERT OR REPLACE INTO series_agent_models (series_id, agent_key, provider, model) VALUES (?, ?, ?, ?)",
+        (series_id, agent_key, provider, model),
+    )
+    _get_conn().commit()
+
+
+def clear_series_agent_model(series_id: str, agent_key: str) -> None:
+    _get_conn().execute(
+        "DELETE FROM series_agent_models WHERE series_id = ? AND agent_key = ?", (series_id, agent_key)
+    )
+    _get_conn().commit()
+
+
+def get_series_agent_models(series_id: str) -> dict[str, dict]:
+    rows = _get_conn().execute(
+        "SELECT agent_key, provider, model FROM series_agent_models WHERE series_id = ?", (series_id,)
+    ).fetchall()
+    return {r["agent_key"]: {"provider": r["provider"], "model": r["model"]} for r in rows}
+
+
+def resolve_agent(agent_key: str, book_id: str | None = None, series_id: str | None = None) -> tuple[str | None, str | None]:
+    """Resolve an agent's provider/model: a series override (if the book/series has one), else the global default."""
+    if book_id and not series_id:
+        book = get_book(book_id)
+        series_id = book.get("series_id") if book else None
+    if series_id:
+        row = _get_conn().execute(
+            "SELECT provider, model FROM series_agent_models WHERE series_id = ? AND agent_key = ?",
+            (series_id, agent_key),
+        ).fetchone()
+        if row:
+            return row["provider"], row["model"]
+    return get_setting(f"agent_{agent_key}_provider"), get_setting(f"agent_{agent_key}_model")
 
 
 # ── Auto-write jobs ───────────────────────────────────────────────────────────

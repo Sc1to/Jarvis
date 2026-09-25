@@ -192,9 +192,8 @@ def provider_tokens(provider: str, model: str, messages: list[dict], system: str
 
 
 
-async def call_llm(agent_key: str, messages: list[dict], system: str | None = None, user_id: str = "local") -> str:
-    provider = db.get_setting(f"agent_{agent_key}_provider")
-    model = db.get_setting(f"agent_{agent_key}_model")
+async def call_llm(agent_key: str, messages: list[dict], system: str | None = None, user_id: str = "local", book_id: str | None = None) -> str:
+    provider, model = db.resolve_agent(agent_key, book_id=book_id)
 
     if not provider or not model:
         raise ValueError(f'Agent "{agent_key}" has no model assigned')

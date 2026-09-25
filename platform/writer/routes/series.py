@@ -149,6 +149,67 @@ def save_series_style_sheet(series_id: str, body: TextBody):
     return {"ok": True}
 
 
+# ── Series-scoped agent model overrides ─────────────────────────────────────
+# Agent keys that fall back to another agent's model when unset, matching the
+# fallback chain each real call site uses (see llm/db.resolve_agent callers).
+_AGENT_FALLBACKS = {
+    "beat_generator": "writer_agent",
+    "beat_expander": "writer_agent",
+    "text_op_expand": "writer_agent",
+    "text_op_rephrase": "writer_agent",
+    "text_op_notes": "qa_agent",
+}
+AGENT_KEYS = [
+    "story_architect", "bible_agent", "research_agent", "writer_agent", "qa_agent", "bible_updater",
+    "beat_generator", "beat_expander", "text_op_expand", "text_op_rephrase", "text_op_notes",
+]
+
+
+def _effective_agent(agent_key: str, series_id: str) -> tuple[str | None, str | None]:
+    provider, model = db.resolve_agent(agent_key, series_id=series_id)
+    fallback_key = _AGENT_FALLBACKS.get(agent_key)
+    if not provider and fallback_key:
+        provider, model = db.resolve_agent(fallback_key, series_id=series_id)
+    return provider, model
+
+
+class SeriesAgentModelBody(BaseModel):
+    agent_key: str
+    provider: str | None = None
+    model: str | None = None
+
+
+@router.get("/series/{series_id}/agent-models")
+def get_series_agent_models(series_id: str):
+    if not db.get_series(series_id):
+        raise HTTPException(404, "Not found")
+    overrides = db.get_series_agent_models(series_id)
+    result = {}
+    for key in AGENT_KEYS:
+        override = overrides.get(key)
+        eff_provider, eff_model = _effective_agent(key, series_id)
+        result[key] = {
+            "provider": override["provider"] if override else None,
+            "model": override["model"] if override else None,
+            "effective_provider": eff_provider,
+            "effective_model": eff_model,
+        }
+    return result
+
+
+@router.post("/series/{series_id}/agent-models")
+def set_series_agent_model(series_id: str, body: SeriesAgentModelBody):
+    if not db.get_series(series_id):
+        raise HTTPException(404, "Not found")
+    if body.agent_key not in AGENT_KEYS:
+        raise HTTPException(400, f"Unknown agent key: {body.agent_key}")
+    if body.provider and body.model:
+        db.set_series_agent_model(series_id, body.agent_key, body.provider, body.model)
+    else:
+        db.clear_series_agent_model(series_id, body.agent_key)
+    return {"ok": True}
+
+
 # ── Style digest (compressed style sheet for QA) ──────────────────────────────
 # QA checks style alignment on a sampled cadence rather than every scene, and
 # uses this short digest rather than the full style sheet to keep its prompt
@@ -298,8 +359,7 @@ async def extract_entities_from_north_star(series_id: str):
     if not north_star.strip():
         raise HTTPException(400, "North Star is empty — write it first")
 
-    provider = db.get_setting("agent_bible_agent_provider")
-    model = db.get_setting("agent_bible_agent_model")
+    provider, model = db.resolve_agent("bible_agent", series_id=series_id)
     if not provider or not model:
         raise HTTPException(400, "Bible Agent has no model assigned — go to Settings")
 

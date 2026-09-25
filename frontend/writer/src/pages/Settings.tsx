@@ -10,6 +10,8 @@ import { Separator } from '@/components/ui/separator'
 import { CheckCircle, XCircle, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { API } from '@/lib/api'
+import { AGENTS, type Provider, type AgentAssignment } from '@/lib/agents'
+import { useProviderModels } from '@/lib/useProviderModels'
 
 async function fetchSettings(): Promise<Record<string, string>> {
   const r = await fetch(`${API}/settings`)
@@ -27,19 +29,6 @@ async function saveSettings(data: Record<string, string>) {
 
 // ponytail: stable empty object so useEffect([saved]) doesn't loop while query loads
 const EMPTY_SETTINGS: Record<string, string> = {}
-
-type Provider = 'gemini' | 'openrouter' | 'anthropic' | 'openai' | 'ollama' | ''
-
-interface AgentAssignment { provider: Provider; model: string }
-
-const AGENTS: { key: string; label: string; description: string; hint?: string }[] = [
-  { key: 'story_architect',  label: 'Story Architect',            description: 'North Star creation conversation' },
-  { key: 'bible_agent',      label: 'Bible Agent',                description: 'Tiered bible iteration passes',     hint: 'Long context recommended' },
-  { key: 'research_agent',   label: 'Research & Completion',      description: 'Phase 2 enrichment and entity completion' },
-  { key: 'writer_agent',     label: 'Writer Agent',               description: 'Scene prose generation' },
-  { key: 'qa_agent',         label: 'QA Agent',                   description: 'Scene quality and consistency checking', hint: 'Largest context window available — see spec §6.1' },
-  { key: 'bible_updater',    label: 'Bible Updater',              description: 'Structured bible updates post-scene', hint: 'Reliable JSON output recommended' },
-]
 
 function StatusDot({ ok }: { ok: boolean | null }) {
   if (ok === null) return <span className="inline-block w-2 h-2 rounded-full bg-muted-foreground/40" />
@@ -107,50 +96,10 @@ export default function SettingsPage() {
   }, [saved])
 
   // Live model lists — fetched once keys are entered
-  const geminiModels = useQuery({
-    queryKey: ['models', 'gemini', geminiKey],
-    queryFn: () => fetch(`${API}/models/gemini`).then(r => r.ok ? r.json() as Promise<{ id: string; name: string }[]> : Promise.reject()),
-    enabled: geminiKey.length > 10,
-    retry: false,
-    staleTime: 60_000,
-  })
-  const orModels = useQuery({
-    queryKey: ['models', 'openrouter', openrouterKey],
-    queryFn: () => fetch(`${API}/models/openrouter`).then(r => r.ok ? r.json() as Promise<{ id: string; name: string; free: boolean }[]> : Promise.reject()),
-    enabled: openrouterKey.length > 10,
-    retry: false,
-    staleTime: 60_000,
-  })
-  const anthropicModels = useQuery({
-    queryKey: ['models', 'anthropic', anthropicKey],
-    queryFn: () => fetch(`${API}/models/anthropic`).then(r => r.ok ? r.json() as Promise<{ id: string; name: string }[]> : Promise.reject()),
-    enabled: anthropicKey.length > 10,
-    retry: false,
-    staleTime: 60_000,
-  })
-  const openaiModels = useQuery({
-    queryKey: ['models', 'openai', openaiKey],
-    queryFn: () => fetch(`${API}/models/openai`).then(r => r.ok ? r.json() as Promise<{ id: string; name: string }[]> : Promise.reject()),
-    enabled: openaiKey.length > 10,
-    retry: false,
-    staleTime: 60_000,
-  })
-  const ollamaModels = useQuery({
-    queryKey: ['models', 'ollama', ollamaHost],
-    queryFn: () => fetch(`${API}/models/ollama`).then(r => r.ok ? r.json() as Promise<{ id: string; name: string }[]> : Promise.reject()),
-    retry: false,
-    refetchInterval: 30_000,
-    staleTime: 30_000,
-  })
-
-  function modelsForProvider(provider: Provider): { id: string; name: string; free?: boolean }[] {
-    if (provider === 'gemini')      return geminiModels.data ?? []
-    if (provider === 'openrouter')  return orModels.data ?? []
-    if (provider === 'anthropic')   return anthropicModels.data ?? []
-    if (provider === 'openai')      return openaiModels.data ?? []
-    if (provider === 'ollama')      return ollamaModels.data ?? []
-    return []
-  }
+  const {
+    geminiModels, orModels, anthropicModels, openaiModels, ollamaModels,
+    modelsForProvider, isLoadingForProvider, availableProviders,
+  } = useProviderModels({ geminiKey, openrouterKey, anthropicKey, openaiKey, ollamaHost })
 
   function setAgent(key: string, field: 'provider' | 'model', value: string) {
     setAgents(prev => {
@@ -178,14 +127,6 @@ export default function SettingsPage() {
       ...agentSettings,
     })
   }
-
-  const availableProviders: { value: Provider; label: string }[] = [
-    ...(anthropicKey.length > 10  ? [{ value: 'anthropic'   as Provider, label: 'Anthropic (Claude)' }] : []),
-    ...(openaiKey.length > 10     ? [{ value: 'openai'      as Provider, label: 'OpenAI'              }] : []),
-    ...(geminiKey.length > 10     ? [{ value: 'gemini'      as Provider, label: 'Google Gemini'       }] : []),
-    ...(openrouterKey.length > 10 ? [{ value: 'openrouter'  as Provider, label: 'OpenRouter'          }] : []),
-    { value: 'ollama' as Provider, label: 'Ollama (local)' },
-  ]
 
   return (
     <div className="p-8 max-w-2xl mx-auto space-y-6">
@@ -316,12 +257,7 @@ export default function SettingsPage() {
           {AGENTS.map((agent, i) => {
             const assignment = agents[agent.key]
             const models = modelsForProvider(assignment.provider)
-            const loading = assignment.provider === 'gemini'     ? geminiModels.isLoading
-              : assignment.provider === 'openrouter' ? orModels.isLoading
-              : assignment.provider === 'anthropic'  ? anthropicModels.isLoading
-              : assignment.provider === 'openai'     ? openaiModels.isLoading
-              : assignment.provider === 'ollama'     ? ollamaModels.isLoading
-              : false
+            const loading = isLoadingForProvider(assignment.provider)
 
             return (
               <div key={agent.key} className={cn('px-5 py-4 space-y-3', i < AGENTS.length - 1 && 'border-b border-border')}>
