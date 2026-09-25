@@ -71,6 +71,18 @@ def _get_conn() -> sqlite3.Connection:
                 model     TEXT NOT NULL,
                 PRIMARY KEY (series_id, agent_key)
             );
+            CREATE TABLE IF NOT EXISTS llm_usage_log (
+                id            TEXT PRIMARY KEY,
+                book_id       TEXT,
+                chapter       INTEGER,
+                scene         INTEGER,
+                agent_key     TEXT NOT NULL,
+                provider      TEXT,
+                model         TEXT,
+                input_tokens  INTEGER,
+                output_tokens INTEGER,
+                created_at    TEXT NOT NULL
+            );
         """)
         # Migrate existing tables — ignore error if columns already exist
         for col in ("series_id TEXT", "series_order INTEGER"):
@@ -352,4 +364,31 @@ def append_bible_job_log(job_id: str, msg: str) -> None:
     log = json.loads(row["log"])
     log.append(msg)
     conn.execute("UPDATE auto_bible_jobs SET log = ? WHERE id = ?", (json.dumps(log), job_id))
+    conn.commit()
+
+
+def log_llm_usage(
+    agent_key: str,
+    provider: str | None = None,
+    model: str | None = None,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+    book_id: str | None = None,
+    chapter: int | None = None,
+    scene: int | None = None,
+) -> None:
+    """Record token usage for one LLM call, when the provider reported any. Silently
+    skips logging if both token counts are unknown (usage wasn't in the response)."""
+    if input_tokens is None and output_tokens is None:
+        return
+    conn = _get_conn()
+    conn.execute(
+        "INSERT INTO llm_usage_log "
+        "(id, book_id, chapter, scene, agent_key, provider, model, input_tokens, output_tokens, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            uuid.uuid4().hex[:12], book_id, chapter, scene, agent_key, provider, model,
+            input_tokens, output_tokens, datetime.now(timezone.utc).isoformat(),
+        ),
+    )
     conn.commit()

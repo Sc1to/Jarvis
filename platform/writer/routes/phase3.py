@@ -15,7 +15,7 @@ import jobs as job_store
 from deps import current_user
 import llm
 import prompt_store
-from prompt_blocks import assemble_writer_context, condense_prior_scenes, _truncate_prior_scenes
+from prompt_blocks import assemble_writer_context, condense_prior_scenes, _truncate_prior_scenes, cap_event_logs
 from routes.series import get_style_digest
 import steering
 
@@ -220,10 +220,19 @@ def _extract_json_list(text: str) -> list:
             return repaired
         raise ValueError(f"Could not extract valid JSON array (response was {len(original)} chars)")
 
-async def _call(provider: str, model: str, messages: list[dict], system: str, user_id: str = "local", json_mode: bool = False) -> str:
+async def _call(
+    provider: str, model: str, messages: list[dict], system: str, user_id: str = "local", json_mode: bool = False,
+    *, agent_key: str = "unknown", book_id: str | None = None, chapter: int | None = None, scene: int | None = None,
+) -> str:
     result = ""
-    async for token in llm.provider_tokens(provider, model, messages, system, user_id, json_mode=json_mode):
+    usage: dict = {}
+    async for token in llm.provider_tokens(provider, model, messages, system, user_id, json_mode=json_mode, usage=usage):
         result += token
+    db.log_llm_usage(
+        agent_key, provider=provider, model=model,
+        input_tokens=usage.get("input_tokens"), output_tokens=usage.get("output_tokens"),
+        book_id=book_id, chapter=chapter, scene=scene,
+    )
     return result
 
 def _last_words(text: str, n: int) -> str:
@@ -417,6 +426,16 @@ def _style_check_cadence() -> int:
     except (TypeError, ValueError):
         return 3
 
+def _qa_event_log_cap() -> int:
+    """Max eventLog entries per entity sent to QA — bounds a value that otherwise
+    grows without limit over the life of a book (see cap_event_logs)."""
+    raw = db.get_setting("qa_event_log_cap")
+    try:
+        n = int(raw)
+        return n if n > 0 else 20
+    except (TypeError, ValueError):
+        return 20
+
 async def _load_style_digest(book_id: str, qa_provider: str, qa_model: str, user: str) -> str:
     """Series style digest for QA, or "" if the book isn't in a series or has no style sheet."""
     book = db.get_book(book_id)
@@ -478,6 +497,7 @@ async def _write_chapter_core(
     tier4_content = open(tier4_path).read()
     bible = _read_bible(book_id)
     ledger_json = json.dumps(bible.get("ledger", {}))
+    qa_ledger_json = cap_event_logs(ledger_json, _qa_event_log_cap())
     author_notes = steering.notes_for(book_id, chapter)
     style_digest = await _load_style_digest(book_id, qa_provider, qa_model, user)
 
@@ -508,6 +528,7 @@ async def _write_chapter_core(
             [{"role": "user", "content": f"Chapter number: {chapter}\n\nTier 4 (Scenes bible):\n\n{tier4_content}"}],
             prompt_store.get("scene_planner", SCENE_PLANNER_SYSTEM),
             user, json_mode=True,
+            agent_key="bible_agent", book_id=book_id, chapter=chapter,
         )
         scene_plan = _extract_json_list(plan_text)
         await emit({"type": "plan_done", "scene_count": len(scene_plan), "scenes": scene_plan})
@@ -583,7 +604,8 @@ async def _write_chapter_core(
 
             try:
                 # Collect prose without streaming tokens — avoids queue bloat for long runs
-                scene_text = await _call(writer_provider, writer_model, messages, prompt_store.get("writer", WRITER_SYSTEM), user)
+                scene_text = await _call(writer_provider, writer_model, messages, prompt_store.get("writer", WRITER_SYSTEM), user,
+                                          agent_key="writer_agent", book_id=book_id, chapter=chapter, scene=scene_num)
             except Exception as e:
                 await emit({"type": "error", "message": f"Writer error on scene {scene_num}: {e}"})
                 raise
@@ -600,12 +622,13 @@ async def _write_chapter_core(
 
             await emit({"type": "qa_start", "scene": scene_num, "attempt": attempt})
             qa_system, include_style = _qa_prompt_for_scene(scene_num, style_digest)
-            qa_user = _qa_user_message(writing_prefs, ledger_json, qa_prior, exit_state, scene_text, author_notes,
+            qa_user = _qa_user_message(writing_prefs, qa_ledger_json, qa_prior, exit_state, scene_text, author_notes,
                                         style_digest if include_style else "",
                                         plant_seeds=_resolve_seeds(book_id, scene_def.get("plants", [])),
                                         resolve_seeds=_resolve_seeds(book_id, scene_def.get("resolves", [])))
             try:
-                qa_text = await _call(qa_provider, qa_model, [{"role": "user", "content": qa_user}], qa_system, user, json_mode=True)
+                qa_text = await _call(qa_provider, qa_model, [{"role": "user", "content": qa_user}], qa_system, user, json_mode=True,
+                                       agent_key="qa_agent", book_id=book_id, chapter=chapter, scene=scene_num)
                 qa_result = _extract_json(qa_text)
             except Exception as e:
                 qa_result = {"pass": True, "issues": [{"type": "system", "description": str(e), "severity": "warning"}], "notes": "QA skipped"}
@@ -853,7 +876,8 @@ async def _approve_chapter_bg(book_id: str, chapter: int, user: str, log_cb) -> 
         f"## Chapter {chapter} prose\n\n{chapter_content}\n\n"
         "Update the ledger with facts from this chapter."
     )
-    full_text = await _call(bu_provider, bu_model, [{"role": "user", "content": bu_user}], prompt_store.get("bible_updater", BIBLE_UPDATER_SYSTEM), user, json_mode=True)
+    full_text = await _call(bu_provider, bu_model, [{"role": "user", "content": bu_user}], prompt_store.get("bible_updater", BIBLE_UPDATER_SYSTEM), user, json_mode=True,
+                             agent_key="bible_updater", book_id=book_id, chapter=chapter)
 
     bible_updated = False
     try:
@@ -1216,6 +1240,7 @@ async def rewrite_scene(book_id: str, chapter: int, scene: int, body: RewriteBod
     north_star = _read_north_star(book_id)
     writing_prefs = _read_writing_prefs(book_id)
     ledger_json = json.dumps(_read_bible(book_id).get("ledger", {}))
+    qa_ledger_json = cap_event_logs(ledger_json, _qa_event_log_cap())
 
     plan_path = _chapter_plan_path(book_id, chapter)
     scene_plan = json.load(open(plan_path)) if os.path.exists(plan_path) else []
@@ -1224,8 +1249,8 @@ async def rewrite_scene(book_id: str, chapter: int, scene: int, body: RewriteBod
 
     sections = _scene_sections(open(chapter_path).read())
     # QA checks against every other scene; the Writer gets a condensed view of the scenes before this one
-    other_scenes = [text for n, text in sections.items() if n != scene]
-    qa_prior = "\n\n---\n\n".join(other_scenes) if other_scenes else "None yet."
+    other_scenes = [text for n, text in sorted(sections.items()) if n != scene]
+    qa_prior = _truncate_prior_scenes(other_scenes)
     writer_prior = condense_prior_scenes(
         [(n, text) for n, text in sections.items() if n < scene],
         _plan_summaries(scene_plan) if scene_plan else _chapter_summaries(book_id, chapter),
@@ -1266,24 +1291,30 @@ async def rewrite_scene(book_id: str, chapter: int, scene: int, body: RewriteBod
             events.append({"type": "rewrite_start", "scene": scene, "attempt": 1, "brief": brief})
 
             scene_text = ""
+            usage: dict = {}
             async for token in llm.provider_tokens(
                 writer_provider, writer_model,
                 [{"role": "user", "content": context_block}],
                 prompt_store.get("writer", WRITER_SYSTEM),
                 user,
+                usage=usage,
             ):
                 scene_text += token
                 job["tokens"] += token
+            db.log_llm_usage("writer_agent", provider=writer_provider, model=writer_model,
+                              input_tokens=usage.get("input_tokens"), output_tokens=usage.get("output_tokens"),
+                              book_id=book_id, chapter=chapter, scene=scene)
 
             events.append({"type": "scene_written", "scene": scene, "word_count": len(scene_text.split()), "word_target": word_target})
 
             qa_system, include_style = _qa_prompt_for_scene(scene, style_digest)
-            qa_user = _qa_user_message(writing_prefs, ledger_json, qa_prior, exit_state, scene_text, author_notes,
+            qa_user = _qa_user_message(writing_prefs, qa_ledger_json, qa_prior, exit_state, scene_text, author_notes,
                                         style_digest if include_style else "",
                                         plant_seeds=_resolve_seeds(book_id, scene_def.get("plants", [])),
                                         resolve_seeds=_resolve_seeds(book_id, scene_def.get("resolves", [])))
             try:
-                qa_result = _extract_json(await _call(qa_provider, qa_model, [{"role": "user", "content": qa_user}], qa_system, user, json_mode=True))
+                qa_result = _extract_json(await _call(qa_provider, qa_model, [{"role": "user", "content": qa_user}], qa_system, user, json_mode=True,
+                                                       agent_key="qa_agent", book_id=book_id, chapter=chapter, scene=scene))
             except Exception as e:
                 qa_result = {"pass": True, "issues": [], "notes": f"QA error: {e}"}
             qa_result = _apply_length_check(qa_result, scene_text, word_target, "error")
@@ -1618,14 +1649,19 @@ async def write_scene_sequential(book_id: str, chapter: int, scene: int, body: W
     async def _bg():
         try:
             scene_text = ""
+            usage: dict = {}
             async for token in llm.provider_tokens(
                 writer_provider, writer_model,
                 messages,
                 prompt_store.get("writer", WRITER_SYSTEM),
                 user,
+                usage=usage,
             ):
                 scene_text += token
                 job["tokens"] += token
+            db.log_llm_usage("writer_agent", provider=writer_provider, model=writer_model,
+                              input_tokens=usage.get("input_tokens"), output_tokens=usage.get("output_tokens"),
+                              book_id=book_id, chapter=chapter, scene=scene)
 
             raw = open(chapter_prose_path).read() if os.path.exists(chapter_prose_path) else f"# Chapter {chapter}"
             with open(chapter_prose_path, "w") as f:
@@ -1774,6 +1810,7 @@ async def write_scene_with_beats(book_id: str, chapter: int, scene: int, body: W
                 prompt_store.get("beat_generator", BEAT_GENERATOR_SYSTEM),
                 user,
                 json_mode=True,
+                agent_key="writer_agent", book_id=book_id, chapter=chapter, scene=scene,
             )
             beats = _extract_json_list(beat_text)
             job["meta"]["beats"] = beats
@@ -1798,14 +1835,19 @@ async def write_scene_with_beats(book_id: str, chapter: int, scene: int, body: W
             expand_user = f"{expand_context}\n\n## Beat list\n\n{beats_formatted}\n\nExpand these beats into continuous prose now."
 
             scene_text = ""
+            usage: dict = {}
             async for token in llm.provider_tokens(
                 beat_exp_provider, beat_exp_model,
                 [{"role": "user", "content": expand_user}],
                 prompt_store.get("beat_expander", BEAT_EXPANDER_SYSTEM),
                 user,
+                usage=usage,
             ):
                 scene_text += token
                 job["tokens"] += token
+            db.log_llm_usage("writer_agent", provider=beat_exp_provider, model=beat_exp_model,
+                              input_tokens=usage.get("input_tokens"), output_tokens=usage.get("output_tokens"),
+                              book_id=book_id, chapter=chapter, scene=scene)
 
             raw = open(chapter_prose_path).read() if os.path.exists(chapter_prose_path) else f"# Chapter {chapter}"
             with open(chapter_prose_path, "w") as f:

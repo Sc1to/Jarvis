@@ -46,6 +46,7 @@ Current phase:     Phase 13 — Trading System
 Last completed:    Phase 13.19 — Paper trading validation tooling; Phase DEV — Docker, deploy scripts, test suite
                    Writer app enhancements (2026-09-23) — author scene-prose editing, manual-mode QA hold, first writer tests
                    Writer app steering (2026-09-24) — length targets + trimming, anti-recap context, standing notes, pause/regenerate scenes
+                   Writer app token-usage reduction (2026-09-25) — LLM usage logging (llm_usage_log table), capped entity eventLog for QA prompts (cap_event_logs), fixed unbounded QA prior-scenes text in rewrite_scene
 Currently working: Phase 13.20 — Live trading activation (manual user decision)
 Blocked on:        Infra phases (1, 2) are hardware setup; 3-6 months paper trading runtime
 Remaining:         Phase 13.20 (manual user decision)

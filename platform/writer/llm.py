@@ -9,7 +9,7 @@ import db
 logger = logging.getLogger(__name__)
 
 
-async def _gemini_tokens(model: str, messages: list[dict], system: str | None, user_id: str) -> AsyncGenerator[str, None]:
+async def _gemini_tokens(model: str, messages: list[dict], system: str | None, user_id: str, usage: dict | None = None) -> AsyncGenerator[str, None]:
     api_key = db.get_user_key(user_id, "gemini")
     if not api_key:
         raise ValueError("Gemini API key not configured in Settings")
@@ -37,17 +37,23 @@ async def _gemini_tokens(model: str, messages: list[dict], system: str | None, u
                     text = d.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
                     if text:
                         yield text
+                    meta = d.get("usageMetadata")
+                    if usage is not None and meta:
+                        usage["input_tokens"] = meta.get("promptTokenCount")
+                        usage["output_tokens"] = meta.get("candidatesTokenCount")
                 except Exception:
                     pass
 
 
-async def _openrouter_tokens(model: str, messages: list[dict], system: str | None, user_id: str, json_mode: bool = False) -> AsyncGenerator[str, None]:
+async def _openrouter_tokens(model: str, messages: list[dict], system: str | None, user_id: str, json_mode: bool = False, usage: dict | None = None) -> AsyncGenerator[str, None]:
     api_key = db.get_user_key(user_id, "openrouter")
     if not api_key:
         raise ValueError("OpenRouter API key not configured in Settings")
 
     msgs = ([{"role": "system", "content": system}] if system else []) + messages
     body: dict = {"model": model, "stream": True, "messages": msgs}
+    if usage is not None:
+        body["stream_options"] = {"include_usage": True}
     # response_format is not supported by all OpenRouter models;
     # system prompts already instruct JSON output, so we omit it.
 
@@ -74,14 +80,19 @@ async def _openrouter_tokens(model: str, messages: list[dict], system: str | Non
                     return
                 try:
                     d = json.loads(raw)
-                    text = d.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                    choices = d.get("choices") or [{}]
+                    text = choices[0].get("delta", {}).get("content", "") if choices else ""
                     if text:
                         yield text
+                    u = d.get("usage")
+                    if usage is not None and u:
+                        usage["input_tokens"] = u.get("prompt_tokens")
+                        usage["output_tokens"] = u.get("completion_tokens")
                 except Exception:
                     pass
 
 
-async def _anthropic_tokens(model: str, messages: list[dict], system: str | None, user_id: str) -> AsyncGenerator[str, None]:
+async def _anthropic_tokens(model: str, messages: list[dict], system: str | None, user_id: str, usage: dict | None = None) -> AsyncGenerator[str, None]:
     api_key = db.get_user_key(user_id, "anthropic")
     if not api_key:
         raise ValueError("Anthropic API key not configured in Settings")
@@ -113,17 +124,29 @@ async def _anthropic_tokens(model: str, messages: list[dict], system: str | None
                         text = d.get("delta", {}).get("text", "")
                         if text:
                             yield text
+                    elif usage is not None and d.get("type") == "message_start":
+                        u = d.get("message", {}).get("usage", {})
+                        if u.get("input_tokens") is not None:
+                            usage["input_tokens"] = u.get("input_tokens")
+                        if u.get("output_tokens") is not None:
+                            usage["output_tokens"] = u.get("output_tokens")
+                    elif usage is not None and d.get("type") == "message_delta":
+                        u = d.get("usage", {})
+                        if u.get("output_tokens") is not None:
+                            usage["output_tokens"] = u.get("output_tokens")
                 except Exception:
                     pass
 
 
-async def _openai_tokens(model: str, messages: list[dict], system: str | None, user_id: str) -> AsyncGenerator[str, None]:
+async def _openai_tokens(model: str, messages: list[dict], system: str | None, user_id: str, usage: dict | None = None) -> AsyncGenerator[str, None]:
     api_key = db.get_user_key(user_id, "openai")
     if not api_key:
         raise ValueError("OpenAI API key not configured in Settings")
 
     msgs = ([{"role": "system", "content": system}] if system else []) + messages
     body = {"model": model, "stream": True, "messages": msgs}
+    if usage is not None:
+        body["stream_options"] = {"include_usage": True}
 
     async with httpx.AsyncClient(timeout=120) as client:
         async with client.stream(
@@ -141,14 +164,19 @@ async def _openai_tokens(model: str, messages: list[dict], system: str | None, u
                     return
                 try:
                     d = json.loads(raw)
-                    text = d.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                    choices = d.get("choices") or [{}]
+                    text = choices[0].get("delta", {}).get("content", "") if choices else ""
                     if text:
                         yield text
+                    u = d.get("usage")
+                    if usage is not None and u:
+                        usage["input_tokens"] = u.get("prompt_tokens")
+                        usage["output_tokens"] = u.get("completion_tokens")
                 except Exception:
                     pass
 
 
-async def _ollama_tokens(model: str, messages: list[dict], system: str | None, user_id: str, json_mode: bool = False) -> AsyncGenerator[str, None]:
+async def _ollama_tokens(model: str, messages: list[dict], system: str | None, user_id: str, json_mode: bool = False, usage: dict | None = None) -> AsyncGenerator[str, None]:
     host = db.get_setting("ollama_host") or "http://localhost:11434"
     msgs = ([{"role": "system", "content": system}] if system else []) + messages
 
@@ -173,21 +201,24 @@ async def _ollama_tokens(model: str, messages: list[dict], system: str | None, u
                     text = d.get("message", {}).get("content", "")
                     if text:
                         yield text
+                    if usage is not None and d.get("done"):
+                        usage["input_tokens"] = d.get("prompt_eval_count")
+                        usage["output_tokens"] = d.get("eval_count")
                 except Exception:
                     pass
 
 
-def provider_tokens(provider: str, model: str, messages: list[dict], system: str | None = None, user_id: str = "local", json_mode: bool = False) -> AsyncGenerator[str, None]:
+def provider_tokens(provider: str, model: str, messages: list[dict], system: str | None = None, user_id: str = "local", json_mode: bool = False, usage: dict | None = None) -> AsyncGenerator[str, None]:
     if provider == "gemini":
-        return _gemini_tokens(model, messages, system, user_id)
+        return _gemini_tokens(model, messages, system, user_id, usage=usage)
     if provider == "openrouter":
-        return _openrouter_tokens(model, messages, system, user_id, json_mode=json_mode)
+        return _openrouter_tokens(model, messages, system, user_id, json_mode=json_mode, usage=usage)
     if provider == "anthropic":
-        return _anthropic_tokens(model, messages, system, user_id)
+        return _anthropic_tokens(model, messages, system, user_id, usage=usage)
     if provider == "openai":
-        return _openai_tokens(model, messages, system, user_id)
+        return _openai_tokens(model, messages, system, user_id, usage=usage)
     if provider == "ollama":
-        return _ollama_tokens(model, messages, system, user_id, json_mode=json_mode)
+        return _ollama_tokens(model, messages, system, user_id, json_mode=json_mode, usage=usage)
     raise ValueError(f"Unknown provider: {provider}")
 
 
@@ -199,6 +230,12 @@ async def call_llm(agent_key: str, messages: list[dict], system: str | None = No
         raise ValueError(f'Agent "{agent_key}" has no model assigned')
 
     result = ""
-    async for token in provider_tokens(provider, model, messages, system, user_id):
+    usage: dict = {}
+    async for token in provider_tokens(provider, model, messages, system, user_id, usage=usage):
         result += token
+    db.log_llm_usage(
+        agent_key, provider=provider, model=model,
+        input_tokens=usage.get("input_tokens"), output_tokens=usage.get("output_tokens"),
+        book_id=book_id,
+    )
     return result

@@ -33,7 +33,7 @@ def _run_manual_write(tmp_path, monkeypatch, retry_setting):
 
     calls = {"writer": 0, "qa": 0}
 
-    async def fake_call(provider, model, messages, system, user_id="local", json_mode=False):
+    async def fake_call(provider, model, messages, system, user_id="local", json_mode=False, **kwargs):
         if system == phase3.SCENE_PLANNER_SYSTEM:
             return json.dumps([{"scene": 1, "brief": "b", "entry_state": "", "exit_state": "locked"}])
         if system == phase3.QA_SYSTEM:

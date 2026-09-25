@@ -65,6 +65,38 @@ def strip_event_logs(ledger_json: str) -> str:
     return json.dumps(stripped, indent=2)
 
 
+def cap_event_logs(ledger_json: str, max_events: int = 20) -> str:
+    """Keep each entity's most recent `max_events` eventLog entries. Current state
+    (book_facts/coreFacts/aliases/lifecycle) is untouched and unbounded — only the
+    historical tail is capped. QA needs full cast and current state to catch a
+    contradiction in the scene it's reviewing, not the entire event history, which
+    grows without bound over the life of a book."""
+    if not ledger_json or ledger_json in ("{}", "null", ""):
+        return ledger_json
+    try:
+        ledger = json.loads(ledger_json)
+    except Exception:
+        return ledger_json
+    if not isinstance(ledger, dict):
+        return ledger_json
+
+    capped = {}
+    for eid, entity in ledger.items():
+        if not isinstance(entity, dict):
+            capped[eid] = entity
+            continue
+        event_log = entity.get("eventLog")
+        if not isinstance(event_log, list) or len(event_log) <= max_events:
+            capped[eid] = entity
+            continue
+        omitted = len(event_log) - max_events
+        capped[eid] = {
+            **entity,
+            "eventLog": [{"omitted_earlier": omitted}] + event_log[-max_events:],
+        }
+    return json.dumps(capped, indent=2)
+
+
 def block_active_entities(ledger_json: str) -> str:
     if not ledger_json or ledger_json in ("{}", "null", ""):
         return ""

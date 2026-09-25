@@ -152,7 +152,7 @@ def test_writer_and_qa_receive_assigned_seeds(book, monkeypatch):
 
     captured = {}
 
-    async def fake_call(provider, model, messages, system, user_id="local", json_mode=False):
+    async def fake_call(provider, model, messages, system, user_id="local", json_mode=False, **kwargs):
         if system == phase3.SCENE_PLANNER_SYSTEM:
             return json.dumps([{"scene": 1, "brief": "b", "entry_state": "", "exit_state": "e",
                                  "plants": ["SEED_001"], "resolves": []}])
@@ -212,7 +212,7 @@ def test_approve_chapter_flips_seed_status_and_commits_file(book, monkeypatch):
         "agent_bible_updater_provider": "p", "agent_bible_updater_model": "m",
     }.get(k))
 
-    async def fake_call(provider, model, messages, system, user_id="local", json_mode=False):
+    async def fake_call(provider, model, messages, system, user_id="local", json_mode=False, **kwargs):
         return "{}"
 
     monkeypatch.setattr(phase3, "_call", fake_call)
@@ -261,7 +261,7 @@ def test_approve_chapter_skips_seed_flagged_by_qa(book, monkeypatch):
         "agent_bible_updater_provider": "p", "agent_bible_updater_model": "m",
     }.get(k))
 
-    async def fake_call(provider, model, messages, system, user_id="local", json_mode=False):
+    async def fake_call(provider, model, messages, system, user_id="local", json_mode=False, **kwargs):
         return "{}"
 
     monkeypatch.setattr(phase3, "_call", fake_call)

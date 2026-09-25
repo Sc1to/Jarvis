@@ -38,6 +38,33 @@ def test_condense_prior_scenes_summarises_all_but_previous():
     assert condense_prior_scenes([]) == "None yet."
 
 
+def test_cap_event_logs_truncates_history_keeps_state():
+    from prompt_blocks import cap_event_logs
+    ledger = {
+        "CHAR_001": {
+            "name": "Mary",
+            "book_facts": {"task": "find the ledger"},
+            "eventLog": [{"description": f"event {i}"} for i in range(25)],
+        },
+        "CHAR_002": {"name": "Tom", "eventLog": [{"description": "only one"}]},
+    }
+    out = json.loads(cap_event_logs(json.dumps(ledger), max_events=20))
+    assert out["CHAR_001"]["book_facts"] == {"task": "find the ledger"}
+    assert out["CHAR_001"]["eventLog"][0] == {"omitted_earlier": 5}
+    assert len(out["CHAR_001"]["eventLog"]) == 21  # marker + last 20
+    assert out["CHAR_001"]["eventLog"][-1] == {"description": "event 24"}
+    # under the cap — untouched, no marker added
+    assert out["CHAR_002"]["eventLog"] == [{"description": "only one"}]
+
+
+def test_cap_event_logs_handles_missing_or_empty_input():
+    from prompt_blocks import cap_event_logs
+    assert cap_event_logs("") == ""
+    assert cap_event_logs("{}") == "{}"
+    assert cap_event_logs("null") == "null"
+    assert cap_event_logs("not json") == "not json"
+
+
 def test_writer_context_has_notes_before_contract_with_length():
     from prompt_blocks import assemble_writer_context
     ctx = assemble_writer_context(
@@ -101,7 +128,7 @@ def _setup_writer(monkeypatch, *, qa=QA_PASS, retry=False, writer_words=100, pla
     monkeypatch.setattr(db, "append_job_log", lambda *a: None)
     rec = {"writer_prompts": [], "tighten": []}
 
-    async def fake_call(provider, model, messages, system, user_id="local", json_mode=False):
+    async def fake_call(provider, model, messages, system, user_id="local", json_mode=False, **kwargs):
         if system == phase3.SCENE_PLANNER_SYSTEM:
             return json.dumps([{"scene": n, "brief": f"brief {n}", "entry_state": "", "exit_state": f"exit {n}"}
                                for n in range(1, plan_scenes + 1)])
@@ -264,6 +291,64 @@ def test_steering_endpoints_roundtrip_and_commit(book):
     assert client.put(f"/books/{BOOK}/phase3/steering", json=body).json()["data"] == body
     assert client.get(f"/books/{BOOK}/phase3/steering").json()["data"] == body
     assert Repo(book).head.commit.message == "Update length target and standing notes"
+
+
+def test_rewrite_scene_caps_qa_prior_scenes(book, monkeypatch):
+    """rewrite_scene's QA prior-scenes text must be word-capped like _write_chapter_core's,
+    not every other scene in the chapter joined in full and uncapped."""
+    import db
+    import jobs as job_store
+    from routes import phase3
+
+    monkeypatch.setattr(db, "get_setting", lambda k: {
+        "agent_writer_agent_provider": "p", "agent_writer_agent_model": "m",
+        "agent_qa_agent_provider": "p", "agent_qa_agent_model": "m",
+    }.get(k))
+
+    # Three "other" scenes (1, 3, 4), each large enough that all three together
+    # exceed _truncate_prior_scenes' 4000-word cap; the middle scene (2) is being rewritten.
+    def scene_block(n, num, words=1800):
+        return f"## Scene {num}\n\nSCENE{num}_TOKEN " + "filler " * words
+
+    content = "# Chapter 1\n\n" + "\n\n---\n\n".join([
+        scene_block(1, 1), "## Scene 2\n\nShort scene two.", scene_block(3, 3), scene_block(4, 4),
+    ])
+    (book / "chapter_01.md").write_text(content)
+
+    captured = {}
+
+    async def fake_provider_tokens(provider, model, messages, system, user_id, json_mode=False, usage=None):
+        yield "Rewritten scene two."
+
+    async def fake_call(provider, model, messages, system, user_id="local", json_mode=False, **kwargs):
+        captured["qa_user"] = messages[0]["content"]
+        return json.dumps(QA_PASS)
+
+    monkeypatch.setattr(phase3.llm, "provider_tokens", fake_provider_tokens)
+    monkeypatch.setattr(phase3, "_call", fake_call)
+
+    async def run():
+        resp = await phase3.rewrite_scene(BOOK, 1, 2, phase3.RewriteBody(directive="Tighten it"), user="local")
+        job_id = resp["job_id"]
+        for _ in range(200):
+            job = job_store.get(job_id)
+            if job["status"] != "running":
+                break
+            await asyncio.sleep(0)
+        else:
+            pytest.fail("background rewrite never finished")
+        return job
+
+    job = asyncio.run(run())
+    assert job["status"] == "done"
+
+    qa_user = captured["qa_user"]
+    # The most recent scenes (3 and 4) fit under the cap and are kept in full;
+    # the oldest (1) is dropped and its omission is noted rather than silently sent in full.
+    assert "SCENE3_TOKEN" in qa_user
+    assert "SCENE4_TOKEN" in qa_user
+    assert "SCENE1_TOKEN" not in qa_user
+    assert "earlier scene(s) omitted for context length" in qa_user
 
 
 def test_scene_section_helpers():
