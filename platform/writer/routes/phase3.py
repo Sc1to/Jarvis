@@ -392,6 +392,9 @@ def _qa_user_message(writing_prefs: str, ledger_json: str, prior_text: str, exit
 def _manual_retry_enabled() -> bool:
     return db.get_setting("qa_retry_manual") == "true"
 
+def _stop_auto_write_on_unresolved_qa() -> bool:
+    return db.get_setting("qa_stop_auto_write_on_unresolved") == "true"
+
 def _style_check_cadence() -> int:
     """Check series style alignment every Nth scene rather than every scene."""
     raw = db.get_setting("qa_style_check_every_n_scenes")
@@ -424,8 +427,8 @@ def _qa_prompt_for_scene(scene_num: int, style_digest: str) -> tuple[str, bool]:
 
 async def _write_chapter_core(
     book_id: str, chapter: int, user: str, emit, log_line, *, auto: bool, pause_after_scene: bool = False,
-) -> bool:
-    """Write a chapter scene by scene. Returns True when finished, False when paused.
+) -> str:
+    """Write a chapter scene by scene. Returns "finished", "paused", or "qa_stopped".
 
     Auto mode (and manual mode with qa_retry_manual on) retries QA-failed scenes up
     to 3 times and trims over-length scenes automatically. Plain manual mode keeps the
@@ -434,6 +437,10 @@ async def _write_chapter_core(
     With pause_after_scene, the chapter is saved as 'in_progress' after each new scene;
     calling again resumes from the checkpoint, picking up any author edits or rewrites
     made to the saved scenes in the meantime.
+
+    In auto mode, when qa_stop_auto_write_on_unresolved is on, a scene that still fails
+    QA after exhausting its retries stops the chapter (saved as 'in_progress', resumable)
+    instead of writing on with an unresolved scene.
     """
     from routes.text_ops import tighten_prose
 
@@ -617,12 +624,20 @@ async def _write_chapter_core(
         _checkpoint_chapter_progress(book_id, chapter, scene_plan, scene_results, completed_scenes)
         log_line(f"Scene {scene_num} done ({len(scene_text.split())} words)")
 
+        qa_unresolved = bool(qa_result) and not qa_result.get("pass", True)
+        if auto and qa_unresolved and attempt >= max_attempts and _stop_auto_write_on_unresolved_qa():
+            _save_chapter(book_id, chapter, scene_plan, scene_results, completed_scenes, status="in_progress",
+                          commit_msg=f"Write Chapter {chapter} — stopped after Scene {scene_num} (QA unresolved)")
+            await emit({"type": "qa_stopped", "scene": scene_num, "notes": qa_result.get("notes", "")})
+            log_line(f"⏸ Stopped — Scene {scene_num} still fails QA after {attempt} attempts")
+            return "qa_stopped"
+
         remaining = len(scene_plan) - len(scene_results)
         if pause_after_scene and remaining > 0:
             _save_chapter(book_id, chapter, scene_plan, scene_results, completed_scenes, status="in_progress",
                           commit_msg=f"Write Chapter {chapter} — paused after Scene {scene_num}")
             await emit({"type": "paused", "scene": scene_num, "remaining": remaining})
-            return False
+            return "paused"
 
     _save_chapter(book_id, chapter, scene_plan, scene_results, completed_scenes, status="written",
                   commit_msg=f"Write Chapter {chapter} — {len(scene_plan)} scenes")
@@ -633,7 +648,7 @@ async def _write_chapter_core(
 
     log_line(f"Chapter {chapter} written — {len(scene_plan)} scenes, {sum(r['word_count'] for r in scene_results):,} words")
     await emit({"type": "chapter_done", "chapter": chapter, "scene_count": len(scene_plan)})
-    return True
+    return "finished"
 
 
 def _save_chapter(book_id: str, chapter: int, scene_plan: list, scene_results: list, completed_scenes: list,
@@ -791,14 +806,15 @@ def _launch_chapter_job(book_id: str, chapter: int, step: str, user: str, task_f
 # The SSE endpoints are unchanged — these exist solely so the loop can run
 # without holding an HTTP connection.
 
-async def _write_chapter_bg(book_id: str, chapter: int, user: str, log_cb) -> None:
-    """Auto-write — same pipeline as Write Chapter, with retries and trimming, logged to the job log."""
+async def _write_chapter_bg(book_id: str, chapter: int, user: str, log_cb) -> str:
+    """Auto-write — same pipeline as Write Chapter, with retries and trimming, logged to the job log.
+    Returns "finished", "paused", or "qa_stopped" (see _write_chapter_core)."""
     async def emit(ev: dict) -> None:
         line = _event_log_line(ev)
         if line:
             log_cb(line)
 
-    await _write_chapter_core(book_id, chapter, user, emit, log_cb, auto=True)
+    return await _write_chapter_core(book_id, chapter, user, emit, log_cb, auto=True)
 
 
 async def _approve_chapter_bg(book_id: str, chapter: int, user: str, log_cb) -> None:
@@ -912,8 +928,14 @@ async def _run_auto_write(book_id: str, job_id: str, user: str) -> None:
 
             if not unapproved or unapproved["status"] == "in_progress":
                 log(f"{'Continuing' if unapproved else 'Writing'} Chapter {chnum}…")
-                await _write_chapter_bg(book_id, chnum, user, log)
+                result = await _write_chapter_bg(book_id, chnum, user, log)
                 if is_cancelled():
+                    return
+                if result == "qa_stopped":
+                    msg = f"Stopped — Chapter {chnum} has a scene that still fails QA after 3 attempts. Review and resume from Writing Loop."
+                    log(msg)
+                    db.update_auto_write_job(job_id, status="needs_review", error=msg,
+                                              finished_at=datetime.now(timezone.utc).isoformat())
                     return
 
             log(f"Approving Chapter {chnum}…")

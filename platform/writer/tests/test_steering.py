@@ -85,7 +85,7 @@ def test_notes_for_combines_book_and_chapter(book):
 
 # ── Chapter writer ─────────────────────────────────────────────────────────────
 
-def _setup_writer(monkeypatch, *, qa=QA_PASS, retry=False, writer_words=100, plan_scenes=3):
+def _setup_writer(monkeypatch, *, qa=QA_PASS, retry=False, writer_words=100, plan_scenes=3, extra_settings=None):
     """Stub LLM calls. Returns a dict recording writer prompts and tighten calls."""
     import db
     from routes import phase3, text_ops
@@ -95,6 +95,7 @@ def _setup_writer(monkeypatch, *, qa=QA_PASS, retry=False, writer_words=100, pla
         "agent_qa_agent_provider": "p", "agent_qa_agent_model": "m",
         "agent_bible_agent_provider": "p", "agent_bible_agent_model": "m",
         "qa_retry_manual": "true" if retry else None,
+        **(extra_settings or {}),
     }
     monkeypatch.setattr(db, "get_setting", lambda k: settings.get(k))
     monkeypatch.setattr(db, "append_job_log", lambda *a: None)
@@ -160,6 +161,27 @@ def test_auto_mode_trims_over_length_scene(book, monkeypatch):
     assert all(s["qa_pass"] and s["word_count"] == 200 for s in scenes)
 
 
+def test_auto_write_stops_on_unresolved_qa(book, monkeypatch):
+    QA_FAIL = {"pass": False, "issues": [{"type": "content", "description": "stalls", "severity": "error"}], "notes": "stalls"}
+    rec = _setup_writer(monkeypatch, qa=QA_FAIL, plan_scenes=3,
+                         extra_settings={"qa_stop_auto_write_on_unresolved": "true"})
+    finished, events = _write(auto=True)
+    assert finished == "qa_stopped"
+    assert {"type": "qa_stopped", "scene": 1, "notes": "stalls"} in events
+    assert _meta(book)["status"] == "in_progress"
+    # Only Scene 1 was attempted — 3 retries, still failing — and it stopped there
+    assert len(rec["writer_prompts"]) == 3
+
+
+def test_auto_write_keeps_going_on_unresolved_qa_when_setting_off(book, monkeypatch):
+    QA_FAIL = {"pass": False, "issues": [], "notes": "stalls"}
+    _setup_writer(monkeypatch, qa=QA_FAIL, plan_scenes=2)  # setting left off by default
+    finished, _ = _write(auto=True)
+    assert finished == "finished"
+    scenes = _meta(book)["scenes"]
+    assert len(scenes) == 2 and all(not s["qa_pass"] for s in scenes)
+
+
 def test_writer_gets_notes_and_condensed_history(book, monkeypatch):
     import steering
     steering.write(BOOK, {"book_notes": "Do not restate the task."})
@@ -177,7 +199,7 @@ def test_pause_resume_keeps_author_edits(book, monkeypatch):
     rec = _setup_writer(monkeypatch, plan_scenes=2)
 
     finished, events = _write(pause=True)
-    assert not finished
+    assert finished == "paused"
     assert {"type": "paused", "scene": 1, "remaining": 1} in events
     assert _meta(book)["status"] == "in_progress"
     assert Repo(book).head.commit.message == "Write Chapter 1 — paused after Scene 1"

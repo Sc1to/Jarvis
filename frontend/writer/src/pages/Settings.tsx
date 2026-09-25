@@ -70,6 +70,7 @@ export default function SettingsPage() {
   const [ollamaHost, setOllamaHost]         = useState('http://localhost:11434')
   const [qaRetryManual, setQaRetryManual] = useState(false)
   const [qaStyleCheckEvery, setQaStyleCheckEvery] = useState('3')
+  const [qaStopAutoWriteOnUnresolved, setQaStopAutoWriteOnUnresolved] = useState(false)
   const [agents, setAgents] = useState<Record<string, AgentAssignment>>(() =>
     Object.fromEntries(AGENTS.map(a => [a.key, { provider: '' as Provider, model: '' }]))
   )
@@ -82,6 +83,7 @@ export default function SettingsPage() {
     if (saved.ollama_host)        setOllamaHost(saved.ollama_host)
     if (saved.qa_retry_manual)    setQaRetryManual(saved.qa_retry_manual === 'true')
     if (saved.qa_style_check_every_n_scenes) setQaStyleCheckEvery(saved.qa_style_check_every_n_scenes)
+    if (saved.qa_stop_auto_write_on_unresolved) setQaStopAutoWriteOnUnresolved(saved.qa_stop_auto_write_on_unresolved === 'true')
     // Restore agent assignments from saved settings
     setAgents(prev => {
       const next = { ...prev }
@@ -124,6 +126,7 @@ export default function SettingsPage() {
       ollama_host:         ollamaHost,
       qa_retry_manual:     String(qaRetryManual),
       qa_style_check_every_n_scenes: String(Math.max(1, parseInt(qaStyleCheckEvery, 10) || 3)),
+      qa_stop_auto_write_on_unresolved: String(qaStopAutoWriteOnUnresolved),
       ...agentSettings,
     })
   }
@@ -355,6 +358,20 @@ export default function SettingsPage() {
               </p>
             </div>
             <Switch checked={qaRetryManual} onCheckedChange={setQaRetryManual} />
+          </div>
+
+          <Separator />
+
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium">Stop auto-write on unresolved QA</p>
+              <p className="text-xs text-muted-foreground">
+                When on, <span className="font-medium">Auto-write all</span> stops the run if a scene still fails QA
+                after 3 attempts, instead of continuing past it. The chapter is saved in progress so you can
+                review the flagged scene and resume from the Writing Loop.
+              </p>
+            </div>
+            <Switch checked={qaStopAutoWriteOnUnresolved} onCheckedChange={setQaStopAutoWriteOnUnresolved} />
           </div>
 
           <Separator />
