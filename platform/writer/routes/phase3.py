@@ -74,7 +74,7 @@ QA_SYSTEM = """You are a novel quality assurance agent. Review the scene for con
 Check:
 1. Entity consistency — names, appearances, relationships match the ledger exactly
 2. Exit state contract — specified conditions are established by scene end
-3. Continuity — no contradictions with prior scenes in this chapter
+3. Continuity — no contradictions with prior scenes in this chapter, and no premature knowledge of what the ledger fixes for later (a character or the narration treating a future discovery, event, or identification as already true)
 4. Voice — dialogue and behaviour consistent with character coreFacts
 5. Redundancy — the scene restates goals, tasks, backstory or facts the reader already knows from prior scenes or the ledger (recaps, reminders, characters re-explaining what both know). Error when an established fact is restated rather than advanced; warning for minor echoes. Quote the offending sentence. A short, unadorned reference to an established fact that the current action requires is not redundant — only flag when the prose re-narrates how, when, or why something became true, or restates more than this moment needs.
 6. Author standing notes — if provided, any violation is an error
@@ -83,7 +83,13 @@ Check:
 Return ONLY valid JSON — no preamble, no fences:
 {"pass": true, "issues": [{"type": "entity|continuity|contract|voice|redundancy|notes|foreshadowing", "description": "...", "quote": "...", "fix": "...", "severity": "warning|error"}], "notes": "brief overall assessment"}
 
-For every issue: "quote" is the exact offending sentence or clause copied verbatim from the scene (empty string if the issue is an omission rather than a bad sentence — e.g. a missing exit-state condition). "fix" is the specific correction: the actual fact, detail or relationship from the ledger or prior scenes that the prose should reflect instead, stated concretely enough for the Writer to apply directly — not a restatement of what's wrong. For a redundancy issue, "fix" is not a corrected restatement — restating the same recap accurately is still a recap. Say what to cut, e.g. 'Cut "who had found it among the trunks the previous evening" — keep only: Clara collected her case from the porter.'
+For every issue: "quote" is the exact offending sentence or clause copied verbatim from the scene. Leave it empty only for a true omission — nothing on the page is wrong, but something required is simply missing (e.g. the exit state contract is never established anywhere in the scene). If a specific line causes the problem, quote it.
+
+"fix" must always tell the Writer what to write instead — never just restate what's wrong. Match the shape of the fix to the issue:
+- Wrong fact (entity/continuity/voice/contract error): give the correct fact, detail or relationship from the ledger or prior scenes, concretely enough to apply directly.
+- Redundant restatement (recap): say what to cut — restating the same recap accurately is still a recap. e.g. 'Cut "who had found it among the trunks the previous evening" — keep only: Clara collected her case from the porter.'
+- Premature knowledge (the scene treats a future ledger event as already true): say what the passage should convey instead, using only what the character could plausibly know or feel at this point (suspicion, hope, ordinary progress) — not a bare instruction to delete the beat. e.g. 'Arthur cannot say the party already has a tomb. Have him describe the dig as promising but inconclusive — signs worth pursuing, nothing identified yet.'
+- Omission (quote is empty): describe what needs to be shown, and where, to satisfy the missing requirement.
 
 pass = true when there are zero error-severity issues. Warnings alone do not fail."""
 
