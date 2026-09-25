@@ -80,7 +80,9 @@ Check:
 7. Foreshadowing — if this scene is assigned to plant or resolve a seed (given below), verify the prose actually does so. If this scene is not the assigned resolution scene for a seed, verify it doesn't prematurely reveal that seed's payoff.
 
 Return ONLY valid JSON — no preamble, no fences:
-{"pass": true, "issues": [{"type": "entity|continuity|contract|voice|redundancy|notes|foreshadowing", "description": "...", "severity": "warning|error"}], "notes": "brief overall assessment"}
+{"pass": true, "issues": [{"type": "entity|continuity|contract|voice|redundancy|notes|foreshadowing", "description": "...", "quote": "...", "fix": "...", "severity": "warning|error"}], "notes": "brief overall assessment"}
+
+For every issue: "quote" is the exact offending sentence or clause copied verbatim from the scene (empty string if the issue is an omission rather than a bad sentence — e.g. a missing exit-state condition). "fix" is the specific correction: the actual fact, detail or relationship from the ledger or prior scenes that the prose should reflect instead, stated concretely enough for the Writer to apply directly — not a restatement of what's wrong.
 
 pass = true when there are zero error-severity issues. Warnings alone do not fail."""
 
@@ -357,6 +359,16 @@ def _length_issue(text: str, target: int, severity: str) -> dict | None:
     return {"type": "length", "severity": severity,
             "description": f"Scene is {wc} words; target is about {target} (limit {limit})."}
 
+def _format_qa_issue(issue: dict) -> str:
+    """Render one QA issue as a self-contained instruction: what's wrong, the
+    exact text it's in, and the concrete correction — not just the diagnosis."""
+    lines = [f"- {issue.get('description', '')}"]
+    if issue.get("quote"):
+        lines.append(f'  Offending text: "{issue["quote"]}"')
+    if issue.get("fix"):
+        lines.append(f"  Correct it to: {issue['fix']}")
+    return "\n".join(lines)
+
 def _apply_length_check(qa_result: dict, text: str, target: int, severity: str) -> dict:
     issue = _length_issue(text, target, severity)
     if issue:
@@ -527,9 +539,11 @@ async def _write_chapter_core(
             })
 
             rewrite_note = ""
+            prior_draft = ""
             if attempt > 1 and qa_result:
-                errors = [i["description"] for i in qa_result.get("issues", []) if i.get("severity") == "error"]
-                rewrite_note = "\n\nPrevious attempt issues — address in rewrite:\n" + "\n".join(f"- {e}" for e in errors)
+                errors = [i for i in qa_result.get("issues", []) if i.get("severity") == "error"]
+                rewrite_note = "\n\nPrevious attempt issues — address in this revision:\n" + "\n".join(_format_qa_issue(e) for e in errors)
+                prior_draft = scene_text
 
             context_block = assemble_writer_context(
                 north_star=north_star,
@@ -548,6 +562,7 @@ async def _write_chapter_core(
                 word_limit=word_limit,
                 plant_seeds=_resolve_seeds(book_id, scene_def.get("plants", [])),
                 resolve_seeds=_resolve_seeds(book_id, scene_def.get("resolves", [])),
+                current_draft=prior_draft,
             )
 
             messages: list[dict] = [{"role": "user", "content": context_block}]
@@ -1198,7 +1213,8 @@ async def rewrite_scene(book_id: str, chapter: int, scene: int, body: RewriteBod
     author_notes = steering.notes_for(book_id, chapter)
     word_target = steering.scene_word_target(book_id, len(scene_plan) or steering.planned_scene_count(book_id, chapter))
 
-    rewrite_note = f"\n\n## Author directive\n\n{body.directive}\n\nRewrite this scene addressing the directive."
+    current_draft = sections.get(scene, "")
+    rewrite_note = f"\n\n## Author directive\n\n{body.directive}\n\nApply this as a targeted revision of the current draft above."
     context_block = assemble_writer_context(
         north_star=north_star,
         writing_prefs=writing_prefs,
@@ -1216,6 +1232,7 @@ async def rewrite_scene(book_id: str, chapter: int, scene: int, body: RewriteBod
         word_limit=steering.word_limit(word_target),
         plant_seeds=_resolve_seeds(book_id, scene_def.get("plants", [])),
         resolve_seeds=_resolve_seeds(book_id, scene_def.get("resolves", [])),
+        current_draft=current_draft,
     )
 
     job_id, job = job_store.create(meta={"events": [], "qa_result": None})

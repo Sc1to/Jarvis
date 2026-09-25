@@ -132,6 +132,22 @@ def condense_prior_scenes(
     return "\n\n".join(parts)
 
 
+def block_current_draft(current_draft: str) -> str:
+    """The flawed draft being revised, so the Writer edits from a known baseline
+    instead of blind-regenerating the scene from the brief alone (which risks
+    reintroducing a different version of the same contradiction)."""
+    if not current_draft.strip():
+        return ""
+    return (
+        "## Current draft (revise this)\n\n"
+        "This is the scene as it stands. Revise it to satisfy the directive below. "
+        "Make targeted, minimal changes — correct only what the directive requires and "
+        "keep everything else as close to this draft as possible. Do not restate or "
+        "rework material elsewhere in the scene that the directive doesn't flag.\n\n"
+        f"{current_draft.strip()}"
+    )
+
+
 def block_author_notes(notes: str) -> str:
     if not notes.strip():
         return ""
@@ -204,10 +220,11 @@ def assemble_writer_context(
     word_limit: int | None = None,
     plant_seeds: list[dict] | None = None,
     resolve_seeds: list[dict] | None = None,
+    current_draft: str = "",
 ) -> str:
     # Filter the ledger to only entities referenced in this scene's context,
     # and drop their event history (see strip_event_logs)
-    scene_context = f"{brief} {entry_state} {exit_state} {prior_text}"
+    scene_context = f"{brief} {entry_state} {exit_state} {prior_text} {current_draft}"
     filtered_ledger = strip_event_logs(filter_ledger_for_scene(ledger_json, scene_context))
 
     blocks = [
@@ -216,6 +233,7 @@ def assemble_writer_context(
         block_story_history(prior_text, prior_bridge),
         block_foreshadowing(plant_seeds or [], resolve_seeds or []),
         block_author_notes(author_notes),
+        block_current_draft(current_draft),
         block_scene_contract(chapter, scene_num, brief, entry_state, exit_state, rewrite_note,
                              word_target, word_limit),
     ]

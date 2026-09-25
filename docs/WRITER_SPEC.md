@@ -345,6 +345,8 @@ For a long novel, QA context will grow scene by scene and will hit model context
 | Attempt 3 | Always escalates to author, regardless of automatic mode setting |
 
 > **As implemented:** automatic QA retries (up to 3 attempts, with attempt-2+ issue injection) happen only in automatic mode (Auto-write all). In manual mode (Write Chapter) a scene that fails QA is kept after attempt 1 and held for author review — no automatic relaunch — unless `qa_retry_manual` is enabled in Settings. QA findings are stored per scene in `chapter_NN_meta.json` (`qa_pass`, `qa_notes`, `qa_issues`, `attempts`).
+>
+> **Issue schema:** each entry in `qa_issues` carries `type`, `description`, `severity`, and now also `quote` (the exact offending sentence/clause, verbatim from the scene — empty for an omission) and `fix` (the concrete correction, grounded in the ledger or prior scenes, stated so it can be applied directly). This was added because a bare `description` forced the Writer to re-derive both the exact passage at fault and the correct fact on every rewrite, which produced *new* contradictions on retry as often as it fixed the flagged one. Every rewrite path — attempt-2+ auto-retry and the manual "send findings to the Writer agent" directive — now also passes the scene's *current draft* into the Writer's context (`assemble_writer_context(current_draft=...)` → `## Current draft (revise this)`) with an instruction to make targeted, minimal edits rather than regenerating the scene blind from the brief.
 
 > The exit state is fixed — set in Phase 1, it is the destination the Writer must reach. QA does not renegotiate it; it verifies arrival.
 
