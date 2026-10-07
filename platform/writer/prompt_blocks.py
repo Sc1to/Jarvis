@@ -6,6 +6,13 @@ by assemble_writer_context before joining). This makes it trivial to add or
 remove a block from any agent's context without touching the assembly call.
 """
 import json
+import logging
+
+logger = logging.getLogger(__name__)
+
+# Upper bound on the entity ledger in the Writer prompt (~30k tokens). The ledger grows
+# with the book and the name filter falls back to the whole thing, so it needs a hard cap.
+MAX_LEDGER_CHARS = 120_000
 
 
 def block_writing_rules(north_star: str, writing_prefs: str) -> str:
@@ -45,6 +52,47 @@ def filter_ledger_for_scene(ledger_json: str, scene_context: str) -> str:
     if not filtered:
         return ledger_json  # nothing matched — send full ledger as safety net
     return json.dumps(filtered, indent=2)
+
+
+def fit_ledger(ledger_json: str, scene_context: str, max_chars: int = MAX_LEDGER_CHARS) -> str:
+    """Bound the ledger size. Entities mentioned most in the scene context keep their full
+    entry; once the budget is spent the rest shrink to name + book_facts, then name only."""
+    if not ledger_json or len(ledger_json) <= max_chars:
+        return ledger_json
+    try:
+        ledger = json.loads(ledger_json)
+    except Exception:
+        return ledger_json
+    if not isinstance(ledger, dict):
+        return ledger_json
+
+    ctx = scene_context.lower()
+
+    def relevance(item) -> int:
+        entity = item[1]
+        name = (entity.get("name") or "").lower() if isinstance(entity, dict) else ""
+        parts = [p for p in name.split() if len(p) >= 3]
+        return sum(ctx.count(p) for p in parts)
+
+    out: dict = {}
+    used = 0
+    for eid, entity in sorted(ledger.items(), key=relevance, reverse=True):
+        full = len(json.dumps(entity))
+        if used + full <= max_chars:
+            out[eid] = entity
+            used += full
+            continue
+        if isinstance(entity, dict):
+            slim = {"name": entity.get("name")}
+            if used < max_chars:
+                slim["book_facts"] = entity.get("book_facts", {})
+            if used + len(json.dumps(slim)) > max_chars:
+                slim = {"name": entity.get("name")}
+            entity = slim
+        out[eid] = entity
+        used += len(json.dumps(entity))
+    logger.warning("Ledger of %d chars exceeded %d; trimmed to %d", len(ledger_json), max_chars, used)
+    return json.dumps(out, indent=2)
 
 
 def strip_event_logs(ledger_json: str) -> str:
@@ -257,7 +305,9 @@ def assemble_writer_context(
     # Filter the ledger to only entities referenced in this scene's context,
     # and drop their event history (see strip_event_logs)
     scene_context = f"{brief} {entry_state} {exit_state} {prior_text} {current_draft}"
-    filtered_ledger = strip_event_logs(filter_ledger_for_scene(ledger_json, scene_context))
+    filtered_ledger = fit_ledger(
+        strip_event_logs(filter_ledger_for_scene(ledger_json, scene_context)), scene_context
+    )
 
     blocks = [
         block_writing_rules(north_star, writing_prefs),
@@ -269,4 +319,9 @@ def assemble_writer_context(
         block_scene_contract(chapter, scene_num, brief, entry_state, exit_state, rewrite_note,
                              word_target, word_limit),
     ]
-    return "\n\n".join(b for b in blocks if b)
+    context = "\n\n".join(b for b in blocks if b)
+    logger.info("Writer context sizes (chars): %s total=%d",
+                {n: len(b) for n, b in zip(
+                    ("rules", "ledger", "history", "seeds", "notes", "draft", "contract"), blocks)},
+                len(context))
+    return context
