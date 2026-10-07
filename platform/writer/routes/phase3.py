@@ -870,9 +870,13 @@ async def _approve_chapter_bg(book_id: str, chapter: int, user: str, log_cb) -> 
     bible = _read_bible(book_id)
     ledger_json = json.dumps(bible.get("ledger", {}))
 
+    # The updater only appends new events, so it needs current state plus recent history —
+    # not the full eventLog, which grows every chapter and eventually overflows the context window.
+    prompt_ledger_json = cap_event_logs(ledger_json, _qa_event_log_cap())
+
     log_cb("  Running Bible Updater…")
     bu_user = (
-        f"## Current Entity Ledger\n\n{ledger_json}\n\n"
+        f"## Current Entity Ledger\n\n{prompt_ledger_json}\n\n"
         f"## Chapter {chapter} prose\n\n{chapter_content}\n\n"
         "Update the ledger with facts from this chapter."
     )
