@@ -1276,14 +1276,14 @@ class ApproveChapterBody(BaseModel):
 
 @router.post("/books/{book_id}/phase1/tier4/approve-chapter")
 def approve_tier4_chapter(book_id: str, body: ApproveChapterBody):
+    from fastapi import HTTPException
+    scenes = _parse_tier4_scenes(body.content)
+    if not scenes:
+        raise HTTPException(422, "No scene headers found in plan — ensure the agent output uses '### Scene N — Title' format")
+
     os.makedirs(_tier4_dir(book_id), exist_ok=True)
     with open(_tier4_chapter_path(book_id, body.chapter), "w") as f:
         f.write(body.content)
-
-    scenes = _parse_tier4_scenes(body.content)
-    if not scenes:
-        from fastapi import HTTPException
-        raise HTTPException(422, "No scene headers found in plan — ensure the agent output uses '### Scene N — Title' format")
 
     status = _read_tier4_status(book_id)
     for ch in status.get("chapters", []):
@@ -1291,6 +1291,12 @@ def approve_tier4_chapter(book_id: str, body: ApproveChapterBody):
             ch["scenes"] = scenes
             # ch["approved"] stays False — set True when all scenes approved
             break
+    else:
+        # status.json predates this chapter — add it rather than silently dropping the scenes
+        status.setdefault("chapters", []).append(
+            {"number": body.chapter, "title": f"Chapter {body.chapter}", "approved": False, "scenes": scenes}
+        )
+        status["chapters"].sort(key=lambda c: c["number"])
 
     _save_tier4_status(book_id, status)
 
