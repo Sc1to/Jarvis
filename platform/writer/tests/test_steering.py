@@ -293,9 +293,9 @@ def test_steering_endpoints_roundtrip_and_commit(book):
     assert Repo(book).head.commit.message == "Update length target and standing notes"
 
 
-def test_rewrite_scene_caps_qa_prior_scenes(book, monkeypatch):
-    """rewrite_scene's QA prior-scenes text must be word-capped like _write_chapter_core's,
-    not every other scene in the chapter joined in full and uncapped."""
+def test_rewrite_scene_qa_gets_condensed_prior_scenes(book, monkeypatch):
+    """rewrite_scene's QA prior-scenes text is the condensed Writer view (previous scene tail only),
+    not every other scene in the chapter in full."""
     import db
     import jobs as job_store
     from routes import phase3
@@ -305,13 +305,11 @@ def test_rewrite_scene_caps_qa_prior_scenes(book, monkeypatch):
         "agent_qa_agent_provider": "p", "agent_qa_agent_model": "m",
     }.get(k))
 
-    # Three "other" scenes (1, 3, 4), each large enough that all three together
-    # exceed _truncate_prior_scenes' 4000-word cap; the middle scene (2) is being rewritten.
-    def scene_block(n, num, words=1800):
+    def scene_block(num, words=1800):
         return f"## Scene {num}\n\nSCENE{num}_TOKEN " + "filler " * words
 
     content = "# Chapter 1\n\n" + "\n\n---\n\n".join([
-        scene_block(1, 1), "## Scene 2\n\nShort scene two.", scene_block(3, 3), scene_block(4, 4),
+        scene_block(1), "## Scene 2\n\nShort scene two.", scene_block(3), scene_block(4),
     ])
     (book / "chapter_01.md").write_text(content)
 
@@ -343,12 +341,11 @@ def test_rewrite_scene_caps_qa_prior_scenes(book, monkeypatch):
     assert job["status"] == "done"
 
     qa_user = captured["qa_user"]
-    # The most recent scenes (3 and 4) fit under the cap and are kept in full;
-    # the oldest (1) is dropped and its omission is noted rather than silently sent in full.
-    assert "SCENE3_TOKEN" in qa_user
-    assert "SCENE4_TOKEN" in qa_user
+    # Only the previous scene (1) is included, as a 1200-word tail; its head and scenes 3-4 are not.
     assert "SCENE1_TOKEN" not in qa_user
-    assert "earlier scene(s) omitted for context length" in qa_user
+    assert "SCENE3_TOKEN" not in qa_user
+    assert "SCENE4_TOKEN" not in qa_user
+    assert len(qa_user.split()) < 1500
 
 
 def test_scene_section_helpers():

@@ -15,7 +15,7 @@ import jobs as job_store
 from deps import current_user
 import llm
 import prompt_store
-from prompt_blocks import assemble_writer_context, condense_prior_scenes, _truncate_prior_scenes, cap_event_logs
+from prompt_blocks import assemble_writer_context, condense_prior_scenes, qa_ledger_for_scene, cap_event_logs
 from routes.series import get_style_digest
 import steering
 
@@ -86,6 +86,12 @@ Return ONLY valid JSON — no preamble, no fences:
 For every issue: "quote" is the exact offending sentence or clause copied verbatim from the scene (empty string if the issue is an omission rather than a bad sentence — e.g. a missing exit-state condition). "fix" is the specific correction: the actual fact, detail or relationship from the ledger or prior scenes that the prose should reflect instead, stated concretely enough for the Writer to apply directly — not a restatement of what's wrong. For a redundancy issue, "fix" is not a corrected restatement — restating the same recap accurately is still a recap. Say what to cut, e.g. 'Cut "who had found it among the trunks the previous evening" — keep only: Clara collected her case from the porter.'
 
 pass = true when there are zero error-severity issues. Warnings alone do not fail."""
+
+FIX_SYSTEM = """You are a literary novelist making a targeted correction to a scene you already wrote.
+
+The user message gives the current draft and a list of problems a reviewer found, each with the offending text and the specific correction. Apply those corrections and nothing else: change only the sentences the problems point to (plus whatever is strictly needed for them to read smoothly), and keep every other word of the draft as it is. Do not add recaps, new events, or new facts. Keep the scene within the stated length, and honor the exit state and author notes if given.
+
+Return ONLY the complete corrected scene as prose. No commentary, no headers, no formatting markers."""
 
 # Appended to QA_SYSTEM only on scenes sampled for series style-alignment checking
 # (see _style_check_cadence) — keeps the always-on QA prompt from growing on every
@@ -379,6 +385,21 @@ def _format_qa_issue(issue: dict) -> str:
         lines.append(f"  Fix: {issue['fix']}")
     return "\n".join(lines)
 
+def _fix_user_message(draft: str, errors: list[dict], exit_state: str, author_notes: str,
+                      word_target: int | None, word_limit: int | None) -> str:
+    """Minimal context for a QA-driven retry: the draft and the concrete corrections.
+    The reviewer's `fix` fields already carry the ledger facts needed, so no ledger or history."""
+    parts = ["## Problems to fix\n\n" + "\n".join(_format_qa_issue(e) for e in errors)]
+    if exit_state:
+        parts.append(f"## Exit state (must still hold)\n\n{exit_state}")
+    if author_notes.strip():
+        parts.append(f"## Author standing notes\n\n{author_notes.strip()}")
+    if word_target:
+        limit = f", hard limit {word_limit}" if word_limit else ""
+        parts.append(f"## Length\n\nAbout {word_target} words{limit}.")
+    parts.append(f"## Current draft\n\n{draft.strip()}")
+    return "\n\n".join(parts)
+
 def _apply_length_check(qa_result: dict, text: str, target: int, severity: str) -> dict:
     issue = _length_issue(text, target, severity)
     if issue:
@@ -455,6 +476,44 @@ def _qa_prompt_for_scene(scene_num: int, style_digest: str) -> tuple[str, bool]:
     return system, include_style
 
 
+async def _write_scene_draft(
+    provider: str, model: str, user: str, book_id: str, chapter: int, scene_idx: int, scene_def: dict,
+    scene_plan: list, completed_scenes: list[str], attempt: int, north_star: str, writing_prefs: str,
+    ledger_json: str, writer_prior: str, prior_bridge: str, author_notes: str,
+    word_target: int, word_limit: int,
+) -> str:
+    """Fresh full-context Writer draft of one scene (QA-driven retries use _fix_user_message instead)."""
+    scene_num = scene_def.get("scene", scene_idx + 1)
+    brief = scene_def.get("brief", "")
+    context_block = assemble_writer_context(
+        north_star=north_star,
+        writing_prefs=writing_prefs,
+        ledger_json=ledger_json,
+        prior_text=writer_prior,
+        chapter=chapter,
+        scene_num=scene_num,
+        brief=brief,
+        entry_state=scene_def.get("entry_state", ""),
+        exit_state=scene_def.get("exit_state", ""),
+        prior_bridge=prior_bridge,
+        author_notes=author_notes,
+        word_target=word_target,
+        word_limit=word_limit,
+        plant_seeds=_resolve_seeds(book_id, scene_def.get("plants", [])),
+        resolve_seeds=_resolve_seeds(book_id, scene_def.get("resolves", [])),
+    )
+    messages: list[dict] = [{"role": "user", "content": context_block}]
+    if completed_scenes and attempt == 1:
+        prev_pov = scene_plan[scene_idx - 1].get("pov_character") if scene_idx > 0 else None
+        curr_pov = scene_def.get("pov_character")
+        if prev_pov and curr_pov and prev_pov == curr_pov:
+            messages.append({"role": "assistant", "content": _last_words(completed_scenes[-1], 500)})
+            messages.append({"role": "user", "content": f"Continue the scene.\n\nScene brief:\n\n{brief}"})
+    # Collect prose without streaming tokens — avoids queue bloat for long runs
+    return await _call(provider, model, messages, prompt_store.get("writer", WRITER_SYSTEM), user,
+                       agent_key="writer_agent", book_id=book_id, chapter=chapter, scene=scene_num)
+
+
 # ── Chapter writer (shared by manual Write Chapter and Auto-write all) ────────
 
 async def _write_chapter_core(
@@ -497,7 +556,6 @@ async def _write_chapter_core(
     tier4_content = open(tier4_path).read()
     bible = _read_bible(book_id)
     ledger_json = json.dumps(bible.get("ledger", {}))
-    qa_ledger_json = cap_event_logs(ledger_json, _qa_event_log_cap())
     author_notes = steering.notes_for(book_id, chapter)
     style_digest = await _load_style_digest(book_id, qa_provider, qa_model, user)
 
@@ -552,9 +610,9 @@ async def _write_chapter_core(
         exit_state = scene_def.get("exit_state", "")
         curr_pov = scene_def.get("pov_character")
 
-        # The Writer gets a condensed history (see condense_prior_scenes); QA gets full prose
+        # Writer and QA both get the condensed history (see condense_prior_scenes)
         writer_prior = condense_prior_scenes([(r["scene"], t) for r, t in zip(scene_results, completed_scenes)], summaries)
-        qa_prior = _truncate_prior_scenes(completed_scenes)
+        qa_prior = writer_prior
 
         scene_text = ""
         qa_result: dict | None = None
@@ -567,45 +625,24 @@ async def _write_chapter_core(
                 "scene": scene_num, "total": len(scene_plan), "attempt": attempt, "brief": brief,
             })
 
-            rewrite_note = ""
-            prior_draft = ""
+            fix_errors: list[dict] = []
             if attempt > 1 and qa_result:
-                errors = [i for i in qa_result.get("issues", []) if i.get("severity") == "error"]
-                rewrite_note = "\n\nPrevious attempt issues — address in this revision:\n" + "\n".join(_format_qa_issue(e) for e in errors)
-                prior_draft = scene_text
-
-            context_block = assemble_writer_context(
-                north_star=north_star,
-                writing_prefs=writing_prefs,
-                ledger_json=ledger_json,
-                prior_text=writer_prior,
-                chapter=chapter,
-                scene_num=scene_num,
-                brief=brief,
-                entry_state=entry_state,
-                exit_state=exit_state,
-                prior_bridge=prior_bridge,
-                rewrite_note=rewrite_note,
-                author_notes=author_notes,
-                word_target=word_target,
-                word_limit=word_limit,
-                plant_seeds=_resolve_seeds(book_id, scene_def.get("plants", [])),
-                resolve_seeds=_resolve_seeds(book_id, scene_def.get("resolves", [])),
-                current_draft=prior_draft,
-            )
-
-            messages: list[dict] = [{"role": "user", "content": context_block}]
-            if completed_scenes and attempt == 1:
-                prev_pov = scene_plan[scene_idx - 1].get("pov_character") if scene_idx > 0 else None
-                if prev_pov and curr_pov and prev_pov == curr_pov:
-                    prose_tail = _last_words(completed_scenes[-1], 500)
-                    messages.append({"role": "assistant", "content": prose_tail})
-                    messages.append({"role": "user", "content": f"Continue the scene.\n\nScene brief:\n\n{brief}"})
+                fix_errors = [i for i in qa_result.get("issues", []) if i.get("severity") == "error"]
 
             try:
-                # Collect prose without streaming tokens — avoids queue bloat for long runs
-                scene_text = await _call(writer_provider, writer_model, messages, prompt_store.get("writer", WRITER_SYSTEM), user,
-                                          agent_key="writer_agent", book_id=book_id, chapter=chapter, scene=scene_num)
+                if fix_errors:
+                    # Targeted fix: just the draft and the reviewer's corrections, not the whole context again
+                    scene_text = await _call(
+                        writer_provider, writer_model,
+                        [{"role": "user", "content": _fix_user_message(scene_text, fix_errors, exit_state, author_notes,
+                                                                       word_target, word_limit)}],
+                        prompt_store.get("scene_fix", FIX_SYSTEM), user,
+                        agent_key="writer_agent", book_id=book_id, chapter=chapter, scene=scene_num)
+                else:
+                    scene_text = await _write_scene_draft(
+                        writer_provider, writer_model, user, book_id, chapter, scene_idx, scene_def, scene_plan,
+                        completed_scenes, attempt, north_star, writing_prefs, ledger_json, writer_prior, prior_bridge,
+                        author_notes, word_target, word_limit)
             except Exception as e:
                 await emit({"type": "error", "message": f"Writer error on scene {scene_num}: {e}"})
                 raise
@@ -622,6 +659,7 @@ async def _write_chapter_core(
 
             await emit({"type": "qa_start", "scene": scene_num, "attempt": attempt})
             qa_system, include_style = _qa_prompt_for_scene(scene_num, style_digest)
+            qa_ledger_json = qa_ledger_for_scene(ledger_json, f"{brief} {exit_state} {scene_text}", _qa_event_log_cap())
             qa_user = _qa_user_message(writing_prefs, qa_ledger_json, qa_prior, exit_state, scene_text, author_notes,
                                         style_digest if include_style else "",
                                         plant_seeds=_resolve_seeds(book_id, scene_def.get("plants", [])),
@@ -1244,7 +1282,6 @@ async def rewrite_scene(book_id: str, chapter: int, scene: int, body: RewriteBod
     north_star = _read_north_star(book_id)
     writing_prefs = _read_writing_prefs(book_id)
     ledger_json = json.dumps(_read_bible(book_id).get("ledger", {}))
-    qa_ledger_json = cap_event_logs(ledger_json, _qa_event_log_cap())
 
     plan_path = _chapter_plan_path(book_id, chapter)
     scene_plan = json.load(open(plan_path)) if os.path.exists(plan_path) else []
@@ -1252,14 +1289,13 @@ async def rewrite_scene(book_id: str, chapter: int, scene: int, body: RewriteBod
     style_digest = await _load_style_digest(book_id, qa_provider, qa_model, user)
 
     sections = _scene_sections(open(chapter_path).read())
-    # QA checks against every other scene; the Writer gets a condensed view of the scenes before this one
-    other_scenes = [text for n, text in sorted(sections.items()) if n != scene]
-    qa_prior = _truncate_prior_scenes(other_scenes)
+    # Writer and QA both get a condensed view of the scenes before this one
     writer_prior = condense_prior_scenes(
         [(n, text) for n, text in sections.items() if n < scene],
         _plan_summaries(scene_plan) if scene_plan else _chapter_summaries(book_id, chapter),
     )
 
+    qa_prior = writer_prior
     exit_state = scene_def.get("exit_state", "")
     brief = scene_def.get("brief", "")
     author_notes = steering.notes_for(book_id, chapter)
@@ -1312,6 +1348,7 @@ async def rewrite_scene(book_id: str, chapter: int, scene: int, body: RewriteBod
             events.append({"type": "scene_written", "scene": scene, "word_count": len(scene_text.split()), "word_target": word_target})
 
             qa_system, include_style = _qa_prompt_for_scene(scene, style_digest)
+            qa_ledger_json = qa_ledger_for_scene(ledger_json, f"{brief} {exit_state} {scene_text}", _qa_event_log_cap())
             qa_user = _qa_user_message(writing_prefs, qa_ledger_json, qa_prior, exit_state, scene_text, author_notes,
                                         style_digest if include_style else "",
                                         plant_seeds=_resolve_seeds(book_id, scene_def.get("plants", [])),
