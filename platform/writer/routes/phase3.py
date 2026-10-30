@@ -81,6 +81,8 @@ Check:
 6. Author standing notes — if provided, any violation is an error
 7. Foreshadowing — if this scene is assigned to plant or resolve a seed (given below), verify the prose actually does so. If this scene is not the assigned resolution scene for a seed, verify it doesn't prematurely reveal that seed's payoff.
 
+Report EVERY error-severity issue you find in this single pass — do not stop after the first few, and do not hold any back for a later review. If a "Findings from the previous attempt" section is given, first verify each one is now resolved (report any that is not, as an error), then review the whole scene again for everything else.
+
 Return ONLY valid JSON — no preamble, no fences:
 {"pass": true, "issues": [{"type": "entity|continuity|contract|voice|redundancy|notes|foreshadowing", "description": "...", "quote": "...", "fix": "...", "severity": "warning|error"}], "notes": "brief overall assessment"}
 
@@ -374,23 +376,29 @@ def _length_issue(text: str, target: int, severity: str) -> dict | None:
     if wc <= limit:
         return None
     return {"type": "length", "severity": severity,
-            "description": f"Scene is {wc} words; target is about {target} (limit {limit})."}
+            "description": f"Scene is {wc} words; target is about {target} (limit {limit}).",
+            "fix": f"Cut about {wc - target} words to reach about {target}. Remove the least essential description, "
+                   "repetition and restated backstory; keep every beat the brief and exit state require."}
 
 def _format_qa_issue(issue: dict) -> str:
-    """Render one QA issue as a self-contained instruction: what's wrong, the
-    exact text it's in, and the concrete correction — not just the diagnosis."""
-    lines = [f"- {issue.get('description', '')}"]
-    if issue.get("quote"):
-        lines.append(f'  Offending text: "{issue["quote"]}"')
-    if issue.get("fix"):
-        lines.append(f"  Fix: {issue['fix']}")
+    """Render one QA issue as an instruction, not a diagnosis: the exact text to rewrite (when there
+    is one), the change to make, and the reason. Mirrored by QaFindings in WritingLoop.tsx."""
+    desc, quote, fix = issue.get("description", ""), issue.get("quote"), issue.get("fix")
+    lines = []
+    if quote:
+        lines.append(f'- Rewrite: "{quote}"')
+        lines.append(f"  Required change: {fix or desc}")
+    else:
+        lines.append(f"- Required change: {fix or desc}")
+    if fix and desc:
+        lines.append(f"  Why: {desc}")
     return "\n".join(lines)
 
 def qa_directive(issues: list[dict]) -> str:
     """The "send findings back" directive. Same wording as QaFindings in WritingLoop.tsx, so the
     automatic retry and the author's manual rewrite give the Writer identical instructions."""
     return "\n".join([
-        "Revise this scene to address the QA findings below. Make targeted, minimal changes — correct only what each finding flags and leave the rest of the prose as it is.",
+        "Revise this scene to address the QA findings below. Make targeted, minimal changes — correct only what each finding flags and leave the rest of the prose as it is. After each change, check the corrected passage against the exit state and the established facts so it does not introduce a new contradiction.",
         "",
         *(_format_qa_issue(i) for i in issues),
     ])
@@ -429,14 +437,27 @@ def _qa_foreshadowing_section(plant_seeds: list[dict], resolve_seeds: list[dict]
         lines.append(f"- Should resolve (this is the payoff scene): {s['description']}")
     return "\n".join(lines) + "\n\n"
 
+def _qa_prior_findings_section(findings: list[dict]) -> str:
+    """On a retry, the errors the scene was just revised to fix, so QA confirms them before reviewing afresh."""
+    if not findings:
+        return ""
+    return (
+        "## Findings from the previous attempt\n\n"
+        "The scene was revised to fix these. Confirm each is resolved (report any that is not as an error), "
+        "then review the whole scene again and report every other problem too.\n\n"
+        + "\n".join(_format_qa_issue(i) for i in findings) + "\n\n"
+    )
+
 def _qa_user_message(writing_prefs: str, ledger_json: str, prior_text: str, exit_state: str,
                      scene_text: str, author_notes: str = "", style_digest: str = "",
-                     plant_seeds: list[dict] | None = None, resolve_seeds: list[dict] | None = None) -> str:
+                     plant_seeds: list[dict] | None = None, resolve_seeds: list[dict] | None = None,
+                     prior_findings: list[dict] | None = None) -> str:
     return (
         (f"## Writing Preferences\n\n{writing_prefs}\n\n" if writing_prefs else "")
         + (f"## Author standing notes\n\n{author_notes}\n\n" if author_notes else "")
         + (f"## Series Style Digest\n\n{style_digest}\n\n" if style_digest else "")
         + _qa_foreshadowing_section(plant_seeds or [], resolve_seeds or [])
+        + _qa_prior_findings_section(prior_findings or [])
         + f"## Entity Ledger\n\n{ledger_json}\n\n"
         f"## Prior scenes in this chapter\n\n{prior_text}\n\n"
         f"## Exit state contract\n\n{exit_state}\n\n"
@@ -674,7 +695,8 @@ async def _write_chapter_core(
             qa_user = _qa_user_message(writing_prefs, qa_ledger_json, qa_prior, exit_state, scene_text, author_notes,
                                         style_digest if include_style else "",
                                         plant_seeds=_resolve_seeds(book_id, scene_def.get("plants", [])),
-                                        resolve_seeds=_resolve_seeds(book_id, scene_def.get("resolves", [])))
+                                        resolve_seeds=_resolve_seeds(book_id, scene_def.get("resolves", [])),
+                                        prior_findings=fix_errors)
             try:
                 qa_text = await _call(qa_provider, qa_model, [{"role": "user", "content": qa_user}], qa_system, user, json_mode=True,
                                        agent_key="qa_agent", book_id=book_id, chapter=chapter, scene=scene_num)

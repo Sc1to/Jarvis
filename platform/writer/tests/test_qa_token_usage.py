@@ -59,11 +59,13 @@ def test_retry_is_targeted_fix_without_ledger(tmp_path, monkeypatch):
         {"type": "entity", "description": "Wrong eyes", "quote": "grey eyes", "fix": "Eyes are brown", "severity": "error"}]}
     qa_results = [fail, {"pass": True, "issues": [], "notes": ""}]
     writer_msgs = []
+    qa_msgs = []
 
     async def fake_call(provider, model, messages, system, user_id="local", json_mode=False, **kw):
         if system == phase3.SCENE_PLANNER_SYSTEM:
             return json.dumps([{"scene": 1, "brief": "Zebulon arrives", "entry_state": "", "exit_state": "locked"}])
         if system == phase3.QA_SYSTEM:
+            qa_msgs.append(messages[0]["content"])
             return json.dumps(qa_results.pop(0))
         writer_msgs.append((system, messages[-1]["content"]))
         return "Zebulon had grey eyes." if len(writer_msgs) == 1 else "Zebulon had brown eyes."
@@ -85,6 +87,10 @@ def test_retry_is_targeted_fix_without_ledger(tmp_path, monkeypatch):
     assert phase3.qa_directive(fail["issues"]) in fix_msg
     assert fix_msg.endswith("Apply this as a targeted revision of the current draft above.")
     assert "Zebulon had brown eyes." in (book / "chapter_01.md").read_text()
+    # QA is told what the retry was meant to fix, but only on the retry
+    assert "Findings from the previous attempt" not in qa_msgs[0]
+    assert "Findings from the previous attempt" in qa_msgs[1]
+    assert "Eyes are brown" in qa_msgs[1]
 
 
 def test_chapter_usage_sums_per_scene_and_agent(tmp_path, monkeypatch):
@@ -125,3 +131,25 @@ def test_logged_tokens_records_usage(tmp_path, monkeypatch):
     assert asyncio.run(run()) == "ab"
     u = db.get_chapter_usage("b", 3)
     assert u["scenes"][2]["by_agent"]["bible_agent"] == {"input": 42, "output": 7, "calls": 1}
+
+
+def test_qa_issue_is_phrased_as_an_instruction():
+    from routes.phase3 import _format_qa_issue
+    full = _format_qa_issue({"description": "Door is open", "quote": "pushed the open door", "fix": "Make the door locked"})
+    assert full == '- Rewrite: "pushed the open door"\n  Required change: Make the door locked\n  Why: Door is open'
+    assert _format_qa_issue({"description": "Missing exit", "fix": "Show her locking up"}) == \
+        "- Required change: Show her locking up\n  Why: Missing exit"
+    # no fix: the description stands in as the change, and isn't repeated as a reason
+    assert _format_qa_issue({"description": "Fix the tense", "quote": "she walk"}) == \
+        '- Rewrite: "she walk"\n  Required change: Fix the tense'
+
+
+def test_length_issue_carries_a_concrete_cut():
+    from routes.phase3 import _length_issue
+    issue = _length_issue("word " * 1400, 900, "error")
+    assert "Cut about 500 words" in issue["fix"]
+
+
+def test_qa_prompt_asks_for_every_error():
+    from routes.phase3 import QA_SYSTEM
+    assert "EVERY error-severity issue" in QA_SYSTEM
