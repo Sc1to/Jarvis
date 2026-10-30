@@ -80,6 +80,10 @@ def test_retry_is_targeted_fix_without_ledger(tmp_path, monkeypatch):
     assert "LEDGERMARK" not in fix_msg
     assert "Eyes are brown" in fix_msg and "Zebulon had grey eyes." in fix_msg
     assert "locked" in fix_msg
+    # Same wording as the manual "send findings back" directive
+    assert "## Current draft (revise this)" in fix_msg
+    assert phase3.qa_directive(fail["issues"]) in fix_msg
+    assert fix_msg.endswith("Apply this as a targeted revision of the current draft above.")
     assert "Zebulon had brown eyes." in (book / "chapter_01.md").read_text()
 
 

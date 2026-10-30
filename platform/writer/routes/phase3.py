@@ -15,7 +15,8 @@ import jobs as job_store
 from deps import current_user
 import llm
 import prompt_store
-from prompt_blocks import assemble_writer_context, condense_prior_scenes, qa_ledger_for_scene, cap_event_logs
+from prompt_blocks import (assemble_writer_context, block_author_notes, block_current_draft, block_scene_contract,
+                           condense_prior_scenes, qa_ledger_for_scene, cap_event_logs)
 from routes.series import get_style_digest
 import steering
 
@@ -385,20 +386,30 @@ def _format_qa_issue(issue: dict) -> str:
         lines.append(f"  Fix: {issue['fix']}")
     return "\n".join(lines)
 
-def _fix_user_message(draft: str, errors: list[dict], exit_state: str, author_notes: str,
-                      word_target: int | None, word_limit: int | None) -> str:
-    """Minimal context for a QA-driven retry: the draft and the concrete corrections.
-    The reviewer's `fix` fields already carry the ledger facts needed, so no ledger or history."""
-    parts = ["## Problems to fix\n\n" + "\n".join(_format_qa_issue(e) for e in errors)]
-    if exit_state:
-        parts.append(f"## Exit state (must still hold)\n\n{exit_state}")
-    if author_notes.strip():
-        parts.append(f"## Author standing notes\n\n{author_notes.strip()}")
-    if word_target:
-        limit = f", hard limit {word_limit}" if word_limit else ""
-        parts.append(f"## Length\n\nAbout {word_target} words{limit}.")
-    parts.append(f"## Current draft\n\n{draft.strip()}")
-    return "\n\n".join(parts)
+def qa_directive(issues: list[dict]) -> str:
+    """The "send findings back" directive. Same wording as QaFindings in WritingLoop.tsx, so the
+    automatic retry and the author's manual rewrite give the Writer identical instructions."""
+    return "\n".join([
+        "Revise this scene to address the QA findings below. Make targeted, minimal changes — correct only what each finding flags and leave the rest of the prose as it is.",
+        "",
+        *(_format_qa_issue(i) for i in issues),
+    ])
+
+def _fix_user_message(draft: str, errors: list[dict], chapter: int, scene_num: int, brief: str, exit_state: str,
+                      author_notes: str, word_target: int | None, word_limit: int | None) -> str:
+    """Minimal-context message for a QA-driven retry: the same blocks the manual rewrite ends with
+    (notes, current draft, scene contract, author directive) but without the ledger, history or rules.
+    The reviewer's `fix` fields already carry the facts needed."""
+    blocks = [
+        block_author_notes(author_notes),
+        block_current_draft(draft),
+        block_scene_contract(chapter, scene_num, brief, "", exit_state, "", word_target, word_limit),
+    ]
+    directive = (
+        f"\n\n## Author directive\n\n{qa_directive(errors)}\n\n"
+        "Apply this as a targeted revision of the current draft above."
+    )
+    return "\n\n".join(b for b in blocks if b) + directive
 
 def _apply_length_check(qa_result: dict, text: str, target: int, severity: str) -> dict:
     issue = _length_issue(text, target, severity)
@@ -634,8 +645,8 @@ async def _write_chapter_core(
                     # Targeted fix: just the draft and the reviewer's corrections, not the whole context again
                     scene_text = await _call(
                         writer_provider, writer_model,
-                        [{"role": "user", "content": _fix_user_message(scene_text, fix_errors, exit_state, author_notes,
-                                                                       word_target, word_limit)}],
+                        [{"role": "user", "content": _fix_user_message(scene_text, fix_errors, chapter, scene_num, brief, exit_state,
+                                                                       author_notes, word_target, word_limit)}],
                         prompt_store.get("scene_fix", FIX_SYSTEM), user,
                         agent_key="writer_agent", book_id=book_id, chapter=chapter, scene=scene_num)
                 else:
