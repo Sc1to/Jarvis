@@ -652,7 +652,7 @@ async def _write_chapter_core(
             if retry and len(scene_text.split()) > word_limit:
                 await emit({"type": "status", "message": f"Scene {scene_num} is {len(scene_text.split())} words (target {word_target}) — tightening…"})
                 try:
-                    scene_text = await tighten_prose(scene_text, word_target, user, book_id=book_id)
+                    scene_text = await tighten_prose(scene_text, word_target, user, book_id=book_id, chapter=chapter, scene=scene_num)
                     await emit({"type": "scene_written", "scene": scene_num, "word_count": len(scene_text.split()), "word_target": word_target})
                 except Exception as e:
                     await emit({"type": "status", "message": f"Tighten failed, keeping the long draft: {e}"})
@@ -1186,6 +1186,7 @@ def get_chapter(book_id: str, chapter: int):
         "content": open(content_path).read(),
         "meta": meta,
         "scene_word_target": steering.scene_word_target(book_id, scene_count),
+        "usage": db.get_chapter_usage(book_id, chapter),
     }
 
 

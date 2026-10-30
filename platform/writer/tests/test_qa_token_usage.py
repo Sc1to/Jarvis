@@ -81,3 +81,20 @@ def test_retry_is_targeted_fix_without_ledger(tmp_path, monkeypatch):
     assert "Eyes are brown" in fix_msg and "Zebulon had grey eyes." in fix_msg
     assert "locked" in fix_msg
     assert "Zebulon had brown eyes." in (book / "chapter_01.md").read_text()
+
+
+def test_chapter_usage_sums_per_scene_and_agent(tmp_path, monkeypatch):
+    import db
+    monkeypatch.setattr(db, "DATA_ROOT", str(tmp_path))
+    monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "t.db"))
+    monkeypatch.setattr(db, "_local", type("L", (), {})())
+    db.log_llm_usage("writer_agent", input_tokens=100, output_tokens=10, book_id="b", chapter=1, scene=1)
+    db.log_llm_usage("writer_agent", input_tokens=30, output_tokens=5, book_id="b", chapter=1, scene=1)
+    db.log_llm_usage("qa_agent", input_tokens=50, output_tokens=2, book_id="b", chapter=1, scene=1)
+    db.log_llm_usage("bible_agent", input_tokens=7, output_tokens=1, book_id="b", chapter=1)
+    db.log_llm_usage("writer_agent", input_tokens=999, output_tokens=9, book_id="b", chapter=2, scene=1)
+    u = db.get_chapter_usage("b", 1)
+    s1 = u["scenes"][1]
+    assert (s1["input"], s1["output"], s1["calls"]) == (180, 17, 3)
+    assert s1["by_agent"]["writer_agent"] == {"input": 130, "output": 15, "calls": 2}
+    assert u["chapter"]["input"] == 7 and list(u["scenes"]) == [1]

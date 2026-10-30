@@ -114,19 +114,25 @@ def _tighten_message(prose: str, target_words: int) -> str:
     )
 
 
-async def tighten_prose(prose: str, target_words: int, user: str, book_id: str | None = None) -> str:
+async def tighten_prose(prose: str, target_words: int, user: str, book_id: str | None = None,
+                        chapter: int | None = None, scene: int | None = None) -> str:
     """Cut prose to roughly target_words. Returns the original text if no model is configured."""
     provider, model = _tighten_model(book_id)
     if not provider or not model:
         return prose
     result = ""
+    usage: dict = {}
     async for token in llm.provider_tokens(
         provider, model,
         [{"role": "user", "content": _tighten_message(prose, target_words)}],
         prompt_store.get("text_op_tighten", TEXT_OP_TIGHTEN_SYSTEM),
         user,
+        usage=usage,
     ):
         result += token
+    db.log_llm_usage("text_op_tighten", provider=provider, model=model,
+                     input_tokens=usage.get("input_tokens"), output_tokens=usage.get("output_tokens"),
+                     book_id=book_id, chapter=chapter, scene=scene)
     return result.strip() or prose
 
 

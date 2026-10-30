@@ -138,7 +138,7 @@ def _setup_writer(monkeypatch, *, qa=QA_PASS, retry=False, writer_words=100, pla
         n = len(rec["writer_prompts"])
         return " ".join([f"draft{n}"] * writer_words)
 
-    async def fake_tighten(prose, target, user, book_id=None):
+    async def fake_tighten(prose, target, user, book_id=None, **kwargs):
         rec["tighten"].append(target)
         return " ".join(["tight"] * target)
 
