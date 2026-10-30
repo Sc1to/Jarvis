@@ -239,3 +239,20 @@ async def call_llm(agent_key: str, messages: list[dict], system: str | None = No
         book_id=book_id,
     )
     return result
+
+
+async def logged_tokens(agent_key: str, book_id: str | None, provider: str, model: str, messages: list[dict],
+                        system: str | None = None, user_id: str = "local", json_mode: bool = False,
+                        chapter: int | None = None, scene: int | None = None) -> AsyncGenerator[str, None]:
+    """provider_tokens that also records the call's token usage in llm_usage_log (even if the
+    consumer stops early). Use for every LLM call so per-book/chapter/scene usage stays complete."""
+    usage: dict = {}
+    try:
+        async for token in provider_tokens(provider, model, messages, system, user_id, json_mode=json_mode, usage=usage):
+            yield token
+    finally:
+        db.log_llm_usage(
+            agent_key, provider=provider, model=model,
+            input_tokens=usage.get("input_tokens"), output_tokens=usage.get("output_tokens"),
+            book_id=book_id, chapter=chapter, scene=scene,
+        )

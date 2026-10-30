@@ -32,7 +32,7 @@ def test_run_brief_qa_parses_agent_response(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DATA_ROOT", str(tmp_path))
     _configure_settings(monkeypatch, db)
 
-    async def fake_bg_call(provider, model, messages, system, user, json_mode=False):
+    async def fake_bg_call(provider, model, messages, system, user, json_mode=False, **kwargs):
         assert system == phase1.BRIEF_QA_SYSTEM
         assert json_mode is True
         return json.dumps({"pass": False, "issues": [QA_ISSUE], "notes": "Trim the beats."})
@@ -97,7 +97,7 @@ def test_run_scene_writes_brief_and_qa_sidecar(tmp_path, monkeypatch):
     book_dir = tmp_path / BOOK
     book_dir.mkdir()
 
-    async def fake_provider_tokens(provider, model, messages, system, user_id, json_mode=False):
+    async def fake_provider_tokens(provider, model, messages, system, user_id, json_mode=False, usage=None):
         if system == phase1.SCENE_WRITER_SYSTEM:
             for chunk in [BRIEF_TEXT[:10], BRIEF_TEXT[10:]]:
                 yield chunk

@@ -352,7 +352,7 @@ async def north_star_reply(book_id: str, body: ReplyBody, user: str = Depends(cu
     async def _bg():
         full_text = ""
         try:
-            async for token in llm.provider_tokens(provider, model, body.messages, system, user):
+            async for token in llm.logged_tokens("story_architect", book_id, provider, model, body.messages, system, user):
                 full_text += token
                 job["tokens"] += token
             job["status"] = "done"
@@ -449,7 +449,7 @@ async def run_tier(book_id: str, body: RunTierBody, user: str = Depends(current_
     async def _bg():
         full_text = ""
         try:
-            async for token in llm.provider_tokens(provider, model, messages, system, user):
+            async for token in llm.logged_tokens("bible_agent", book_id, provider, model, messages, system, user):
                 full_text += token
                 job["tokens"] += token
             with open(_draft_path(book_id, body.tier), "w") as f:
@@ -519,7 +519,7 @@ async def edit_tier(book_id: str, body: EditTierBody, user: str = Depends(curren
     async def _bg():
         full_text = ""
         try:
-            async for token in llm.provider_tokens(provider, model, messages, system, user):
+            async for token in llm.logged_tokens("bible_agent", book_id, provider, model, messages, system, user):
                 full_text += token
                 job["tokens"] += token
             with open(_draft_path(book_id, body.tier), "w") as f:
@@ -638,7 +638,7 @@ async def mini_consolidate(book_id: str, user: str = Depends(current_user)):
     async def _bg():
         full_text = ""
         try:
-            async for token in llm.provider_tokens(provider, model, messages, system, user):
+            async for token in llm.logged_tokens("bible_agent", book_id, provider, model, messages, system, user):
                 full_text += token
                 job["tokens"] += token
             skeleton = _extract_json_skeleton(full_text)
@@ -781,7 +781,7 @@ async def generate_foreshadowing(book_id: str, user: str = Depends(current_user)
     async def _bg():
         full_text = ""
         try:
-            async for token in llm.provider_tokens(provider, model, messages, system, user):
+            async for token in llm.logged_tokens("bible_agent", book_id, provider, model, messages, system, user):
                 full_text += token
                 job["tokens"] += token
             new_seeds = _extract_json_list(full_text)
@@ -939,7 +939,7 @@ async def run_tier3_act(book_id: str, body: RunActBody, user: str = Depends(curr
     async def _bg():
         full_text = ""
         try:
-            async for token in llm.provider_tokens(provider, model, messages, system, user):
+            async for token in llm.logged_tokens("bible_agent", book_id, provider, model, messages, system, user):
                 full_text += token
                 job["tokens"] += token
             os.makedirs(_tier3_dir(book_id), exist_ok=True)
@@ -1015,7 +1015,7 @@ async def edit_tier3_act(book_id: str, body: EditActBody, user: str = Depends(cu
     async def _bg():
         full_text = ""
         try:
-            async for token in llm.provider_tokens(provider, model, messages, system, user):
+            async for token in llm.logged_tokens("bible_agent", book_id, provider, model, messages, system, user):
                 full_text += token
                 job["tokens"] += token
             with open(act_path, "w") as f:
@@ -1197,7 +1197,7 @@ async def run_tier4_chapter(book_id: str, body: RunChapterBody, user: str = Depe
     async def _bg() -> None:
         full_text = ""
         try:
-            async for token in llm.provider_tokens(provider, model, messages, system, user):
+            async for token in llm.logged_tokens("bible_agent", book_id, provider, model, messages, system, user, chapter=body.chapter):
                 full_text += token
                 job["tokens"] += token
             os.makedirs(_tier4_dir(book_id), exist_ok=True)
@@ -1338,7 +1338,7 @@ async def edit_tier4_chapter(book_id: str, body: EditChapterBody, user: str = De
     async def _bg():
         full_text = ""
         try:
-            async for token in llm.provider_tokens(provider, model, messages, system, user):
+            async for token in llm.logged_tokens("bible_agent", book_id, provider, model, messages, system, user, chapter=body.chapter):
                 full_text += token
                 job["tokens"] += token
             with open(chapter_path, "w") as f:
@@ -1367,6 +1367,7 @@ async def _run_brief_qa(brief_text: str, user: str, book_id: str | None = None) 
             qa_provider, qa_model,
             [{"role": "user", "content": f"## Brief\n\n{brief_text}"}],
             prompt_store.get("brief_qa", BRIEF_QA_SYSTEM), user, json_mode=True,
+            agent_key="qa_agent", book_id=book_id,
         )
         return _extract_json_skeleton(qa_text)
     except Exception as e:
@@ -1428,7 +1429,7 @@ async def run_scene(book_id: str, chapter_num: int, body: RunSceneBody, user: st
     async def _bg():
         full_text = ""
         try:
-            async for token in llm.provider_tokens(provider, model, messages, SCENE_WRITER_SYSTEM, user):
+            async for token in llm.logged_tokens("bible_agent", book_id, provider, model, messages, SCENE_WRITER_SYSTEM, user, chapter=chapter_num, scene=body.scene):
                 full_text += token
                 job["tokens"] += token
             os.makedirs(_tier4_dir(book_id), exist_ok=True)
@@ -1514,7 +1515,7 @@ async def approve_scene(book_id: str, chapter_num: int, scene_num: int, body: Ap
             for _attempt in range(2):
                 full_sync = ""
                 try:
-                    async for token in llm.provider_tokens(provider, model, sync_messages, SCENE_BIBLE_SYNC_SYSTEM, user):
+                    async for token in llm.logged_tokens("bible_agent", book_id, provider, model, sync_messages, SCENE_BIBLE_SYNC_SYSTEM, user, chapter=chapter_num, scene=scene_num):
                         full_sync += token
                 except Exception as e:
                     job["status"] = "error"
@@ -1580,7 +1581,7 @@ async def edit_scene(book_id: str, chapter_num: int, scene_num: int, body: EditS
     async def _bg():
         full_text = ""
         try:
-            async for token in llm.provider_tokens(provider, model, messages, TIER_EDITOR_SYSTEM, user):
+            async for token in llm.logged_tokens("bible_agent", book_id, provider, model, messages, TIER_EDITOR_SYSTEM, user):
                 full_text += token
                 job["tokens"] += token
             with open(scene_path, "w") as f:
@@ -1597,9 +1598,12 @@ async def edit_scene(book_id: str, chapter_num: int, scene_num: int, body: EditS
 
 # ── Auto-Bible background implementation ──────────────────────────────────────
 
-async def _bg_call(provider: str, model: str, messages: list, system: str, user: str, json_mode: bool = False) -> str:
+async def _bg_call(provider: str, model: str, messages: list, system: str, user: str, json_mode: bool = False,
+                   *, agent_key: str = "bible_agent", book_id: str | None = None,
+                   chapter: int | None = None, scene: int | None = None) -> str:
     result = ""
-    async for token in llm.provider_tokens(provider, model, messages, system, user, json_mode=json_mode):
+    async for token in llm.logged_tokens(agent_key, book_id, provider, model, messages, system, user, json_mode=json_mode,
+                                         chapter=chapter, scene=scene):
         result += token
     return result
 
@@ -1625,7 +1629,7 @@ async def _bg_run_tier12(book_id: str, tier: int, user: str, log_cb) -> str:
     system = prompt_store.get("bible_agent", BIBLE_AGENT_SYSTEM)
 
     log_cb(f"Running Tier {tier} ({TIER_LABELS[idx]})...")
-    return await _bg_call(provider, model, messages, system, user)
+    return await _bg_call(provider, model, messages, system, user, book_id=book_id)
 
 
 def _bg_approve_tier12(book_id: str, tier: int, content: str) -> None:
@@ -1674,7 +1678,7 @@ async def _bg_mini_consolidate(book_id: str, user: str, log_cb) -> None:
     system = prompt_store.get("mini_consolidator", MINI_CONSOLIDATOR_SYSTEM)
 
     log_cb("Running mini-consolidate (entity skeleton)...")
-    full_text = await _bg_call(provider, model, messages, system, user)
+    full_text = await _bg_call(provider, model, messages, system, user, book_id=book_id)
 
     try:
         skeleton = _extract_json_skeleton(full_text)
@@ -1734,7 +1738,7 @@ async def _bg_run_tier3_act(book_id: str, act: int, user: str, log_cb) -> str:
     system = prompt_store.get("bible_agent", BIBLE_AGENT_SYSTEM)
 
     log_cb(f"Running Tier 3 Act {act} (chapter summaries)...")
-    return await _bg_call(provider, model, messages, system, user)
+    return await _bg_call(provider, model, messages, system, user, book_id=book_id)
 
 
 def _bg_approve_tier3_act(book_id: str, act: int, content: str) -> list:
@@ -1810,7 +1814,7 @@ async def _bg_run_tier4_chapter(book_id: str, chapter: int, user: str, log_cb) -
     system = prompt_store.get("bible_agent", BIBLE_AGENT_SYSTEM)
 
     log_cb(f"Running Tier 4 Chapter {chapter} (scene list)...")
-    return await _bg_call(provider, model, messages, system, user)
+    return await _bg_call(provider, model, messages, system, user, book_id=book_id, chapter=chapter)
 
 
 def _bg_approve_tier4_chapter(book_id: str, chapter: int, content: str) -> list:
@@ -1884,7 +1888,7 @@ async def _bg_run_scene_brief(book_id: str, chapter_num: int, scene_num: int, us
     messages = [{"role": "user", "content": context + "\n\nWrite the scene brief now. Use ONLY the 8 section headers from the instructions. Do NOT write prose sentences or paragraphs. Bullets and short phrases only."}]
 
     log_cb(f"Running scene brief Ch{chapter_num} Sc{scene_num}...")
-    return await _bg_call(provider, model, messages, SCENE_WRITER_SYSTEM, user)
+    return await _bg_call(provider, model, messages, SCENE_WRITER_SYSTEM, user, book_id=book_id, chapter=chapter_num, scene=scene_num)
 
 
 async def _bg_approve_scene_brief(book_id: str, chapter_num: int, scene_num: int, content: str, user: str, log_cb) -> None:
@@ -1931,7 +1935,7 @@ async def _bg_approve_scene_brief(book_id: str, chapter_num: int, scene_num: int
         log_cb(f"Bible sync Ch{chapter_num} Sc{scene_num} attempt {attempt + 1}...")
         full_sync = ""
         try:
-            async for token in llm.provider_tokens(provider, model, sync_messages, SCENE_BIBLE_SYNC_SYSTEM, user):
+            async for token in llm.logged_tokens("bible_agent", book_id, provider, model, sync_messages, SCENE_BIBLE_SYNC_SYSTEM, user, chapter=chapter_num, scene=scene_num):
                 full_sync += token
             result = _extract_json_skeleton(full_sync)
             new_entities = result.get("new_entities", [])

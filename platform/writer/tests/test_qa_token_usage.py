@@ -102,3 +102,26 @@ def test_chapter_usage_sums_per_scene_and_agent(tmp_path, monkeypatch):
     assert (s1["input"], s1["output"], s1["calls"]) == (180, 17, 3)
     assert s1["by_agent"]["writer_agent"] == {"input": 130, "output": 15, "calls": 2}
     assert u["chapter"]["input"] == 7 and list(u["scenes"]) == [1]
+
+
+def test_logged_tokens_records_usage(tmp_path, monkeypatch):
+    import asyncio
+    import db
+    import llm
+    monkeypatch.setattr(db, "DATA_ROOT", str(tmp_path))
+    monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "t.db"))
+    monkeypatch.setattr(db, "_local", type("L", (), {})())
+
+    async def fake_tokens(provider, model, messages, system, user_id, json_mode=False, usage=None):
+        yield "a"
+        yield "b"
+        usage["input_tokens"], usage["output_tokens"] = 42, 7
+
+    monkeypatch.setattr(llm, "provider_tokens", fake_tokens)
+
+    async def run():
+        return "".join([t async for t in llm.logged_tokens("bible_agent", "b", "p", "m", [], "sys", chapter=3, scene=2)])
+
+    assert asyncio.run(run()) == "ab"
+    u = db.get_chapter_usage("b", 3)
+    assert u["scenes"][2]["by_agent"]["bible_agent"] == {"input": 42, "output": 7, "calls": 1}
