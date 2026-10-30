@@ -36,6 +36,17 @@ interface SceneResult {
   word_count: number
 }
 
+interface AgentUsage { input: number; output: number; calls: number }
+interface Usage { input: number; output: number; calls: number; by_agent: Record<string, AgentUsage> }
+interface ChapterUsage { scenes: Record<string, Usage>; chapter: Usage }
+
+const fmtTokens = (n: number) => n >= 10_000 ? `${(n / 1000).toFixed(0)}k` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
+
+const usageTitle = (u: Usage) =>
+  Object.entries(u.by_agent)
+    .map(([agent, a]) => `${agent}: ${a.input.toLocaleString()} in / ${a.output.toLocaleString()} out (${a.calls} call${a.calls === 1 ? '' : 's'})`)
+    .join('\n')
+
 interface ChapterMeta {
   chapter: number
   scene_count: number
@@ -211,7 +222,7 @@ export default function WritingLoopPage() {
   const [jobLog, setJobLog] = useState<string[]>([])
   const [jobError, setJobError] = useState<string | null>(null)
 
-  const { data: chapterData, refetch: refetchChapter } = useQuery<{ chapter: number; content: string; meta: ChapterMeta; scene_word_target?: number } | null>({
+  const { data: chapterData, refetch: refetchChapter } = useQuery<{ chapter: number; content: string; meta: ChapterMeta; scene_word_target?: number; usage?: ChapterUsage } | null>({
     queryKey: ['chapter', bookId, activeChapter],
     queryFn: () => activeChapter
       ? fetch(`${API}/books/${bookId}/phase3/chapter/${activeChapter}`).then(r => r.json())
@@ -543,6 +554,8 @@ export default function WritingLoopPage() {
   const isApproved = meta?.status === 'approved'
   const isInProgress = meta?.status === 'in_progress'
   const sceneWordTarget = chapterData?.scene_word_target
+  const usage = chapterData?.usage
+  const chapterTotal = usage ? [usage.chapter, ...Object.values(usage.scenes)].reduce((a, u) => a + u.input + u.output, 0) : 0
   const flaggedScenes = scenes.filter(s => !s.qa_pass)
   const editingSceneMeta = rewriteScene !== null ? scenes.find(s => s.scene === rewriteScene) : undefined
   const autoWriting = jobStatus === 'running'
@@ -928,6 +941,11 @@ export default function WritingLoopPage() {
                 <p className="text-xs text-muted-foreground">
                   {scenes.length > 0 ? `${scenes.length} scenes · ${scenes.reduce((a, s) => a + s.word_count, 0).toLocaleString()} words` : 'No scenes yet'}
                 </p>
+                {chapterTotal > 0 && usage && (
+                  <p className="text-[10px] text-muted-foreground/70" title={usageTitle(usage.chapter)}>
+                    {fmtTokens(chapterTotal)} tokens this chapter
+                  </p>
+                )}
               </div>
               <button
                 onClick={() => setRightCollapsed(true)}
@@ -962,6 +980,11 @@ export default function WritingLoopPage() {
                     <p className="text-[11px] text-muted-foreground leading-snug line-clamp-2">{s.brief}</p>
                     {s.qa_notes && (
                       <p className="text-[10px] text-muted-foreground/70 italic line-clamp-2">{s.qa_notes}</p>
+                    )}
+                    {usage?.scenes[String(s.scene)] && (
+                      <p className="text-[10px] text-muted-foreground/70" title={usageTitle(usage.scenes[String(s.scene)])}>
+                        {fmtTokens(usage.scenes[String(s.scene)].input)} in · {fmtTokens(usage.scenes[String(s.scene)].output)} out tokens
+                      </p>
                     )}
                     <div className="flex items-center justify-between pt-0.5">
                       <span className={cn(

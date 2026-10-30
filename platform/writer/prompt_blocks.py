@@ -145,6 +145,34 @@ def cap_event_logs(ledger_json: str, max_events: int = 20) -> str:
     return json.dumps(capped, indent=2)
 
 
+# Upper bound on the entity ledger in the QA prompt (~15k tokens). Tighter than the Writer's
+# because QA only needs the entities the scene touches, plus a roster of the rest.
+MAX_QA_LEDGER_CHARS = 60_000
+
+
+def qa_ledger_for_scene(ledger_json: str, scene_context: str, max_events: int = 20,
+                        max_chars: int = MAX_QA_LEDGER_CHARS) -> str:
+    """Ledger view for QA: full entries for entities the scene mentions (event history capped),
+    then a names-only roster of the rest so QA can still recognise a known entity by name."""
+    if not ledger_json or ledger_json in ("{}", "null", ""):
+        return ledger_json
+    scoped = filter_ledger_for_scene(ledger_json, scene_context)
+    body = fit_ledger(cap_event_logs(scoped, max_events), scene_context, max_chars)
+    try:
+        everyone, included = json.loads(ledger_json), json.loads(scoped)
+    except Exception:
+        return body
+    if not isinstance(everyone, dict) or not isinstance(included, dict):
+        return body
+    others = sorted(
+        e.get("name") for eid, e in everyone.items()
+        if eid not in included and isinstance(e, dict) and e.get("name")
+    )
+    if not others:
+        return body
+    return f"{body}\n\nOther known entities, not in this scene (names only): {', '.join(others)}"
+
+
 def block_active_entities(ledger_json: str) -> str:
     if not ledger_json or ledger_json in ("{}", "null", ""):
         return ""

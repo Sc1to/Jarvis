@@ -392,3 +392,29 @@ def log_llm_usage(
         ),
     )
     conn.commit()
+
+
+def get_chapter_usage(book_id: str, chapter: int) -> dict:
+    """Token usage for one chapter from llm_usage_log, summed across every attempt and rewrite.
+    Returns {"scenes": {scene_num: usage}, "chapter": usage}; `chapter` covers calls not tied to
+    a scene (scene planning, Bible Updater). usage = {input, output, calls, by_agent: {agent: {input, output, calls}}}."""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT scene, agent_key, COUNT(*) AS calls, COALESCE(SUM(input_tokens), 0) AS inp, "
+        "COALESCE(SUM(output_tokens), 0) AS out FROM llm_usage_log "
+        "WHERE book_id = ? AND chapter = ? GROUP BY scene, agent_key",
+        (book_id, chapter),
+    ).fetchall()
+
+    def blank() -> dict:
+        return {"input": 0, "output": 0, "calls": 0, "by_agent": {}}
+
+    scenes: dict[int, dict] = {}
+    chapter_level = blank()
+    for r in rows:
+        u = chapter_level if r["scene"] is None else scenes.setdefault(r["scene"], blank())
+        u["input"] += r["inp"]
+        u["output"] += r["out"]
+        u["calls"] += r["calls"]
+        u["by_agent"][r["agent_key"]] = {"input": r["inp"], "output": r["out"], "calls": r["calls"]}
+    return {"scenes": scenes, "chapter": chapter_level}

@@ -16,7 +16,7 @@ from routes.phase1 import (STORY_ARCHITECT_SYSTEM, SYNTHESIS_PROMPT, WRITING_PRE
                              MINI_CONSOLIDATOR_SYSTEM, SCENE_WRITER_SYSTEM, BRIEF_QA_SYSTEM, SCENE_BIBLE_SYNC_SYSTEM,
                              FORESHADOWING_SEEDS_SYSTEM)
 from routes.phase2 import CONSOLIDATOR_SYSTEM, RESEARCH_SYSTEM
-from routes.phase3 import (SCENE_PLANNER_SYSTEM, WRITER_SYSTEM, QA_SYSTEM, BIBLE_UPDATER_SYSTEM,
+from routes.phase3 import (SCENE_PLANNER_SYSTEM, WRITER_SYSTEM, QA_SYSTEM, FIX_SYSTEM, BIBLE_UPDATER_SYSTEM,
                             BEAT_GENERATOR_SYSTEM, BEAT_EXPANDER_SYSTEM)
 from routes.settings import router as settings_router
 from routes.books import router as books_router
@@ -72,6 +72,7 @@ _WRITER_DEFAULTS = {
     "scene_planner": SCENE_PLANNER_SYSTEM,
     "writer": WRITER_SYSTEM,
     "qa": QA_SYSTEM,
+    "scene_fix": FIX_SYSTEM,
     "bible_updater": BIBLE_UPDATER_SYSTEM,
     "beat_generator": BEAT_GENERATOR_SYSTEM,
     "beat_expander": BEAT_EXPANDER_SYSTEM,
