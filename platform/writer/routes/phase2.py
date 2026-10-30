@@ -149,7 +149,8 @@ def _looks_like_json(text: str) -> bool:
 
 
 async def _llm_call_with_json_fallback(
-    provider: str, model: str, messages: list, system: str, user: str
+    provider: str, model: str, messages: list, system: str, user: str,
+    agent_key: str = "bible_agent", book_id: str | None = None,
 ) -> tuple[str, bool]:
     """Call the LLM with json_mode=True, falling back to plain mode when needed.
 
@@ -160,7 +161,7 @@ async def _llm_call_with_json_fallback(
     Returns (full_text, used_json_mode).
     """
     full_text = ""
-    async for token in llm.provider_tokens(provider, model, messages, system, user, json_mode=True):
+    async for token in llm.logged_tokens(agent_key, book_id, provider, model, messages, system, user, json_mode=True):
         full_text += token
 
     if full_text.strip() and _looks_like_json(full_text):
@@ -168,7 +169,7 @@ async def _llm_call_with_json_fallback(
 
     # Empty response OR short/non-JSON refusal — retry without json_mode
     full_text = ""
-    async for token in llm.provider_tokens(provider, model, messages, system, user, json_mode=False):
+    async for token in llm.logged_tokens(agent_key, book_id, provider, model, messages, system, user, json_mode=False):
         full_text += token
     return full_text, False
 
@@ -389,7 +390,8 @@ async def _consolidate_task(book_id: str, user: str, job_id: str, queue: asyncio
         full_text = ""
         try:
             full_text, _ = await _llm_call_with_json_fallback(
-                provider, model, [{"role": "user", "content": user_msg}], entity_system, user
+                provider, model, [{"role": "user", "content": user_msg}], entity_system, user,
+                "bible_agent", book_id,
             )
         except Exception as e:
             warn = f"⚠ {eid}: LLM call failed ({e}) — keeping skeleton"
@@ -435,8 +437,8 @@ async def _consolidate_task(book_id: str, user: str, job_id: str, queue: asyncio
     )
     try:
         full_text = ""
-        async for token in llm.provider_tokens(
-            provider, model, [{"role": "user", "content": discovery_msg}], discovery_system, user, json_mode=True
+        async for token in llm.logged_tokens(
+            "bible_agent", book_id, provider, model, [{"role": "user", "content": discovery_msg}], discovery_system, user, json_mode=True
         ):
             full_text += token
         if full_text.strip():
@@ -534,7 +536,8 @@ async def _research_task(book_id: str, user: str, job_id: str, queue: asyncio.Qu
         full_text = ""
         try:
             full_text, _ = await _llm_call_with_json_fallback(
-                provider, model, messages, system_prompt, user
+                provider, model, messages, system_prompt, user,
+                "research_agent", book_id,
             )
         except Exception as e:
             warn = f"⚠ {eid}: LLM call failed ({e}) — keeping original"
