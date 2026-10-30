@@ -142,12 +142,13 @@ function EventFeed({ events }: { events: ProgressEvent[] }) {
 function QaFindings({ scene, onUseAsDirective }: { scene: SceneResult; onUseAsDirective: (text: string) => void }) {
   const issues = scene.qa_issues ?? []
   const directive = [
-    'Revise this scene to address the QA findings below. Make targeted, minimal changes — correct only what each finding flags and leave the rest of the prose as it is.',
+    'Revise this scene to address the QA findings below. Make targeted, minimal changes — correct only what each finding flags and leave the rest of the prose as it is. After each change, check the corrected passage against the exit state and the established facts so it does not introduce a new contradiction.',
     '',
     ...issues.map(i => {
-      const lines = [`- ${i.description}`]
-      if (i.quote) lines.push(`  Offending text: "${i.quote}"`)
-      if (i.fix) lines.push(`  Fix: ${i.fix}`)
+      const lines = i.quote
+        ? [`- Rewrite: "${i.quote}"`, `  Required change: ${i.fix || i.description}`]
+        : [`- Required change: ${i.fix || i.description}`]
+      if (i.fix && i.description) lines.push(`  Why: ${i.description}`)
       return lines.join('\n')
     }),
     ...(issues.length === 0 && scene.qa_notes ? [`- ${scene.qa_notes}`] : []),
