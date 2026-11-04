@@ -423,7 +423,7 @@ The application is a web app served locally, accessible from any browser on the 
 |---|---|
 | Settings | Model provider configuration, API keys, agent assignment, manual-mode QA retry toggle, optional Tailscale setup |
 | North Star | Phase 1A — conversation interface to create and lock the North Star document |
-| Bible Workshop | Phase 1B — tiered bible loop; shows completed tier output for author review, author injection panel, entity ledger sidebar, diff from previous pass |
+| Bible Workshop | Phase 1B — tiered bible loop; shows completed tier output for author review, author injection panel, entity ledger sidebar, diff from previous pass; manual text editing of unapproved Book/Acts/chapter-plan/scene-brief output — Check & save does a dry-run showing detected acts/chapters/scenes (+ errors/warnings) and only writes after the author confirms (`routes/bible_edit.py`) |
 | Bible Viewer | Read-only view of current `bible.json` with search, filter, and ledger entity lookup including alias list |
 | Writing Loop | Active scene display with entry/exit state, QA status and flagged-scene findings, Auto-write all (automatic mode) control, inline editor for direct author edits, approval controls |
 | History | Git log visualiser — browse all scenes and bible states by commit |

@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils'
 import { API } from '@/lib/api'
 import { runJob, sleep } from '@/lib/jobs'
 import CopyButton from '@/components/CopyButton'
+import EditableDoc from '@/components/EditableDoc'
 import { ChevronRight, Play, CheckCircle, Lock, Loader2, BookOpen, MapPin, Users, Plus, ListOrdered, Layers } from 'lucide-react'
 
 type Stage = 'book' | 'acts' | 'consolidate' | 'foreshadowing' | 'chapters' | 'scenes'
@@ -112,6 +113,9 @@ export default function BibleWorkshopPage() {
   const [statuses, setStatuses] = useState<TierStatus[]>(['active', 'locked'])
   const [streaming, setStreaming] = useState(false)
   const [directive, setDirective] = useState('')
+
+  // Which document is currently open in manual edit mode (holds approve/re-run for that doc)
+  const [editingDoc, setEditingDoc] = useState<string | null>(null)
 
   // ── Stage state ──────────────────────────────────────────────────────────────
   const [activeStage, setActiveStage] = useState<Stage>('book')
@@ -923,8 +927,8 @@ export default function BibleWorkshopPage() {
                   )}
                   {statuses[tierIdx] === 'review' && (
                     <>
-                      <Button size="sm" variant="outline" onClick={() => runTier(tierIdx)} disabled={streaming}>Re-run</Button>
-                      <Button size="sm" onClick={() => approveTier(tierIdx)} className="gap-2" disabled={streaming}>
+                      <Button size="sm" variant="outline" onClick={() => runTier(tierIdx)} disabled={streaming || editingDoc === `tier:${tierIdx}`}>Re-run</Button>
+                      <Button size="sm" onClick={() => approveTier(tierIdx)} className="gap-2" disabled={streaming || editingDoc === `tier:${tierIdx}`}>
                         <Lock size={13} />Approve tier
                       </Button>
                     </>
@@ -933,6 +937,16 @@ export default function BibleWorkshopPage() {
                 </div>
               </div>
 
+              {statuses[tierIdx] === 'review' && contents[tierIdx] ? (
+                <EditableDoc
+                  bookId={bookId!}
+                  target={{ kind: 'tier', tier: tierIdx + 1 }}
+                  value={contents[tierIdx] ?? ''}
+                  onSaved={t => setContents(prev => { const n = [...prev]; n[tierIdx] = t; return n })}
+                  onEditingChange={e => setEditingDoc(e ? `tier:${tierIdx}` : null)}
+                  running={streaming}
+                />
+              ) : (
               <Card className="min-h-[300px]">
                 <CardContent className="p-5">
                   {statuses[tierIdx] === 'locked' && (
@@ -949,6 +963,7 @@ export default function BibleWorkshopPage() {
                   )}
                 </CardContent>
               </Card>
+              )}
 
               {statuses[tierIdx] === 'review' && (
                 <div className="space-y-2">
@@ -965,10 +980,10 @@ export default function BibleWorkshopPage() {
                       disabled={streaming}
                       className="flex-1 resize-none rounded-md border border-input bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                     />
-                    <Button variant="outline" size="sm" onClick={() => editTier(tierIdx)} disabled={!directive.trim() || streaming}>
+                    <Button variant="outline" size="sm" onClick={() => editTier(tierIdx)} disabled={!directive.trim() || streaming || editingDoc === `tier:${tierIdx}`}>
                       Edit current
                     </Button>
-                    <Button variant="outline" size="sm" onClick={() => injectAndRerun(tierIdx)} disabled={!directive.trim() || streaming}>
+                    <Button variant="outline" size="sm" onClick={() => injectAndRerun(tierIdx)} disabled={!directive.trim() || streaming || editingDoc === `tier:${tierIdx}`}>
                       Inject &amp; re-run
                     </Button>
                   </div>
@@ -1205,7 +1220,16 @@ export default function BibleWorkshopPage() {
                       {/* Act header — click to expand */}
                       <button
                         className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/30 transition-colors text-left"
-                        onClick={() => setActiveActNum(isExpanded ? null : actInfo.act)}
+                        onClick={() => {
+                          setActiveActNum(isExpanded ? null : actInfo.act)
+                          // Load previously generated (unapproved) act text from disk so it can be reviewed/edited
+                          if (!isExpanded && !actInfo.approved && actInfo.has_content && content === undefined) {
+                            fetch(`${API}/books/${bookId}/phase1/tier3/act/${actInfo.act}`)
+                              .then(r => r.ok ? r.json() : null)
+                              .then(d => { if (d?.content) setActContents(prev => prev[actInfo.act] === undefined ? { ...prev, [actInfo.act]: d.content } : prev) })
+                              .catch(() => {})
+                          }
+                        }}
                       >
                         <div className="flex items-center gap-2.5">
                           {actInfo.approved
@@ -1249,17 +1273,26 @@ export default function BibleWorkshopPage() {
                                     <Loader2 size={12} className="animate-spin" />Agent running…
                                   </Badge>
                                 ) : (
-                                  <Button size="sm" onClick={() => runAct(actInfo.act)} className="gap-2">
+                                  <Button size="sm" onClick={() => runAct(actInfo.act)} disabled={editingDoc === `act:${actInfo.act}`} className="gap-2">
                                     <Play size={13} />{actInfo.has_content || hasLocalContent ? 'Re-run' : 'Run act'}
                                   </Button>
                                 )}
                                 {hasLocalContent && !isRunning && (
-                                  <Button size="sm" onClick={() => approveAct(actInfo.act)} className="gap-2">
+                                  <Button size="sm" onClick={() => approveAct(actInfo.act)} disabled={editingDoc === `act:${actInfo.act}`} className="gap-2">
                                     <Lock size={13} />Approve act
                                   </Button>
                                 )}
                               </div>
 
+                              {hasLocalContent && !isRunning && !content?.startsWith('⚠') ? (
+                                <EditableDoc
+                                  bookId={bookId!}
+                                  target={{ kind: 'act', act: actInfo.act }}
+                                  value={content ?? ''}
+                                  onSaved={t => setActContents(prev => ({ ...prev, [actInfo.act]: t }))}
+                                  onEditingChange={e => setEditingDoc(e ? `act:${actInfo.act}` : null)}
+                                />
+                              ) : (
                               <Card className="min-h-[180px]">
                                 <CardContent className="p-4">
                                   {!hasLocalContent && !actInfo.has_content && (
@@ -1276,6 +1309,7 @@ export default function BibleWorkshopPage() {
                                   )}
                                 </CardContent>
                               </Card>
+                              )}
 
                               {hasLocalContent && !isRunning && (
                                 <div className="space-y-2">
@@ -1288,7 +1322,7 @@ export default function BibleWorkshopPage() {
                                       rows={2}
                                       className="flex-1 resize-none rounded-md border border-input bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                                     />
-                                    <Button variant="outline" size="sm" onClick={() => editAct(actInfo.act)} disabled={!actDirective.trim()}>
+                                    <Button variant="outline" size="sm" onClick={() => editAct(actInfo.act)} disabled={!actDirective.trim() || editingDoc === `act:${actInfo.act}`}>
                                       Edit current
                                     </Button>
                                   </div>
@@ -1401,12 +1435,12 @@ export default function BibleWorkshopPage() {
                                   {isPlanRunning ? (
                                     <Badge variant="secondary" className="gap-1.5"><Loader2 size={12} className="animate-spin" />Planning…</Badge>
                                   ) : (
-                                    <Button size="sm" onClick={() => runChapter(chInfo.number)} className="gap-2">
+                                    <Button size="sm" onClick={() => runChapter(chInfo.number)} disabled={editingDoc === `chapter:${chInfo.number}`} className="gap-2">
                                       <Play size={13} />{chInfo.has_content || planContent !== undefined ? 'Re-plan' : 'Plan scenes'}
                                     </Button>
                                   )}
                                   {planContent !== undefined && !isPlanRunning && (
-                                    <Button size="sm" onClick={() => approveChapter(chInfo.number)} disabled={isPlanApproving} className="gap-2">
+                                    <Button size="sm" onClick={() => approveChapter(chInfo.number)} disabled={isPlanApproving || editingDoc === `chapter:${chInfo.number}`} className="gap-2">
                                       {isPlanApproving ? <Loader2 size={13} className="animate-spin" /> : <Lock size={13} />}
                                       {isPlanApproving ? 'Locking…' : 'Lock plan'}
                                     </Button>
@@ -1418,11 +1452,21 @@ export default function BibleWorkshopPage() {
                               )}
                               {planContent !== undefined && (
                                 <>
+                                  {!isPlanRunning && !planContent.startsWith('⚠') ? (
+                                    <EditableDoc
+                                      bookId={bookId!}
+                                      target={{ kind: 'chapter', chapter: chInfo.number }}
+                                      value={planContent}
+                                      onSaved={t => setChapterContents(prev => ({ ...prev, [chInfo.number]: t }))}
+                                      onEditingChange={e => setEditingDoc(e ? `chapter:${chInfo.number}` : null)}
+                                    />
+                                  ) : (
                                   <Card className="min-h-[140px]"><CardContent className="p-4">
                                     <pre className="text-sm whitespace-pre-wrap font-mono leading-relaxed text-foreground">
                                       {planContent}{isPlanRunning && <span className="animate-pulse">▋</span>}
                                     </pre>
                                   </CardContent></Card>
+                                  )}
                                   {!isPlanRunning && (
                                     <div className="flex gap-2 pt-1">
                                       <textarea
@@ -1432,7 +1476,7 @@ export default function BibleWorkshopPage() {
                                         rows={2}
                                         className="flex-1 resize-none rounded-md border border-input bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                                       />
-                                      <Button variant="outline" size="sm" onClick={() => editChapter(chInfo.number)} disabled={!chapterDirective.trim()}>
+                                      <Button variant="outline" size="sm" onClick={() => editChapter(chInfo.number)} disabled={!chapterDirective.trim() || editingDoc === `chapter:${chInfo.number}`}>
                                         Edit plan
                                       </Button>
                                     </div>
@@ -1500,11 +1544,11 @@ export default function BibleWorkshopPage() {
                                           )}
                                           {!isScRunning && !isScSyncing && (
                                             <>
-                                              <Button size="sm" variant="outline" onClick={() => runScene(chInfo.number, scInfo.number)} className="gap-1.5 h-7 text-xs">
+                                              <Button size="sm" variant="outline" onClick={() => runScene(chInfo.number, scInfo.number)} disabled={editingDoc === `scene:${key}`} className="gap-1.5 h-7 text-xs">
                                                 <Play size={11} />{hasLocalSc || scInfo.has_content ? 'Re-run' : 'Write scene'}
                                               </Button>
                                               {hasLocalSc && !scInfo.approved && (
-                                                <Button size="sm" onClick={() => approveScene(chInfo.number, scInfo.number)} className="gap-1.5 h-7 text-xs">
+                                                <Button size="sm" onClick={() => approveScene(chInfo.number, scInfo.number)} disabled={editingDoc === `scene:${key}`} className="gap-1.5 h-7 text-xs">
                                                   <Lock size={11} />Approve + sync
                                                 </Button>
                                               )}
@@ -1522,11 +1566,22 @@ export default function BibleWorkshopPage() {
                                           <p className="text-xs text-muted-foreground italic">Content exists. Re-run to reload.</p>
                                         )}
                                         {hasLocalSc && (
+                                          !isScRunning && !isScSyncing && !scInfo.approved && !scContent.startsWith('⚠') ? (
+                                            <EditableDoc
+                                              bookId={bookId!}
+                                              target={{ kind: 'scene', chapter: chInfo.number, scene: scInfo.number }}
+                                              value={scContent}
+                                              onSaved={t => setSceneContents(prev => ({ ...prev, [key]: t }))}
+                                              onEditingChange={e => setEditingDoc(e ? `scene:${key}` : null)}
+                                              className="text-sm"
+                                            />
+                                          ) : (
                                           <Card><CardContent className="p-3">
                                             <pre className="text-sm whitespace-pre-wrap leading-relaxed text-foreground">
                                               {scContent}{isScRunning && <span className="animate-pulse">▋</span>}
                                             </pre>
                                           </CardContent></Card>
+                                          )
                                         )}
 
                                         {hasLocalSc && !isScRunning && !isScSyncing && (
@@ -1540,7 +1595,7 @@ export default function BibleWorkshopPage() {
                                                 rows={2}
                                                 className="flex-1 resize-none rounded-md border border-input bg-transparent px-3 py-2 text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                                               />
-                                              <Button variant="outline" size="sm" className="h-auto text-xs" onClick={() => editScene(chInfo.number, scInfo.number)} disabled={!sceneDirective.trim()}>
+                                              <Button variant="outline" size="sm" className="h-auto text-xs" onClick={() => editScene(chInfo.number, scInfo.number)} disabled={!sceneDirective.trim() || editingDoc === `scene:${key}`}>
                                                 Edit
                                               </Button>
                                             </div>

@@ -25,6 +25,7 @@ from routes.models import router as models_router
 from routes.bible import router as bible_router
 from routes.git import router as git_router
 from routes.phase1 import router as phase1_router
+from routes.bible_edit import router as bible_edit_router
 from routes.phase2 import router as phase2_router
 from routes.phase3 import router as phase3_router
 from routes.text_ops import (TEXT_OP_EXPAND_SYSTEM, TEXT_OP_REPHRASE_SYSTEM, TEXT_OP_TIGHTEN_SYSTEM, TEXT_OP_NOTES_SYSTEM,
@@ -48,6 +49,7 @@ app.include_router(models_router, prefix="/api")
 app.include_router(bible_router, prefix="/api")
 app.include_router(git_router, prefix="/api")
 app.include_router(phase1_router, prefix="/api")
+app.include_router(bible_edit_router, prefix="/api")
 app.include_router(phase2_router, prefix="/api")
 app.include_router(phase3_router, prefix="/api")
 app.include_router(text_ops_router, prefix="/api")
