@@ -853,6 +853,8 @@ The manuscript stays clean Markdown as the single source; `export` turns it into
 
 ## Operations and troubleshooting
 
+The first run on real models has its own step-by-step plan, with go / no-go points: `docs/BOOKFORGE_FIRST_RUN.md`.
+
 A typical run: start it in the evening with `python -m bookforge run /opt/platform/data/bookforge/my-series` (or start the run from the dashboard), read the morning report, act on "needs you", run again.
 
 | Symptom | Likely cause | Fix |
