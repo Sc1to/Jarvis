@@ -14,7 +14,7 @@ from bookforge.research import probe as probe_mod, search as search_mod, searxng
 from bookforge.research.hits import Hit
 from bookforge.research.search import FakeWebClient, PlaywrightWebClient, WebError, WebResult, make_web_client
 from bookforge.research.searxng import SearxngWebClient, parse_results
-from bookforge.research.step import Question, answer_question, diversify, relevant_excerpt, skipped
+from bookforge.research.step import Question, answer_question, diversify, era_terms, rank_hits, relevant_excerpt, skipped
 from conftest import RuleLLM
 from test_web import FakeTool, good  # noqa: F401  (good builds a successful tool result)
 
@@ -228,8 +228,8 @@ def test_answering_a_question_skips_listed_sites_and_traces_every_page(project):
     web = scripted_web()
     attempt = answer_question(make_ctx(project, reader(project), web), web, Question("What did customs clerks do?", "customs clerk 1880s", False, "England, 1880s"), "story", set())
     assert [s.endswith("(site skipped)") for s in attempt.skipped] == [True] and ("fetch", URL_R) not in web.calls
-    assert [p.url for p in attempt.pages] == [URL_A, URL_B]
-    a, b = attempt.pages
+    assert [p.url for p in attempt.pages] == [URL_B, URL_A]  # the page about "clerks" matches the question's words better
+    b, a = attempt.pages
     assert (a.model_facts, a.quote_rejected, len(a.kept)) == (1, 0, 1) and (b.model_facts, b.quote_rejected, len(b.kept)) == (1, 1, 0)  # B's quote is not on its page
     assert [f["claim"] for _, f in attempt.facts] == ["Clerks recorded cargo in ledgers."] and attempt.reason == ""
 
@@ -277,5 +277,76 @@ def test_the_research_test_command(project, monkeypatch):
 
 def test_research_defaults_for_the_real_web():
     r = Config().research
-    assert (r.source, r.searxng_url, r.results_per_question, r.pages_per_question) == ("auto", "http://127.0.0.1:8060", 8, 3)
+    assert (r.source, r.searxng_url, r.results_per_question, r.pages_per_question, r.facts_per_question) == ("auto", "http://127.0.0.1:8060", 10, 5, 3)
     assert "reddit.com" in r.skip_domains and "youtube.com" in r.skip_domains
+
+
+# ── ranking, empty pages, early stop, and the reasons for dropped facts ─────
+
+def test_era_terms_come_from_the_settings_years():
+    assert era_terms("England, 1880s") == ["1880s", "1880", "19th century", "victorian"]
+    assert era_terms("Rome, 44 BC") == [] and era_terms("any time") == []
+    assert era_terms("France, 1923")[:3] == ["1920s", "1923", "20th century"] and "victorian" not in era_terms("France, 1923")
+
+
+def test_results_about_the_era_and_the_question_are_read_first_and_ties_keep_the_engines_order():
+    hits = [Hit("https://a.example/ports", "Merchant port books 1565-1799", "Records of the sixteenth century."),
+            Hit("https://b.example/smuggling", "Coastal policing in 19th-century England", "How customs officers policed the coast."),
+            Hit("https://c.example/dogs", "Dogs", ""), Hit("https://d.example/other", "Another page", "")]
+    ranked = rank_hits(hits, "What did customs officers do?", "England, 1880s")
+    assert [h.url for h, _ in ranked] == ["https://b.example/smuggling", "https://a.example/ports", "https://c.example/dogs", "https://d.example/other"]
+    assert ranked[0][1] > ranked[1][1] and ranked[2][1] == ranked[3][1] == 0
+
+
+def test_a_page_that_comes_back_empty_does_not_use_up_a_page_slot(project):
+    web = FakeWebClient(searches={"q": "r"}, pages={"https://x.example/empty": "", "https://y.example/real": PAGE_A, "https://z.example/real": PAGE_B},
+                        links={"q": [{"text": "Empty", "href": "https://x.example/empty"}, {"text": "Real", "href": "https://y.example/real"},
+                                     {"text": "Real 2", "href": "https://z.example/real"}]})
+    project.config.research.pages_per_question = 2
+    project.config.research.facts_per_question = 9
+    llm = RuleLLM([("Source page:", json.dumps({"facts": []}))])
+    attempt = answer_question(make_ctx(project, llm, web), web, Question("customs", "q", False, ""), "story", set())
+    assert [(p.url.split("/")[2], bool(p.error)) for p in attempt.pages] == [("x.example", True), ("y.example", False), ("z.example", False)]
+    assert "no readable text" in attempt.pages[0].error and attempt.reason.startswith("page https://x.example/empty failed")
+
+
+def test_reading_stops_once_enough_facts_are_kept(project):
+    pages = {f"https://s{i}.example/p": PAGE_A for i in range(5)}
+    web = FakeWebClient(searches={"q": "r"}, pages=pages, links={"q": [{"text": f"S{i}", "href": u} for i, u in enumerate(pages)]})
+    project.config.research.facts_per_question = 2
+    llm = RuleLLM([("Source page:", json.dumps({"facts": [{"claim": "Clerks recorded cargo.", "quote": "recorded the cargo of every ship"}]})),
+                   ("Which of these facts directly answer", json.dumps({"keep": [1]}))])
+    attempt = answer_question(make_ctx(project, llm, web), web, Question("customs", "q", False, ""), "story", set())
+    assert len(attempt.pages) == 2 and len(attempt.facts) == 2  # not all five pages
+
+
+PAGE_C = "Clavicle fractures are common. Most clavicle fractures heal in six weeks, although adults may need longer."
+
+
+def test_a_dropped_fact_is_shown_with_the_checkers_reason(project):
+    web = FakeWebClient(searches={"q": "r"}, pages={"https://x.example/p": PAGE_C}, links={"q": [{"text": "X", "href": "https://x.example/p"}]})
+    llm = RuleLLM([("Source page:", json.dumps({"facts": [{"claim": "Fractures are common.", "quote": "Clavicle fractures are common"},
+                                                           {"claim": "Most heal in six weeks.", "quote": "heal in six weeks"}]})),
+                   ("Which of these facts directly answer", json.dumps({"keep": [1], "drop": [{"n": 2, "why": "a modern figure, not the 1880s"}]}))])
+    q = Question("How do collarbones heal?", "q", False, "England, 1880s")
+    attempt = answer_question(make_ctx(project, llm, web), web, q, "story", set())
+    [page] = attempt.pages
+    assert [f["claim"] for f in page.kept] == ["Fractures are common."]
+    assert page.dropped == [{"claim": "Most heal in six weeks.", "quote": "heal in six weeks", "why": "a modern figure, not the 1880s"}]
+    text = "\n".join(probe_mod.describe(attempt, q, "searxng"))
+    assert "- dropped: Most heal in six weeks." in text and "why: a modern figure, not the 1880s" in text and "reading order" in text
+
+
+def test_a_dropped_fact_without_a_reason_says_so(project):
+    web = FakeWebClient(searches={"q": "r"}, pages={"https://x.example/p": PAGE_C}, links={"q": [{"text": "X", "href": "https://x.example/p"}]})
+    llm = RuleLLM([("Source page:", json.dumps({"facts": [{"claim": "Fractures are common.", "quote": "Clavicle fractures are common"}]})),
+                   ("Which of these facts directly answer", json.dumps({"keep": []}))])
+    attempt = answer_question(make_ctx(project, llm, web), web, Question("q", "q", False, "England, 1880s"), "story", set())
+    assert attempt.pages[0].dropped[0]["why"] == "no reason given"
+
+
+def test_searxng_snippets_travel_with_the_results():
+    c = SearxngWebClient(FakeWebClient(pages={search_url("x"): json.dumps({"results": [{"url": "https://a.example/1", "title": "T", "content": "An excerpt about ports."}]})}), BASE)
+    from bookforge.research.hits import extract_hits
+    [hit] = extract_hits(c.search("x").links, 5)
+    assert hit.snippet == "An excerpt about ports."

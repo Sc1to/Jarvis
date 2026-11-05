@@ -20,6 +20,11 @@ def describe(attempt: Attempt, q: Question, source: str) -> list[str]:
         lines.append(f"  - {h.title or '(no title)'}  {h.url}")
     for s in attempt.skipped:
         lines.append(f"  (not read: {s})")
+    if attempt.order:
+        lines.append("")
+        lines.append("reading order (rank = question words and era words found in the title and excerpt):")
+        for h, score in attempt.order:
+            lines.append(f"  rank {score}  {h.title or h.url}")
     lines.append("")
     if not attempt.pages:
         lines.append("no page was read")
@@ -33,6 +38,8 @@ def describe(attempt: Attempt, q: Question, source: str) -> list[str]:
                      f"{p.fit_rejected} dropped (does not fit the question and setting), {len(p.kept)} kept")
         for f in p.kept:
             lines.append(f"    + {f['claim']}\n      quote: \"{f['quote']}\"")
+        for f in p.dropped:
+            lines.append(f"    - dropped: {f['claim']}\n      why: {f['why']}\n      quote: \"{f['quote']}\"")
     lines.append("")
     lines.append(f"RESULT: {len(attempt.facts)} fact(s) kept" if attempt.facts else f"RESULT: no facts. {attempt.reason}")
     return lines

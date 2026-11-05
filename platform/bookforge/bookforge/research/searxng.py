@@ -98,7 +98,8 @@ class SearxngWebClient:
         links = []
         for r in results:
             if isinstance(r, dict) and isinstance(r.get("url"), str) and r["url"]:
-                links.append({"text": " ".join(str(r.get("title") or "").split())[:200], "href": r["url"]})
+                links.append({"text": " ".join(str(r.get("title") or "").split())[:200], "href": r["url"],
+                              "snippet": " ".join(str(r.get("content") or "").split())[:400]})
         if failed:
             log.info("searxng: %d result(s) for %r; engines that did not answer: %s", len(links), query, failed)
         return WebResult("search", query, raw.text, links[: self._results * 3])
