@@ -110,3 +110,6 @@ export interface ArcView {
   threads: { scenes: string[]; unpaid: number; threads: { id: string; note: string; setup: string; payoff: string; problem: string | null; setup_at: number | null; payoff_at: number | null }[] }
 }
 export interface TensionPreview { chapter: string; from: number; to: number; consequence: string; applied: boolean }
+
+export interface DocumentInfo { key: string; title: string; group: string; kind: 'markdown' | 'yaml' | 'text'; exists: boolean; words: number }
+export interface DocumentFull { key: string; title: string; group: string; kind: 'markdown' | 'yaml' | 'text'; exists: boolean; text: string; truncated: boolean }

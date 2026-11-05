@@ -2,7 +2,15 @@ import { useState } from 'react'
 import { bookPath, post } from '../lib/api'
 import { useAction } from '../lib/hooks'
 import type { BookStatus } from '../lib/types'
+import { href } from '../lib/route'
 import { Button, Card, Dot, ErrorBanner, StatusBadge, fmtTime } from '../components/ui'
+
+// The files to read before approving each checkpoint: [document key, label]
+const REVIEW: Record<string, [string, string][]> = {
+  direction: [['series_north_star', 'Series north star'], ['book_north_star', 'Book north star'], ['synopsis', 'Synopsis']],
+  structure: [['acts', 'Acts'], ['chapters', 'Chapters'], ['scenes', 'Scene plans'], ['constants', 'Cast'], ['tracks', 'State tracks'], ['timeline', 'Timeline']],
+  voice: [['style_guide', 'Style guide']],
+}
 
 const LAYERS = ['series_north_star', 'book_north_star', 'synopsis', 'acts', 'chapters', 'scenes', 'prose']
 
@@ -29,7 +37,14 @@ export default function Overview({ series, book, status, reload }: { series: str
 
       {waiting.map((cp) => (
         <Card key={cp} title={`The ${cp} checkpoint is waiting for you`} tone="warn">
-          <p className="mb-2 text-sm text-slate-700">Review the files for this checkpoint, then approve to let the run continue.</p>
+          <p className="mb-2 text-sm text-slate-700">Read these, then approve to let the run continue.</p>
+          <div className="mb-3 flex flex-wrap gap-2">
+            {(REVIEW[cp] ?? []).map(([key, label]) => (
+              <a key={key} href={href({ series, book, tab: 'documents', id: key })} className="inline-flex min-h-10 items-center rounded-md border border-slate-300 bg-white px-3 text-sm underline">{label}</a>
+            ))}
+            {cp === 'voice' && <a href={href({ series, book, tab: 'tree' })} className="inline-flex min-h-10 items-center rounded-md border border-slate-300 bg-white px-3 text-sm underline">Chapter 1 scenes (Progress)</a>}
+            {cp === 'final' && <a href={href({ series, book, tab: 'read' })} className="inline-flex min-h-10 items-center rounded-md border border-slate-300 bg-white px-3 text-sm underline">The manuscript (Read)</a>}
+          </div>
           <Button kind="primary" disabled={act.busy || busy}
             onClick={() => window.confirm(`Approve the ${cp} checkpoint?`) && go(() => post(`${base}/approve/${cp}`))}>Approve {cp}</Button>
         </Card>
