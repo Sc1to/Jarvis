@@ -481,4 +481,7 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
             raise HTTPException(404, f"no job '{job_id}'")
         return ok(found)
 
+    from . import api_workbench
+    api_workbench.register(router, api_workbench.Helpers(open_project, series_root, require_idle, start_job, lambda: make_llm, ok))
+
     return router

@@ -13,6 +13,7 @@ scene is left for the author.
 
 from dataclasses import dataclass, field
 
+from .. import rules
 from ..bible import store
 from ..bible.lookup import scene_entities, state_at
 from ..bible.models import Scene
@@ -29,6 +30,7 @@ class Flag:
     confidence: float
     p: float
     fixable: bool
+    rule: str | None = None  # a hard_constraint rule from the rules panel
 
     def message(self) -> str:
         if self.kind == "obligation":
@@ -53,22 +55,24 @@ def build_questions(project, scene: Scene, scenes: list[Scene]) -> tuple[list[Qu
     tracks = store.load_tracks(project)
     names = {e.id: e.name for e in constants.entities}
     ids = scene_entities(scenes, scene.id)
-    items: list[tuple[str, str]] = []  # (kind, text)
+    items: list[tuple[str, str, object]] = []  # (kind, text, the rule it comes from, if any)
     for s in state_at(tracks, scene.id, ids):
         fact = f"{names.get(s.entity, s.entity)} ({s.kind}): {s.value}"
-        items.append(("contradiction", fact))
+        items.append(("contradiction", fact, None))
         if s.must_show:
-            items.append(("shown", f"{names.get(s.entity, s.entity)}: {s.value}"))
+            items.append(("shown", f"{names.get(s.entity, s.entity)}: {s.value}", None))
     for e in constants.entities:
         if e.id in ids:
-            items += [("contradiction", f"{e.name}: {fact}") for fact in e.facts]
-    items += [("contradiction", f"World rule: {r.text}") for r in constants.rules]
+            items += [("contradiction", f"{e.name}: {fact}", None) for fact in e.facts]
+    items += [("contradiction", f"World rule: {r.text}", None) for r in constants.rules]
+    items += [("contradiction", f"Author's rule {r.id}: {r.text}", r) for r in rules.rules_for(project, scene, ("hard_constraint",))]
     facts = {f.id: f for st in stores_for(project).values() for f in st.facts()}
     for fid in dict.fromkeys(scene.research):
         if fid in facts:
-            items.append(("contradiction", f"Real-world fact: {facts[fid].claim}"))
+            items.append(("contradiction", f"Real-world fact: {facts[fid].claim}", None))
     cap = project.config.qc.continuity_max_questions
-    questions = [Question(f"q{i}", kind, text) for i, (kind, text) in enumerate(items[:cap], 1)]
+    questions = [Question(f"q{i}", kind, text, rule.severity if rule else "block", rule.id if rule else None)
+                 for i, (kind, text, rule) in enumerate(items[:cap], 1)]
     return questions, {q.id: q.text for q in questions}
 
 
@@ -79,10 +83,10 @@ def _judge(q: Question, a: Answer, threshold: float) -> tuple[Flag | None, dict 
             return Flag("obligation", q.text, "", a.confidence, round(p_fail, 2), fixable=False), None
         return None, None
     p = a.confidence if a.yes else 1 - a.confidence
-    if a.yes and a.verified and p > threshold:
-        return Flag("contradiction", q.text, a.evidence, a.confidence, round(p, 2), fixable=True), None
+    if a.yes and a.verified and p > threshold and q.severity == "block":
+        return Flag("contradiction", q.text, a.evidence, a.confidence, round(p, 2), fixable=True, rule=q.rule), None
     if p > threshold:  # a "yes" without quotable evidence, or a hesitant "no": reported, not acted on
-        return None, {"question": q.text, "answer": "yes" if a.yes else "no", "confidence": a.confidence, "evidence": a.evidence}
+        return None, {"question": q.text, "answer": "yes" if a.yes else "no", "confidence": a.confidence, "evidence": a.evidence, "rule": q.rule}
     return None, None
 
 

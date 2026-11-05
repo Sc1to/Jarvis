@@ -12,8 +12,9 @@ import Research from './Research'
 import SceneView from './SceneView'
 import Tracks from './Tracks'
 import Tree from './Tree'
+import Workbench from './Workbench'
 
-const TABS: [string, string][] = [['overview', 'Overview'], ['tree', 'Progress'], ['inbox', 'Inbox'], ['tracks', 'Tracks'], ['research', 'Research'], ['read', 'Read'], ['jobs', 'Jobs']]
+const TABS: [string, string][] = [['overview', 'Overview'], ['tree', 'Progress'], ['inbox', 'Inbox'], ['tracks', 'Tracks'], ['research', 'Research'], ['read', 'Read'], ['jobs', 'Jobs'], ['workbench', 'Workbench']]
 
 export default function Book({ route }: { route: Route }) {
   const { series, book } = route as Required<Pick<Route, 'series' | 'book'>>
@@ -53,6 +54,7 @@ export default function Book({ route }: { route: Route }) {
       {tab === 'research' && <Research series={series} book={book} />}
       {tab === 'read' && <Read series={series} book={book} />}
       {tab === 'jobs' && <Jobs series={series} book={book} />}
+      {tab === 'workbench' && <Workbench series={series} book={book} />}
     </div>
   )
 }

@@ -28,7 +28,7 @@ from .errors import BookforgeError
 from .layers.document import prompt_values
 from .layers.runner import StepContext
 from .project import Project
-from .prompts import render, template_path
+from .prompts import render, render_text, template_path
 from .qc.judge import judge_pair
 from .qc.mechanical import CheckContext, check_scene, load_banned
 from .qc.support import voice_excerpt
@@ -122,6 +122,10 @@ def _check_context(project: Project, b: Benchmark) -> CheckContext:
         names={b.slug(c.name): c.name for c in b.characters}, pov_id=b.slug(b.pov), qc=cfg.qc)
 
 
+def stats_for(text: str, b: Benchmark, project: Project) -> dict:
+    return _stats(text, b, project)
+
+
 def _stats(text: str, b: Benchmark, project: Project) -> dict:
     report = check_scene(text, _check_context(project, b))
     return {"words": report.stats["words"], "score": report.score, "blocking": len(report.blocking), "warnings": len(report.warnings),
@@ -139,6 +143,21 @@ class BenchRun:
     comparison: dict | None = None
 
 
+def generate(ctx: StepContext, b: Benchmark, templates: dict[str, str] | None = None) -> str:
+    """One draft of a benchmark brief. `templates` replaces prompt templates by name with candidate text (A/B tests)."""
+    project = ctx.project
+    templates = templates or {}
+    values = {**prompt_values(project), "scene_id": b.id, "word_min": str(b.words[0]), "word_max": str(b.words[1])}
+
+    def fill(name: str, **extra: str) -> str:
+        if name in templates:
+            return render_text(templates[name], name, **values, **extra)
+        return render(name, project.root, **values, **extra)
+
+    messages = [{"role": "system", "content": fill("prose_system")}, {"role": "user", "content": fill("prose", briefing=b.briefing(project))}]
+    return ctx.llm.complete(project.config.layers["prose"].model, messages, draft=0, max_tokens=int(b.words[1] * 1.6) + 300).strip()
+
+
 def run_bench(ctx: StepContext, only: list[str] | None = None) -> BenchRun:
     project = ctx.project
     if ctx.llm is None:
@@ -152,10 +171,7 @@ def run_bench(ctx: StepContext, only: list[str] | None = None) -> BenchRun:
     directory.mkdir(parents=True)
     run = BenchRun(name, directory, settings_fingerprint(project), {})
     for b in load_benchmarks(project, only):
-        values = {**prompt_values(project), "scene_id": b.id, "word_min": str(b.words[0]), "word_max": str(b.words[1])}
-        messages = [{"role": "system", "content": render("prose_system", project.root, **values)},
-                    {"role": "user", "content": render("prose", project.root, briefing=b.briefing(project), **values)}]
-        text = ctx.llm.complete(project.config.layers["prose"].model, messages, draft=0, max_tokens=int(b.words[1] * 1.6) + 300).strip()
+        text = generate(ctx, b)
         (directory / f"{b.id}.md").write_text(text + "\n", encoding="utf-8")
         run.texts[b.id] = text
         run.results[b.id] = _stats(text, b, project)

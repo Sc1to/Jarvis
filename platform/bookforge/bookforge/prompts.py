@@ -34,14 +34,19 @@ def slots_in(template: str) -> set[str]:
     return set(_SLOT.findall(template))
 
 
+def render_text(template: str, label: str, **values: str) -> str:
+    """Fill a template given as text (a candidate being tried), with the same checks as `render`."""
+    missing = slots_in(template) - set(values)
+    if missing:
+        raise PromptError(f"prompt '{label}' needs values for: {', '.join(sorted(missing))}")
+    # One pass over the template, so text inside a value is never treated as a slot.
+    return _SLOT.sub(lambda m: str(values[m.group(1)]), template).strip() + "\n"
+
+
 def render(name: str, series_root: Path | None = None, **values: str) -> str:
     path = template_path(name, series_root)
     try:
         template = path.read_text(encoding="utf-8")
     except OSError as e:
         raise PromptError(f"cannot read prompt template {path}: {e}") from e
-    missing = slots_in(template) - set(values)
-    if missing:
-        raise PromptError(f"prompt '{name}' ({path}) needs values for: {', '.join(sorted(missing))}")
-    # One pass over the template, so text inside a value is never treated as a slot.
-    return _SLOT.sub(lambda m: str(values[m.group(1)]), template).strip() + "\n"
+    return render_text(template, f"{name} ({path})", **values)

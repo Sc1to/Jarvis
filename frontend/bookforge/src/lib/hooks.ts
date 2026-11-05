@@ -42,3 +42,27 @@ export function useAction() {
   }, [])
   return { busy, error, run, clear: () => setError(null) }
 }
+
+/** Start a background job (a POST that answers 202 with the job) and follow it until it ends. */
+export function useJob<T = any>(base: string) {
+  const [state, setState] = useState<{ result: T | null; error: string | null; busy: boolean }>({ result: null, error: null, busy: false })
+  const alive = useRef(true)
+  useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
+  const run = useCallback(async (path: string, body?: unknown) => {
+    setState({ result: null, error: null, busy: true })
+    try {
+      let job = await api<{ id: string; status: string; result: T | null; error: string | null }>(base + path, { method: 'POST', body: body ?? {} })
+      while (job.status === 'running') {
+        await new Promise((r) => setTimeout(r, 1500))
+        if (!alive.current) return
+        job = await api(`${base}/jobs/${job.id}`)
+      }
+      if (!alive.current) return
+      if (job.status === 'done') setState({ result: job.result, error: null, busy: false })
+      else setState({ result: null, error: job.error ?? job.status, busy: false })
+    } catch (e: any) {
+      if (alive.current) setState({ result: null, error: e.message ?? String(e), busy: false })
+    }
+  }, [base])
+  return { ...state, run, reset: () => setState({ result: null, error: null, busy: false }) }
+}

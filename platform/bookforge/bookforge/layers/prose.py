@@ -18,7 +18,7 @@ import logging
 
 import yaml
 
-from .. import changes, scenefiles, vcs
+from .. import changes, rules, scenefiles, vcs
 from ..bible import store
 from ..bible.models import Scene
 from ..briefing import build_briefing
@@ -55,7 +55,7 @@ def check_context(project, scene: Scene, scenes: list[Scene], banned_text: str |
         banned_text = scenefiles.read(project.root / cfg.qc.banned_phrases) or ""
     return CheckContext(
         scene_words=tuple(cfg.layers["prose"].words or (1500, 3000)), pov=cfg.book.pov, tense=cfg.book.tense,
-        language=cfg.book.language, banned=load_banned(banned_text), names=names, pov_id=scene.pov,
+        language=cfg.book.language, banned=load_banned(banned_text), phrase_rules=rules.phrase_rules(rules.rules_for(project, scene, ("banned_phrase",))), names=names, pov_id=scene.pov,
         previous_tail=" ".join(prev_text.split()[-PREVIOUS_TAIL_WORDS:]) if prev_text else None,
         earlier_texts=earlier, qc=cfg.qc,
     )

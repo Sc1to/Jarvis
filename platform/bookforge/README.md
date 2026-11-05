@@ -4,7 +4,7 @@ Automated book-writing pipeline (Phase 14). Separate from the writer app: shares
 
 - Spec: `docs/BOOKFORGE.md`. Build plan: `docs/BUILD_SEQUENCE.md`, Phase 14.
 - Status: milestones 14.0–14.7 done: service shell, CLI skeleton, model client and doctor, layers 1–3 (north stars and synopsis) up to the direction checkpoint, the research step, layers 4–6 (acts, chapters, scenes) with the story bible up to the structure checkpoint, and the prose layer (drafts, mechanical checks, summaries) with the voice checkpoint after chapter 1. Each scene goes through quality control, cheapest layer first: mechanical checks, the pairwise judge, continuity questions, the rubric critic, and passage-level revision (at most 2 rounds). What is left is flagged for you; each model-based layer can be switched off under `qc:` to make a run cheaper. The prompts have not been run against a real model yet.
-- Port 8100; systemd unit `platform-bookforge`; route `/bookforge` (API under `/bookforge/api`). The API (`bookforge/api.py`) wraps the same library as the CLI; long operations (run, stale fix, bench) are background jobs, one per series. Routes are listed in the module docstring and in docs/BOOKFORGE.md.
+- Port 8100; systemd unit `platform-bookforge`; route `/bookforge` (API under `/bookforge/api`). The API (`bookforge/api.py`) wraps the same library as the CLI; long operations (run, stale fix, bench) are background jobs, one per series. Routes are listed in the module docstring and in docs/BOOKFORGE.md. The dashboard's Workbench tab tunes rules, prompts and arcs (files under `<series>/workbench/`).
 - Data: `$BOOKFORGE_DATA_DIR` (default `/opt/platform/data/bookforge`), one Git repo per series.
 
 Run locally:

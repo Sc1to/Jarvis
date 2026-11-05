@@ -34,7 +34,7 @@ from .layers.prose import _commit, _summarise, check_context, record_extraction,
 from .layers.runner import StepContext
 from .project import Project
 from .qc.continuity import check_continuity
-from .qc.mechanical import check_scene
+from .qc.mechanical import all_banned, check_scene
 from .qc.revise import Flag, revise_text
 from .qc.scene import _mechanical_flags
 from .state import Item, now
@@ -302,7 +302,7 @@ def fix_scene(ctx: StepContext, scene: Scene, scenes: list[Scene], st: SceneStal
     # 2. patch
     if not unfixable:
         try:
-            revision = revise_text(ctx, text, flags, mech.banned, f"{sid} stale patch")
+            revision = revise_text(ctx, text, flags, all_banned(mech), f"{sid} stale patch")
         except LayerError as e:
             return _redraft(ctx, scene, scenes, f"a patch was not possible ({e})")
         if revision.applied and not revision.unfixed:

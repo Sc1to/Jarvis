@@ -20,10 +20,10 @@ from ..errors import LayerError
 from .continuity import ContinuityReport, check_continuity
 from .critic import CriticReport, critic_flags, run_critic
 from .judge import choose_draft
-from .mechanical import CheckContext, MechanicalReport, check_scene
+from .mechanical import CheckContext, MechanicalReport, all_banned, check_scene
 from .revise import Flag, revise_text
 
-FIXABLE_MECHANICAL = {"banned_phrase", "chatter", "formatting", "cut_off"}
+FIXABLE_MECHANICAL = {"banned_phrase", "rule_phrase", "chatter", "formatting", "cut_off"}
 
 
 @dataclass
@@ -94,7 +94,7 @@ def settle_scene(ctx, scene: Scene, scenes: list[Scene], drafts: dict[str, str],
         if not flags or r == cfg.max_revision_rounds:
             break
         try:
-            revision = revise_text(ctx, text, flags, mech.banned, f"{scene.id} round {r + 1}")
+            revision = revise_text(ctx, text, flags, all_banned(mech), f"{scene.id} round {r + 1}")
         except LayerError as e:  # the model could not produce an acceptable revision: leave the scene for the author
             record["revision_error"] = str(e)
             break

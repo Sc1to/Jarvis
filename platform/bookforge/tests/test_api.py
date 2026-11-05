@@ -11,7 +11,7 @@ from bookforge import api, changes
 from bookforge.bible import store
 from bookforge.project import Project
 from conftest import RuleLLM
-from qc_fakes import EXTRACT, JUDGE, extractor, judge
+from qc_fakes import EXTRACT, JUDGE, between, extractor, judge, user
 from test_prose_qc import book, qc_rules  # noqa: F401  (book is a fixture)
 from test_report_assemble_bench import ALL, bench_llm, full  # noqa: F401  (full is a fixture)
 from prose_fakes import prose
@@ -383,3 +383,129 @@ def test_export_validates_formats_and_reports_a_blocked_book_as_a_failed_job(ful
     error(client.post(f"{B}/export", json={"formats": ["mobi"]}), 422)
     done = finish(data(client.post(f"{B}/export"), 202))  # the final checkpoint is not approved
     assert done["status"] == "failed" and "final checkpoint is not approved" in done["error"]
+
+
+# ── the workbench ───────────────────────────────────────────────────────────
+
+WB = f"{B}/workbench"
+RULE = {"id": "no-purple", "type": "style_rule", "text": "No purple prose.", "severity": "warn", "scope": "series", "target": "", "example": "", "phrase": "", "enabled": True}
+
+
+def test_rules_are_saved_listed_with_stats_and_deleted(full):
+    assert data(client.get(f"{WB}/rules")) == {"rules": [], "stats": [], "health": []}
+    assert data(client.put(f"{WB}/rules/no-purple", json=RULE))["id"] == "no-purple"
+    got = data(client.get(f"{WB}/rules"))
+    assert [r["id"] for r in got["rules"]] == ["no-purple"] and got["stats"][0]["applicable"] == 8
+    error(client.put(f"{WB}/rules/other", json=RULE), 422)
+    error(client.put(f"{WB}/rules/bad", json={**RULE, "id": "bad", "type": "banned_phrase"}), 422)  # no phrase
+    assert data(client.delete(f"{WB}/rules/no-purple")) == {"deleted": "no-purple"}
+    error(client.delete(f"{WB}/rules/no-purple"), 400)
+
+
+def test_testing_a_rule_and_proposing_one_are_jobs(full, monkeypatch):
+    text = scenefiles_text(full)
+    phrase = " ".join(text.split()[2:5])
+    done = finish(data(client.post(f"{WB}/rules-test", json={"rule": {**RULE, "type": "banned_phrase", "phrase": phrase}}), 202))
+    assert done["status"] == "done" and done["result"]["total_hits"] >= 1
+    llm = RuleLLM([("The author read a passage of a scene", json.dumps({"type": "style_rule", "scope": "series", "target": "", "severity": "warn", "text": "Avoid purple.", "example": "", "phrase": ""}))])
+    monkeypatch.setattr(api, "make_llm", lambda project: llm)
+    done = finish(data(client.post(f"{WB}/rules-propose", json={"scene": "b1.ch01.s1", "passage": "the crimson sky", "comment": "too purple"}), 202))
+    assert done["result"]["text"] == "Avoid purple." and done["result"]["id"] == "avoid-purple"
+
+
+def scenefiles_text(p):
+    from bookforge import scenefiles
+    return scenefiles.final_path(p, "b1.ch01.s1").read_text()
+
+
+def test_the_briefing_preview_and_the_input_xray(full):
+    b = data(client.get(f"{WB}/briefing/b1.ch02.s1"))
+    assert b["sections"] and b["tokens"] == sum(s["tokens"] for s in b["sections"])
+    x = data(client.get(f"{WB}/xray/b1.ch02.s1"))
+    assert {f["kind"] for f in x["findings"]} >= {"no_style_guide", "no_samples"} and x["diagnosis"]["cause"] == "missing_input" and x["beats"] is None
+    error(client.get(f"{WB}/briefing/b1.ch09.s9"), 400)
+
+
+def test_the_beat_check_is_a_job(full, monkeypatch):
+    def reply(messages):
+        text = between(user(messages), "scene")
+        return json.dumps({"beats": [{"n": i, "happens": True, "evidence": " ".join(text.split()[:8])} for i in (1, 2)]})
+
+    monkeypatch.setattr(api, "make_llm", lambda project: RuleLLM([("Check which of the planned beats", reply)]))
+    done = finish(data(client.post(f"{WB}/xray/b1.ch01.s1", json={}), 202))
+    assert done["status"] == "done" and [b["happens"] for b in done["result"]["beats"]] == [True, True]
+
+
+def test_prompts_can_be_listed_checked_overridden_and_restored(full):
+    names = {t["name"] for t in data(client.get(f"{WB}/prompts"))}
+    assert {"prose", "critic"} <= names
+    p = data(client.get(f"{WB}/prompts/prose"))
+    assert p["override"] is None and "briefing" in p["slots"]
+    bad = data(client.post(f"{WB}/prompts/prose/check", json={"text": "{nonsense}"}))
+    assert bad["errors"]
+    error(client.put(f"{WB}/prompts/prose", json={"text": "{nonsense}"}), 400)
+    assert data(client.put(f"{WB}/prompts/prose", json={"text": p["default"] + "\nBe brief.\n"}))["errors"] == []
+    assert "Be brief." in data(client.get(f"{WB}/prompts/prose"))["override"]
+    data(client.delete(f"{WB}/prompts/prose"))
+    assert data(client.get(f"{WB}/prompts/prose"))["override"] is None
+    error(client.get(f"{WB}/prompts/nope"), 400)
+
+
+def test_an_ab_test_is_a_job_you_vote_on_blind_and_can_promote(full, monkeypatch):
+    from test_workbench import ab_llm
+    monkeypatch.setattr(api, "make_llm", lambda project: ab_llm())
+    default = data(client.get(f"{WB}/prompts/prose"))["default"]
+    cand = default.replace("Return only the scene text.", "ZEBRA: return only the scene text.")
+    error(client.post(f"{WB}/ab", json={"template": "critic", "candidate": "x"}), 422)
+    error(client.post(f"{WB}/ab", json={"template": "prose", "candidate": "{nonsense}"}), 422)
+    done = finish(data(client.post(f"{WB}/ab", json={"template": "prose", "candidate": cand, "only": ["quarrel"]}), 202))
+    name = done["result"]["name"]
+    assert done["result"]["judge"]["b"] == 1
+    assert [e["name"] for e in data(client.get(f"{WB}/experiments"))] == [name]
+    v = data(client.get(f"{WB}/experiments/{name}"))
+    assert v["pairs"][0]["voted"] is False and "first_is" not in v["pairs"][0] and v["judge"] is None
+    after = data(client.post(f"{WB}/experiments/{name}/vote", json={"benchmark": "quarrel", "choice": "tie"}))
+    assert after["pairs"][0]["voted"] and after["yours"]["tie"] == 1
+    error(client.post(f"{WB}/experiments/{name}/vote", json={"benchmark": "quarrel", "choice": "left"}), 400)
+    data(client.post(f"{WB}/experiments/{name}/promote"))
+    assert "ZEBRA" in data(client.get(f"{WB}/prompts/prose"))["override"]
+    error(client.get(f"{WB}/experiments/ab-19990101-000000"), 400)
+
+
+def test_calibration_scores_and_the_arc(full):
+    scores = {c: 4 for c in ("stakes", "voice", "show_dont_tell", "pacing", "dialogue", "beats_covered")}
+    r = data(client.put(f"{WB}/calibration/b1.ch01.s1", json={"scores": scores}))
+    assert r["scenes"][0]["yours"]["voice"] == 4 and r["scenes"][0]["critic"] is not None
+    error(client.put(f"{WB}/calibration/b1.ch01.s1", json={"scores": {"voice": 9}}), 400)
+    a = data(client.get(f"{WB}/arc"))
+    assert [c["id"] for c in a["tension"]["chapters"]][0] == "b1.ch01" and a["threads"]["threads"] == []
+    pre = data(client.post(f"{WB}/arc/tension", json={"chapter": "b1.ch02", "value": 9}))
+    assert pre["applied"] is False and "affects 2 scene(s)" in pre["consequence"]
+    done = data(client.post(f"{WB}/arc/tension", json={"chapter": "b1.ch02", "value": 9, "apply": True}))
+    assert done["applied"] is True
+    t = data(client.put(f"{WB}/arc/threads/key", json={"note": "the key", "setup": "b1.ch01.s1"}))
+    assert t["unpaid"] == 1
+    assert data(client.delete(f"{WB}/arc/threads/key"))["threads"] == []
+    error(client.post(f"{WB}/arc/tension", json={"chapter": "b1.ch02", "value": 11}), 400)
+
+
+def test_workbench_writes_wait_for_an_idle_series_but_reads_do_not(book, monkeypatch):
+    gate, started = threading.Event(), threading.Event()
+
+    class Slow(RuleLLM):
+        def complete(self, role, messages, **options):
+            started.set()
+            gate.wait(30)
+            return super().complete(role, messages, **options)
+
+    monkeypatch.setattr(api, "make_llm", lambda project: Slow(qc_rules()))
+    job = data(client.post(f"{B}/run", json={"until": "prose"}), 202)
+    assert started.wait(30)
+    try:
+        error(client.put(f"{WB}/rules/no-purple", json=RULE), 409)
+        error(client.put(f"{WB}/prompts/prose", json={"text": "x"}), 409)
+        error(client.post(f"{WB}/arc/tension", json={"chapter": "b1.ch02", "value": 9, "apply": True}), 409)
+        assert data(client.get(f"{WB}/rules")) and data(client.post(f"{WB}/arc/tension", json={"chapter": "b1.ch02", "value": 9}))["applied"] is False
+    finally:
+        gate.set()
+    finish(job)

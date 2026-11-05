@@ -70,3 +70,43 @@ export interface TrackData {
 }
 
 export interface Fact { id: string; claim: string; url: string; title: string; fetched: string; quote: string; layer: string; question: string; sensitive: boolean; used_in: string[] }
+
+export interface Rule {
+  id: string; type: 'banned_phrase' | 'style_rule' | 'hard_constraint' | 'character_voice'; text: string; example: string
+  scope: 'series' | 'book' | 'character' | 'scene'; target: string; severity: 'block' | 'warn' | 'note'; phrase: string; enabled: boolean
+}
+export interface RuleStat { id: string; applicable: number; written: number; fired: number; hits: { scene: string; what: string }[]; measured: boolean }
+export interface RuleHealth { rule: string; problem: string; detail: string }
+export interface RuleTest { rule: string; total_hits: number; scenes: { scene: string; applies: boolean; hits: string[]; error: string | null }[] }
+
+export interface BriefingPreview { scene: string; tokens: number; budget: number; trimmed: string[]; sections: { heading: string; tokens: number; text: string }[] }
+export interface XrayResult {
+  scene: string; findings: { severity: 'problem' | 'warn' | 'info'; kind: string; message: string }[]
+  beats: { n: number; beat: string; happens: boolean; evidence: string }[] | null; beats_error: string | null
+  diagnosis: { cause: 'missing_input' | 'weak_prompt' | 'model_limit' | 'none'; reasons: string[] }
+}
+
+export interface PromptInfo { name: string; slots: string[]; overridden: boolean; words: number }
+export interface PromptDetail { name: string; slots: string[]; default: string; override: string | null; effective: string; diff: string }
+
+export interface ExperimentSummary {
+  name: string; template: string; created: string; promoted: boolean; benchmarks: number
+  judge: { a: number; b: number; tie: number }; yours: { a: number; b: number; tie: number; of: number }
+}
+export interface ExperimentView extends Omit<ExperimentSummary, 'judge'> {
+  judge: ExperimentSummary['judge'] | null
+  diff: string; warnings: string[]
+  pairs: { id: string; first: string; second: string; voted: boolean; vote: 'a' | 'b' | 'tie' | null; first_is?: 'a' | 'b'; second_is?: 'a' | 'b'; judge?: string }[]
+}
+
+export interface CalibrationReport {
+  scenes: { scene: string; yours: Record<string, number>; critic: Record<string, number> | null }[]
+  criteria: Record<string, { n: number; mean_abs_diff: number; bias: number; within_one: number } | null>
+  compared: number; ranking_disagreements: number; needs_recalibration: boolean; advice: string
+}
+
+export interface ArcView {
+  tension: { chapters: { id: string; title: string; act: string; tension: number; scenes: number; written: number }[]; notes: string[] }
+  threads: { scenes: string[]; unpaid: number; threads: { id: string; note: string; setup: string; payoff: string; problem: string | null; setup_at: number | null; payoff_at: number | null }[] }
+}
+export interface TensionPreview { chapter: string; from: number; to: number; consequence: string; applied: boolean }

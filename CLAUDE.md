@@ -65,7 +65,8 @@ Last completed:    Phase 13.19 — Paper trading validation tooling; Phase DEV �
                    Phase 14.10 (2026-11-05) — bookforge service API: /api routes for series, status, scenes, reports, manuscript, stale, change requests, approvals, assemble, plus background jobs (run, stale/fix, bench; one per series, records in logs/jobs); CLI and API share bookforge/ops.py; tests; frontend still the 14.0 placeholder
                    Phase 14.11 (2026-11-05) — bookforge dashboard (frontend/bookforge): series list, overview with run/approve/assemble, progress tree, scene view with draft compare + review, inbox (change-request diffs, stale, morning report), track timeline, research browser, manuscript, jobs; Web Push (push.py, own push.db, sw.js); API gained structure/tracks/research/drafts/push routes; checked at 390px against a seeded service; no frontend unit tests
                    Phase 14.12 (2026-11-05) — bookforge export (`export`, Pandoc): DOCX manuscript format, EPUB, print PDF (Typst/XeLaTeX/LuaLaTeX, untested here: no engine installed), companion book; matter files, export: config, scene-break filter, b1-export-<date> tags, exports/ not in Git; API job + downloads, dashboard Export card, doctor checks; 20 + 2 new tests
-Currently working: Phase 13.20 — Live trading activation (manual user decision); Phase 14 — Bookforge (14.0–14.12 done; 14.13 workbench next)
+                   Phase 14.13 (2026-11-05) — bookforge workbench: rules panel (workbench/rules.yaml; banned phrases, style rules, hard constraints, character voices enforced by the mechanical checker, writer/critic prompts and continuity; hit counts, health, test-before-save, feedback-to-rule), briefing preview + X-ray with diagnosis, prompt studio, blind A/B tests with promote, calibration chart, tension curve with consequence preview, thread map; Workbench tab in the dashboard; character arc lanes not built
+Currently working: Phase 13.20 — Live trading activation (manual user decision); Phase 14 — Bookforge (14.0–14.13 done; Phase 14 complete, awaiting a real-model run)
 Blocked on:        Infra phases (1, 2) are hardware setup; 3-6 months paper trading runtime
 Remaining:         Phase 13.20 (manual user decision)
 ```
@@ -85,7 +86,7 @@ Remaining:         Phase 13.20 (manual user decision)
 - [x] Phase 12 — Documentation
 - [x] Phase DEV — Dev tooling (Docker, deployment scripts, test suite)
 - [ ] Phase 13  — Trading system (13.1–13.19 complete; 13.20 is manual user decision)
-- [ ] Phase 14  — Bookforge (14.0-14.12 done: shell, skeleton, llm + doctor, layers 1-3, research, layers 4-6 + bible, briefing + prose + mechanical checks, critic/continuity/judge/revision/extraction, staleness + change requests, morning report + assembly + benchmarks, service API, dashboard, export; 14.13 workbench next)
+- [ ] Phase 14  — Bookforge (14.0-14.13 done: shell, skeleton, llm + doctor, layers 1-3, research, layers 4-6 + bible, briefing + prose + mechanical checks, critic/continuity/judge/revision/extraction, staleness + change requests, morning report + assembly + benchmarks, service API, dashboard, export, workbench; every milestone built, none yet run end to end against the real models)
 
 ---
 

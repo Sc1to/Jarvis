@@ -38,7 +38,7 @@ this those through to too under until up very was we were what when where which 
 you your yours yourself said asked
 """.split())
 
-BLOCK, WARN = "block", "warn"
+BLOCK, WARN, NOTE = "block", "warn", "note"
 FAR_OFF = (0.5, 2.0)  # a scene under half the minimum or over twice the maximum length blocks; merely outside the range warns
 
 
@@ -58,11 +58,12 @@ def sentences(text: str) -> list[str]:
 @dataclass
 class Issue:
     code: str
-    severity: str  # block | warn
+    severity: str  # block | warn | note (a note is recorded, never counted)
     message: str
     excerpt: str = ""
     start: int | None = None  # character span in the checked text, for passage-level revision
     end: int | None = None
+    rule: str | None = None  # the rules panel's rule that raised it
 
 
 @dataclass
@@ -96,11 +97,17 @@ class CheckContext:
     tense: str = "past"
     language: str = "English"
     banned: list[str] = field(default_factory=list)  # lines of banned.txt, comments already removed
+    phrase_rules: list[tuple[str, str, str]] = field(default_factory=list)  # (rule id, phrase, severity) from workbench/rules.yaml
     names: dict[str, str] = field(default_factory=dict)  # entity id -> full name, for the characters of the scene
     pov_id: str | None = None
     previous_tail: str | None = None  # the end of the previous scene
     earlier_texts: list[str] = field(default_factory=list)  # accepted scenes before this one
     qc: QC = field(default_factory=QC)
+
+
+def all_banned(ctx: "CheckContext") -> list[str]:
+    """Every phrase a revision must avoid: banned.txt and the blocking phrase rules."""
+    return list(ctx.banned) + [p for _, p, sev in ctx.phrase_rules if sev == BLOCK]
 
 
 def load_banned(text: str) -> list[str]:
@@ -230,6 +237,15 @@ def check_scene(text: str, ctx: CheckContext) -> MechanicalReport:
             continue
         for m in rx.finditer(text):
             issues.append(Issue("banned_phrase", BLOCK, f"banned phrase: '{m.group(0)}'", _excerpt(text, m.start(), m.end()), m.start(), m.end()))
+
+    # phrase rules from the rules panel (block, warn or note)
+    for rule_id, phrase, severity in ctx.phrase_rules:
+        rx = _banned_regex(phrase)
+        if rx is None:
+            report.skipped.append(f"rule {rule_id}: the phrase is not usable")
+            continue
+        for m in rx.finditer(text):
+            issues.append(Issue("rule_phrase", severity, f"rule {rule_id}: '{m.group(0)}'", _excerpt(text, m.start(), m.end()), m.start(), m.end(), rule=rule_id))
 
     # phrases repeated from earlier scenes, and inside this one
     n = qc.repeat_ngram_size
