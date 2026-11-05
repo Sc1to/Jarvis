@@ -40,3 +40,6 @@ platform/writer/data/
 *.pem
 *.key
 config.json
+
+# Bookforge host config
+platform/bookforge/config.yaml

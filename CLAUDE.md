@@ -52,7 +52,8 @@ Last completed:    Phase 13.19 — Paper trading validation tooling; Phase DEV �
                    Bible Workshop manual editing (2026-11-04) — edit unapproved Book/Acts/chapter-plan/scene-brief text directly; structural validation + confirm detected counts before save; optional brief QA
                    Phase 14 planning (2026-11-05) — bookforge spec adopted as docs/BOOKFORGE.md; ports, colibri backend, systemd names and BUILD_SEQUENCE entry documented (docs only, no code)
                    Phase 14.0 (2026-11-05) — bookforge service shell: platform/bookforge (health + error envelope, 5 tests), systemd unit, frontend/bookforge placeholder, deploy.sh / build-frontends.sh wiring; not yet deployed
-Currently working: Phase 13.20 — Live trading activation (manual user decision); Phase 14 — Bookforge (milestone 14.0 done, 14.1 next)
+                   Phase 14.1 (2026-11-05) — bookforge skeleton: CLI (new/run/status/approve/doctor), layered config, state.json, vcs.py (git per series), fake LLM client; 75 tests; layer handlers still empty
+Currently working: Phase 13.20 — Live trading activation (manual user decision); Phase 14 — Bookforge (14.0, 14.1 done; 14.2 next)
 Blocked on:        Infra phases (1, 2) are hardware setup; 3-6 months paper trading runtime
 Remaining:         Phase 13.20 (manual user decision)
 ```
@@ -72,7 +73,7 @@ Remaining:         Phase 13.20 (manual user decision)
 - [x] Phase 12 — Documentation
 - [x] Phase DEV — Dev tooling (Docker, deployment scripts, test suite)
 - [ ] Phase 13  — Trading system (13.1–13.19 complete; 13.20 is manual user decision)
-- [ ] Phase 14  — Bookforge (14.0 service shell done; pipeline starts at 14.1)
+- [ ] Phase 14  — Bookforge (14.0 service shell, 14.1 skeleton done; 14.2 llm.py + doctor next)
 
 ---
 
@@ -164,7 +165,7 @@ These rules are non-negotiable. Follow them on every task without being reminded
 │   │       └── refactorer/
 │   ├── chat/
 │   ├── writer/
-│   ├── bookforge/              ← Phase 14 (service shell only)
+│   ├── bookforge/              ← Phase 14 (shell + CLI skeleton)
 │   ├── coding/
 │   ├── memory/                 ← shared memory package
 │   └── tools/                  ← shared tool library

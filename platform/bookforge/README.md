@@ -3,7 +3,7 @@
 Automated book-writing pipeline (Phase 14). Separate from the writer app: shares no database, files or settings with `platform/writer`.
 
 - Spec: `docs/BOOKFORGE.md`. Build plan: `docs/BUILD_SEQUENCE.md`, Phase 14.
-- Status: milestone 14.0, service shell only (health and error envelope). The pipeline starts at 14.1.
+- Status: milestones 14.0 (service shell) and 14.1 (CLI skeleton) done. No layer handlers exist yet, so `run` does nothing useful until 14.3.
 - Port 8100; systemd unit `platform-bookforge`; route `/bookforge` (API under `/bookforge/api`).
 - Data: `$BOOKFORGE_DATA_DIR` (default `/opt/platform/data/bookforge`), one Git repo per series.
 
@@ -14,5 +14,19 @@ python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 uvicorn main:app --reload --port 8100
 ```
+
+Command line (from this directory, venv active):
+
+```bash
+python -m bookforge new /opt/platform/data/bookforge/my-series --premise premise.md
+python -m bookforge status  <series> [--book b1] [--json]
+python -m bookforge run     <series> [--book b1] [--until synopsis]
+python -m bookforge approve <series> direction
+python -m bookforge doctor  [<series>]
+```
+
+Exit codes: 0 ok (including stopping at a checkpoint), 1 error or failed layer, 2 `run` stopped because a layer has no implementation yet.
+
+Config: built-in defaults, then `config.yaml` here (copy `config.example.yaml`; gitignored) or the file named by `BOOKFORGE_CONFIG`, then `<series>/config.yaml`.
 
 Tests: `pytest tests` from this directory with the venv active.

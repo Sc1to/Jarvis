@@ -466,7 +466,7 @@ layers:                            # model for the refine step; review is always
   synopsis:          {model: critic, checkpoint: direction}
   acts:              {model: critic, count: [3, 4], checkpoint: structure}
   chapters:          {model: critic, count: [25, 35], checkpoint: structure}
-  scenes:            {model: critic, per_chapter: [2, 4]}
+  scenes:            {model: critic, per_chapter: [2, 4], checkpoint: structure}
   prose:             {model: writer, drafts: 2, words: [1500, 3000]}
 
 research:
@@ -494,6 +494,10 @@ git:
   tag_checkpoints: true
 ```
 
+Layers tagged with the same `checkpoint` form a group: the pipeline stops once every layer in the group is accepted, and later layers wait until you run `approve`. The checkpoint table says Structure comes "after layers 4–6", so `scenes` carries `structure` too (the original config tagged only acts and chapters). The `voice` and `final` checkpoints are not tied to a layer; they are reached by the prose and assembly steps.
+
+Config is merged in this order: built-in defaults, the host `config.yaml` (`BOOKFORGE_CONFIG`, or `platform/bookforge/config.yaml`), then `<series>/config.yaml`. Unknown keys are errors. `platform/bookforge/config.example.yaml` lists every default.
+
 The values above are starting points, not tested settings. Tune them on chapter 1 and the benchmarks.
 
 ## Building it with Claude Code
@@ -517,9 +521,9 @@ Bookforge is built inside the Jarvis repository by Claude Code, one milestone at
 
 **Milestones**
 
-0. Service shell: `platform/bookforge/` with `GET /health`, `{data, status}` envelope, venv, requirements, systemd unit, health test, deploy and Caddy wiring for `/bookforge`. Empty frontend placeholder. **Built 2026-11-05.**
+0. Service shell (done): `platform/bookforge/` with `GET /health`, `{data, status}` envelope, venv, requirements, systemd unit, health test, deploy and Caddy wiring for `/bookforge`. Empty frontend placeholder. **Built 2026-11-05.**
 
-1. Skeleton: CLI (`new`, `run`, `status`, `approve`, `doctor`), config, `state.json`, fake LLM client for tests, Git commits through `vcs.py`.
+1. Skeleton (done 2026-11-05): CLI (`new`, `run`, `status`, `approve`, `doctor`), config, `state.json`, fake LLM client for tests, Git commits through `vcs.py`. The layer runner is a thin loop with an empty handler registry, so `run` stops at the first layer (exit code 2) until milestone 14.3.
 
 2. `llm.py` and `doctor`: real calls to both endpoints and the web tool, retries, call logging.
 
