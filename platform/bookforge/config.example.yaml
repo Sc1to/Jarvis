@@ -11,6 +11,7 @@ models:
     manage_service: null
     timeout_seconds: 600               # seconds to wait for one reply
     isolate_requests: true             # unique first line per request: stops Ollama reusing state from the previous one
+    extra_body: {}                     # extra request fields; for a reasoning model (Qwen3...) on Ollama use {reasoning_effort: none}
   critic:
     base_url: http://127.0.0.1:8041/v1
     model: ""                          # id from `c/coli status`
@@ -18,6 +19,7 @@ models:
     manage_service: platform-colibri-critic   # start/stop per step to save RAM (not wired up yet)
     timeout_seconds: 1800              # the big model can take many minutes per reply
     isolate_requests: true
+    extra_body: {}
   decide:
     url: http://127.0.0.1:8041/v1/systemone
 
