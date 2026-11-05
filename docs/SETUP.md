@@ -328,7 +328,7 @@ PLATFORM VALIDATION
 ✓ Platform         all systems operational
 ============================================
 Setup complete. Your platform is ready.
-Access it at: http://ms-s1.tail-xxxx.ts.net
+Access it at: https://ms-s1.tail-xxxx.ts.net (after "Enable HTTPS" at the end of this file; until then plain `http://`)
 ============================================
 ```
 
@@ -417,7 +417,7 @@ sudo systemctl reload caddy
 
 1. Open the browser on your phone (Safari or Chrome)
 2. Type the URL from Step 23 into the address bar
-   It looks like: `http://ms-s1.tail-xxxx.ts.net`
+   It looks like: `https://ms-s1.tail-xxxx.ts.net` (`http://` before HTTPS is enabled)
 3. You should see the platform — starting with the admin panel
 
 If you see the admin panel, everything is working. Your mini PC is now your personal AI server,
@@ -676,3 +676,19 @@ From here, everything happens through the web interface — the admin panel, the
 The terminal stays in the background as a safety net you will rarely need.
 
 Welcome to your personal AI platform.
+
+
+---
+
+## Enable HTTPS (Tailscale certificates)
+
+Browsers only allow service workers / Web Push on https (or localhost). One-time setup:
+
+1. Tailscale admin console > DNS > enable **HTTPS Certificates** (needs MagicDNS on).
+2. Let Caddy request certificates from tailscaled:
+   ```bash
+   echo 'TS_PERMIT_CERT_UID=caddy' | sudo tee -a /etc/default/tailscaled
+   sudo systemctl restart tailscaled
+   ```
+3. Regenerate the Caddyfile and reload: `bash scripts/build-frontends.sh bookforge`
+4. Open `https://<host>.<tailnet>.ts.net/bookforge/` (the old `http://<tailscale-ip>` URL keeps working).
