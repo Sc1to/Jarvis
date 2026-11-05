@@ -102,9 +102,10 @@ class Research(_Strict):
     searxng_url: str = "http://127.0.0.1:8060"  # localhost only: the one address the web wrapper may reach on this machine
     search_language: str = Field("en", pattern=r"^(all|[a-z]{2,3}(-[A-Za-z0-9]+)?)$")  # language of the results SearXNG asks for
     wikipedia_language: str = Field("en", pattern=r"^[a-z]{2,8}(-[a-z0-9]+)?$")  # which Wikipedia to search (en, de, fr, ...)
-    results_per_question: int = Field(8, gt=0)  # search results considered per question
+    results_per_question: int = Field(10, gt=0)  # search results considered per question
     max_questions: int = Field(6, gt=0)  # questions asked per layer
-    pages_per_question: int = Field(3, gt=0)  # pages read per question
+    pages_per_question: int = Field(5, gt=0)  # pages read per question (at most; a page with no readable text does not count)
+    facts_per_question: int = Field(3, gt=0)  # stop reading pages for a question once this many facts are kept
     skip_domains: list[str] = Field(default_factory=lambda: list(DEFAULT_SKIP_DOMAINS))  # results from these sites are not read
     notes_model: Literal["writer", "critic"] = "writer"  # reads pages and extracts facts
     check_relevance: bool = True  # a second look: drop facts that do not answer the question for the story's time and place

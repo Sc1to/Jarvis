@@ -20,6 +20,7 @@ SEARCH_HOSTS = ("duckduckgo.com", "duck.co")
 class Hit:
     url: str
     title: str
+    snippet: str = ""  # the search engine's excerpt, when it gives one
 
 
 def _unwrap(href: str) -> str | None:
@@ -50,7 +51,8 @@ def extract_hits(links: list[dict], limit: int) -> list[Hit]:
         if url is None or url in seen:
             continue
         seen.add(url)
-        hits.append(Hit(url=url, title=" ".join(str(link.get("text", "")).split())[:200]))
+        hits.append(Hit(url=url, title=" ".join(str(link.get("text", "")).split())[:200],
+                        snippet=" ".join(str(link.get("snippet", "")).split())[:400]))
         if len(hits) >= limit:
             break
     return hits
