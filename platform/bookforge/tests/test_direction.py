@@ -308,6 +308,7 @@ class LayerLLM:
             ("Decide what the author needs", question_for_layer),
             ("Source page: https://a.example/p", RESEARCH_FACTS),
             ("Source page: https://a.example/q", RESEARCH_FACTS_2),
+            ("Which of these facts directly answer", '{"keep": [1, 2, 3]}'),
         ])
 
 

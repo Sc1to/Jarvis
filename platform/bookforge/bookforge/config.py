@@ -80,6 +80,7 @@ class Research(_Strict):
     max_questions: int = Field(6, gt=0)  # questions asked per layer
     pages_per_question: int = Field(2, gt=0)  # pages read per question
     notes_model: Literal["writer", "critic"] = "writer"  # reads pages and extracts facts
+    check_relevance: bool = True  # a second look: drop facts that do not answer the question for the story's time and place
     notes_max_chars: int = Field(6000, gt=0)  # research notes included in a prompt
     page_max_chars: int = Field(12000, gt=0)  # page text given to the model
     scene_questions: int = Field(2, ge=0)  # questions researched per chapter before its scenes are planned (0 = none)

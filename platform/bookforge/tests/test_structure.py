@@ -266,7 +266,7 @@ def research_rules(cite=False):
     reply = scenes_reply(2)
     if cite:
         reply["scenes"][0]["research"] = ["b1-0001"]
-    return out + [("Scene ids are consecutive: b1.ch02.s1", dump(reply)), ("Decide what the author needs", q), ("Source page: https://a.example/w", f)]
+    return out + [("Scene ids are consecutive: b1.ch02.s1", dump(reply)), ("Decide what the author needs", q), ("Source page: https://a.example/w", f), ("Which of these facts directly answer", '{"keep": [1, 2, 3]}')]
 
 
 def research_web():

@@ -157,7 +157,8 @@ def test_a_research_step_over_wikipedia_stores_facts_with_the_article_address(pr
     questions = '{"questions": [{"question": "How were records kept?", "query": "clerks ledgers", "sensitive": false}]}'
     facts = ('{"facts": [{"claim": "Records were kept in bound ledgers.", "quote": "Records were kept in bound ledgers and checked each quarter"},'
              ' {"claim": "Invented.", "quote": "this sentence is not in the article text at all"}]}')
-    llm = RuleLLM([("Decide what the author needs", questions), ("Source page: https://en.wikipedia.org/wiki/Ledger", facts)])
+    llm = RuleLLM([("Decide what the author needs", questions), ("Source page: https://en.wikipedia.org/wiki/Ledger", facts),
+                   ("Which of these facts directly answer", '{"keep": [1, 2, 3]}')])
     outcome = run_research(StepContext(project, "series_north_star", llm, web), "series", "Background.", "# The Ledger\nA story.")
     assert (outcome.asked, outcome.answered, outcome.facts) == (1, 1, 1)
     [fact] = stores_for(project)["series"].facts()
