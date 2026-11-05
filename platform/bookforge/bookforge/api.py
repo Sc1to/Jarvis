@@ -14,6 +14,7 @@ Everything lives under /api (Caddy strips /bookforge). Responses use the platfor
     GET  /api/series/{s}/books/{b}/changes            change requests
     POST /api/series/{s}/books/{b}/changes/{id}/approve|reject
     POST /api/series/{s}/books/{b}/approve/{checkpoint}
+    POST /api/series/{s}/books/{b}/rewrite            {targets, force} scenes or a chapter to write again
     POST /api/series/{s}/books/{b}/assemble           {partial}
     POST /api/series/{s}/books/{b}/run                {until}      -> a background job
     POST /api/series/{s}/books/{b}/stale/fix          {only, accept} -> a background job
@@ -127,6 +128,11 @@ class PushUnsubscribe(BaseModel):
 class ExportBody(BaseModel):
     formats: list[str] | None = None
     draft: bool = False
+
+
+class RewriteBody(BaseModel):
+    targets: list[str]
+    force: bool = False
 
 
 class AssembleBody(BaseModel):
@@ -318,6 +324,12 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
         require_idle(series)
         ops.approve_checkpoint(project, checkpoint)
         return ok({"checkpoint": checkpoint, "status": "approved"})
+
+    @router.post("/series/{series}/books/{book}/rewrite")
+    def rewrite(series: str, book: str, body: RewriteBody):
+        project = open_project(series, book)
+        require_idle(series)
+        return ok(ops.rewrite_scenes(project, body.targets, body.force))
 
     @router.post("/series/{series}/books/{book}/assemble")
     def assemble(series: str, book: str, body: AssembleBody | None = None):

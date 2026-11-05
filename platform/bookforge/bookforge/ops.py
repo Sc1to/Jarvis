@@ -4,6 +4,7 @@ Each takes an open project and the clients it needs (so tests and the service ca
 returns plain data; printing and HTTP formatting stay with the caller.
 """
 
+import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -125,3 +126,55 @@ def decide_change(project: Project, cr_id: str, approve: bool) -> change_request
     if project.config.git.commit_each_step:
         vcs.commit(project.root, f"{project.book}: change request {decided.id} {decided.status}")
     return decided
+
+
+# ── rewriting scenes ──────────────────────────────────────────────────────────
+
+SCENE_FILES = ("final.md", "revised.md", "summary.md", "review.json", "extracted.yaml", "deps.yaml")
+
+
+def rewrite_scenes(project: Project, targets: list[str], force: bool = False) -> dict:
+    """Throw away the text of scenes (or a whole chapter) so the next `run` writes them again.
+
+    Deleting files is not enough: an accepted scene is skipped whatever is on disk. This puts the scenes back to pending
+    (and the prose layer back to unfinished), removes their drafts, text, summary, review and what was observed from
+    them. Everything stays in Git history. Text you wrote yourself is not discarded unless `force`.
+    """
+    from . import scenefiles
+    from .state import Item
+
+    scenes = bible_store.load_scenes(project) if bible_store.scenes_path(project).exists() else []
+    chosen: list[str] = []
+    for t in targets:
+        found = [s.id for s in scenes if s.id == t or s.chapter == t]
+        if not found:
+            raise BookforgeError(f"'{t}' is not a scene or chapter of this book (try b1.ch01.s1 or b1.ch01)")
+        chosen += [i for i in found if i not in chosen]
+    kept: list[str] = []
+    reset: list[str] = []
+    for sid in chosen:
+        review = scenefiles.read(scenefiles.review_path(project, sid))
+        try:
+            own = bool(review) and json.loads(review).get("source") == "adopted"
+        except ValueError:
+            own = False
+        if own and not force:
+            kept.append(sid)
+            continue
+        d = scenefiles.scene_dir(project, sid)
+        for f in list(d.glob("draft-*.md")) + [d / n for n in SCENE_FILES]:
+            f.unlink(missing_ok=True)
+        item = project.state.items.setdefault(sid, Item())
+        item.status, item.note, item.updated = "pending", None, now_stamp()
+        reset.append(sid)
+    if reset:
+        tracks = bible_store.load_tracks(project)
+        for t in tracks:
+            t.observed = [o for o in t.observed if o.get("at") not in reset]
+        bible_store.save_tracks(project, tracks)
+        if project.state.layers["prose"].status == "accepted":
+            project.state.layers["prose"].status = "drafted"
+        project.save_state()
+        if project.config.git.commit_each_step:
+            vcs.commit(project.root, f"{project.book}: {len(reset)} scene(s) reset for rewriting: {', '.join(reset[:6])}{'...' if len(reset) > 6 else ''}")
+    return {"reset": reset, "kept": kept}

@@ -218,9 +218,6 @@ def prose(ctx: StepContext) -> StepResult:
     voice = project.state.checkpoints["voice"].status
     files: list[str] = []
 
-    if voice == "waiting":
-        return StepResult(files=[], note="chapter 1 is written; waiting for you to approve the voice checkpoint",
-                          outcome="partial", checkpoint="voice")
     if not scenefiles.read(project.root / "style" / "guide.md") and not list((project.root / "style" / "samples").glob("*.md")):
         log.warning("no style guide and no sample passages: the north stars' tone is the only voice guidance")
 

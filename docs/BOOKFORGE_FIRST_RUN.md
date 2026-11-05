@@ -168,7 +168,7 @@ What to look for:
 
 If something is wrong, **edit the file by hand** (your edits are kept and become the approved version) or improve the prompt:
 `bookforge/prompts/series_north_star.md`, `book_north_star.md` and `synopsis.md` copied to `$S/workbench/prompts/` (or edit them
-in the dashboard: Workbench, Prompts). Delete the file and rerun to regenerate it.
+in the dashboard: Workbench, Prompts). Delete the file and rerun to regenerate it (for the direction and structure documents, deleting does work; for written scenes use `rewrite`).
 
 ```bash
 python -m bookforge approve $S direction
@@ -252,9 +252,9 @@ What to look for, and where the fix lives:
 | Repeats the previous scene's ending | context handling | check the context window again (stage 0) |
 
 **Do this now, once:** write `style/guide.md` (a page: person, tense, sentence feel, what to avoid, two example sentences), put
-sample passages in `style/samples/`, extend `style/banned.txt`. Delete a scene's `final.md` and `draft-*.md` to have it written
-again, and rerun until chapter 1 reads like something you could edit rather than rewrite. Each change to the guide, samples
-or banned list marks written scenes stale; that is expected here (`python -m bookforge stale $S --fix`, or just delete and rewrite).
+sample passages in `style/samples/`, extend `style/banned.txt`. Then `python -m bookforge rewrite $S b1.ch01` and `python -m bookforge run $S` to write chapter 1
+again (deleting files does not do it; `rewrite` does), and repeat until chapter 1 reads like something you could edit rather
+than rewrite. Each change to the guide, samples or banned list marks written scenes stale; that is expected here.
 
 ```bash
 python -m bookforge approve $S voice
@@ -276,7 +276,7 @@ Use a chapter you have already written, and rewrite one scene per step so you ca
 python -m bookforge review $S b1.ch01.s1    # the review record, after each step
 ```
 
-For each step, edit `qc:` in `$S/config.yaml`, delete one scene's `final.md` and `draft-*.md` (and `review.json`), rerun, and read
+For each step, edit `qc:` in `$S/config.yaml`, `python -m bookforge rewrite $S b1.ch01.s1`, `run`, and read
 `review`. Do them in this order, because each is more expensive than the one before:
 
 1. `judge_drafts: true`. Does the chosen draft look better to you than the other? (Workbench: the scene's Compare tab.)
