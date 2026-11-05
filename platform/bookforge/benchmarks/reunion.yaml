@@ -1,0 +1,19 @@
+id: reunion
+purpose: A quiet meeting between people who have not seen each other for years.
+pov: Tomas
+setting: a railway platform in early morning
+characters:
+- name: Tomas
+  facts:
+  - a schoolteacher; reserved
+- name: Hana
+  facts:
+  - his former wife, back after eleven years
+beats:
+- Tomas sees Hana step off the train and does not wave.
+- They talk about small things, avoiding the reason she came.
+- Hana says why she came.
+- Tomas picks up her bag without answering.
+words:
+- 300
+- 600

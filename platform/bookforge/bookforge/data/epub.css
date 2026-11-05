@@ -1,0 +1,8 @@
+body { font-family: serif; line-height: 1.5; margin: 0 5%; }
+p { margin: 0; text-indent: 1.4em; text-align: justify; }
+h1, h2 { text-align: center; font-weight: normal; margin: 3em 0 1.5em; page-break-before: always; }
+h1 + h2 { page-break-before: avoid; }
+p.scene-break, hr + p, h1 + p, h2 + p { text-indent: 0; }
+p.scene-break { text-align: center; margin: 1.5em 0; }
+hr { border: 0; margin: 1.5em 0; }
+.title-page, header { text-align: center; }

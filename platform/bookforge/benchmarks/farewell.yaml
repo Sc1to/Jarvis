@@ -1,0 +1,19 @@
+id: farewell
+purpose: A character leaves a place for good and the scene does not say so outright.
+pov: Josef
+setting: a fishing village jetty at dawn
+characters:
+- name: Josef
+  facts:
+  - an old net-maker; dry humour
+- name: Lena
+  facts:
+  - the harbour clerk who has known him forty years
+beats:
+- Josef gives Lena the key to his workshop.
+- Lena pretends it is an ordinary errand and asks about the tide.
+- Josef answers the tide, and only the tide.
+- He boards the boat without looking back, and Lena reads the sky until it is gone.
+words:
+- 300
+- 600

@@ -62,7 +62,7 @@ qc:
   critic_min_score: 3
   max_revision_rounds: 2
   banned_phrases: style/banned.txt
-  critic_may_accept: within_chapter    # larger change requests wait for you
+  critic_may_accept: within_chapter    # within_chapter | never; change requests reaching other chapters always wait for you
   dialogue_ratio: [0.05, 0.75]         # share of words inside quotes; outside it is a warning
   sentence_variation_min: 0.45         # stdev / mean of sentence length; below it the rhythm is flagged as monotone
   overused_word_percent: 1.0           # a content word above this share of the scene is flagged (names excluded)
@@ -76,6 +76,19 @@ qc:
   review_structure: true               # critic review of acts, chapters and scene plans against their parents
   continuity_batch_size: 8             # questions per model call
   continuity_max_questions: 40         # per scene
+
+export:
+  title: ""                            # falls back to the series folder's name
+  subtitle: ""
+  author: ""
+  rights: ""
+  pdf_engine: auto                     # auto | typst | xelatex | lualatex (auto: the first one installed)
+  page_width_in: 6.0                   # print interior: 6 x 9 in
+  page_height_in: 9.0
+  margin_in: 0.8
+  font_size_pt: 11
+  reference_docx: ""                   # your own Word styles instead of the built-in manuscript format
+  cover_image: ""                      # EPUB cover, a path inside the series
 
 git:
   commit_each_step: true

@@ -1,40 +1,40 @@
 import { useEffect, useState } from 'react'
+import { disablePush, enablePush, pushState, type PushState } from './lib/push'
+import { useRoute } from './lib/route'
+import Book from './pages/Book'
+import SeriesList from './pages/SeriesList'
 
-interface Status {
-  service: string
-  version: string
-  milestone: string
+function PushToggle() {
+  const [state, setState] = useState<PushState>('off')
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => { pushState().then(setState).catch(() => setState('unsupported')) }, [])
+  if (state === 'unsupported') return null
+  const toggle = async () => {
+    setError(null)
+    try { setState(state === 'on' ? await disablePush() : await enablePush()) } catch (e) { setError(String(e)) }
+  }
+  const label = state === 'on' ? 'Notifications on' : state === 'denied' ? 'Notifications blocked in the browser' : 'Notify me'
+  return (
+    <button onClick={toggle} disabled={state === 'denied'} title={error ?? label} aria-pressed={state === 'on'}
+      className="min-h-10 rounded-md border border-slate-300 bg-white px-3 text-sm disabled:opacity-50">
+      {state === 'on' ? '🔔 On' : state === 'denied' ? '🔕 Blocked' : '🔔 Notify me'}
+    </button>
+  )
 }
 
-// Placeholder for milestone 14.0: proves the route, proxy and API envelope work.
-// The real dashboard arrives in milestone 14.11.
 export default function App() {
-  const [status, setStatus] = useState<Status | null>(null)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    fetch('/bookforge/api/status')
-      .then((r) => r.json())
-      .then((body) => {
-        if (body.status === 'ok') setStatus(body.data)
-        else setError(body.detail ?? 'Unknown error')
-      })
-      .catch((e) => setError(String(e)))
-  }, [])
-
+  const route = useRoute()
   return (
-    <main className="mx-auto max-w-xl p-4 sm:p-8">
-      <h1 className="text-2xl font-semibold">Bookforge</h1>
-      <p className="mt-2 text-sm text-gray-600">Service shell. The pipeline is not built yet.</p>
-      <div className="mt-6 rounded-lg border border-gray-200 p-4 text-sm">
-        {error && <p className="text-red-600">Backend unreachable: {error}</p>}
-        {!error && !status && <p>Checking backend…</p>}
-        {status && (
-          <p>
-            {status.service} v{status.version}, milestone {status.milestone}
-          </p>
-        )}
-      </div>
-    </main>
+    <div className="min-h-screen bg-slate-50 text-slate-900">
+      <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 backdrop-blur">
+        <div className="mx-auto flex max-w-5xl items-center justify-between gap-2 px-3 py-2 sm:px-4">
+          <a href="#/" className="text-base font-semibold">Bookforge</a>
+          <PushToggle />
+        </div>
+      </header>
+      <main className="mx-auto max-w-5xl px-3 py-3 sm:px-4 sm:py-4">
+        {route.series && route.book ? <Book key={`${route.series}/${route.book}`} route={route} /> : <SeriesList />}
+      </main>
+    </div>
   )
 }

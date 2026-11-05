@@ -49,6 +49,44 @@ class Deps:
         return cls(**{k: data.get(k, [] if k not in ("scene", "parent") else "") for k in KEYS})
 
 
+# What makes a written scene stale. `summaries` is left out on purpose: a regenerated summary is never
+# word-for-word the same, so counting it would mark the rest of the book stale after every patch. What matters
+# in a summary (the facts) is held by the bible, which is tracked.
+STALE_KEYS = ("scene", "parent", "north_stars", "style", "bible", "research", "timeline", "previous")
+
+
+@dataclass(frozen=True)
+class Reason:
+    key: str  # a deps.yaml key
+    item: str  # the record (id) that differs
+    kind: str  # changed | added | removed
+
+    def text(self) -> str:
+        return f"{self.key}: {self.item} {self.kind}"
+
+
+def _entries(deps: Deps, key: str) -> dict[str, str]:
+    value = getattr(deps, key)
+    values = [value] if isinstance(value, str) else value
+    out = {}
+    for v in values:
+        if v:
+            name, _, fp = v.rpartition("@")
+            out[name or v] = fp
+    return out
+
+
+def diff(old: Deps, new: Deps, keys=STALE_KEYS) -> list[Reason]:
+    """What differs between what a scene was built from and what is there now."""
+    reasons = []
+    for key in keys:
+        a, b = _entries(old, key), _entries(new, key)
+        reasons += [Reason(key, i, "changed") for i in a if i in b and a[i] != b[i]]
+        reasons += [Reason(key, i, "removed") for i in a if i not in b]
+        reasons += [Reason(key, i, "added") for i in b if i not in a]
+    return reasons
+
+
 def write_deps(path: Path, deps: Deps) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(deps.to_yaml(), encoding="utf-8")

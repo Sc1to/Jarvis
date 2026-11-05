@@ -1364,12 +1364,12 @@ Components (Claude Code prompts to be written before each component):
 | 14.5  | Layers 4–6 and the story bible. **Done 2026-11-05** |
 | 14.6  | Briefing builder, prose layer, mechanical checker. **Done 2026-11-05** |
 | 14.7  | Continuity, critic, pairwise judge, revision loop, extraction into `observed`, critic review of layers 4-6. **Done 2026-11-05** |
-| 14.8  | Staleness and change requests |
-| 14.9  | Morning report, assembly, benchmarks |
-| 14.10 | Service API wrapping the library |
-| 14.11 | Dashboard frontend — mobile-responsive, Web Push |
-| 14.12 | Export — DOCX, EPUB, PDF |
-| 14.13 | Workbench — rules, prompt studio, arc views |
+| 14.8  | Staleness and change requests — `stale` (scan, `--fix`: re-check / patch / redraft, `--accept`), plan snapshot, `changes`. **Done 2026-11-05** |
+| 14.9  | Morning report, assembly, benchmarks — `report`, `assemble`, `bench`. **Done 2026-11-05** |
+| 14.10 | Service API wrapping the library — `api.py`, `jobs.py`, `ops.py`; background jobs, one per series. **Done 2026-11-05** |
+| 14.11 | Dashboard frontend — mobile-responsive, Web Push. **Done 2026-11-05** |
+| 14.12 | Export — DOCX, EPUB, PDF. **Done 2026-11-05** (PDF engines untested on the dev machine) |
+| 14.13 | Workbench — rules, prompt studio, arc views. **Done 2026-11-05** (character arc lanes not built) |
 
 **Phase 14 complete when:** a short premise produces north stars and a synopsis and pauses at the direction checkpoint on the mini PC, and one full test book passes all four checkpoints.
 

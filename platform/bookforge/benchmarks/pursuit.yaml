@@ -1,0 +1,19 @@
+id: pursuit
+purpose: A character is chased through a place she knows well and uses what she knows.
+pov: Ines
+setting: the covered market at closing time
+characters:
+- name: Ines
+  facts:
+  - a fruit seller; quick, observant
+- name: the two men
+  facts:
+  - strangers in dark coats
+beats:
+- Ines notices the men following her between the stalls.
+- She leads them into the cold store aisle.
+- She slips out through the delivery door and locks it behind her.
+- Outside, she realises she dropped the thing they want.
+words:
+- 300
+- 600

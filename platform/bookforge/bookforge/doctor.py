@@ -111,6 +111,9 @@ def run_doctor(
     git = shutil.which("git")
     checks.append(Check("git", "pass" if git else "fail", git or "git not found on PATH"))
 
+    pandoc = shutil.which("pandoc")
+    checks.append(Check("pandoc", "pass" if pandoc else "warn", pandoc or "pandoc not found: `export` needs it (sudo apt install pandoc)"))
+
     config: Config | None = None
     try:
         config = load_config(series)
@@ -135,6 +138,12 @@ def run_doctor(
                     checks.append(Check(f"model_{role}", "pass", m.model))
                 else:
                     checks.append(Check(f"model_{role}", "warn", f"models.{role}.model not set (see `c/coli status`)"))
+
+    if config is not None:
+        wanted = config.export.pdf_engine
+        found = next((e for e in (("typst", "xelatex", "lualatex") if wanted == "auto" else (wanted,)) if shutil.which(e)), None)
+        checks.append(Check("pdf_engine", "pass" if found else "warn",
+                            found or "no PDF engine (typst, xelatex or lualatex): `export` can make DOCX, EPUB and the Markdown companion, not PDFs"))
 
     if series is not None:
         try:

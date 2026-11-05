@@ -16,6 +16,8 @@ class Question:
     id: str
     kind: str  # "contradiction" (yes = the text clashes with the fact) or "shown" (yes = the change happens on the page)
     text: str
+    severity: str = "block"  # for a rule from the rules panel: block | warn | note (warn and note are recorded, not revised)
+    rule: str | None = None
 
 
 @dataclass

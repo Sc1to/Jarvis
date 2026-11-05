@@ -9,6 +9,7 @@ reading, copy it to <series>/workbench/prompts/ and reword it.
 import re
 from dataclasses import dataclass, field
 
+from .. import rules
 from ..bible.models import Scene
 from ..errors import BookforgeError
 from ..prompts import render
@@ -85,7 +86,7 @@ def run_critic(ctx, scene: Scene, text: str) -> CriticReport:
     try:
         data = ask_json(ctx, f"{scene.id} critic", "critic", "critic", _check(text), max_tokens=900,
                         rubric=render("critic_rubric", project.root).strip(), brief=scene_brief(project, scene),
-                        voice=voice_excerpt(project), text=text)
+                        voice=voice_excerpt(project), text=text, rules=rules.prose_rules_text(project, scene) or "(none)")
     except BookforgeError as e:
         return CriticReport(error=str(e))
     weakest = [Weak(w["criterion"], " ".join(w["quote"].split()), str(w["issue"]).strip()) for w in data["weakest"]]

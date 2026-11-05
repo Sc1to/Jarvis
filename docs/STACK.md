@@ -567,6 +567,7 @@ pip install pywebpush
 - Subscriptions stored in `trading_push_subscriptions` table
 - `pywebpush.webpush()` is synchronous — always call via `asyncio.to_thread()` from async contexts
 - Dead subscriptions (HTTP 410 from push service) are automatically pruned
+- Bookforge (Phase 14.11) uses the same scheme with its own SQLite file, `/opt/platform/data/bookforge/push.db` (keys and subscriptions), so it needs `pywebpush>=2.0` in its own venv; it sends when a run reaches a checkpoint or fails, a book is finished, or a benchmark loses
 
 ---
 

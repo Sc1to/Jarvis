@@ -16,7 +16,7 @@ import math
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
-from . import scenefiles
+from . import rules, scenefiles
 from .bible import store
 from .bible.lookup import day_of, scene_entities, state_at
 from .bible.models import Chapter, Constants, Scene, TimelineEntry
@@ -192,11 +192,20 @@ def _assemble(d: _Data, k: _Knobs) -> tuple[list[Section], Deps]:
         sections.append(Section("Sample passages (the voice to match; do not copy their content)", body))
         deps.style += [tag(f"sample:{p.name}", p.read_text(encoding="utf-8")) for p in chosen]
     banned_file = scenefiles.read(project.root / project.config.qc.banned_phrases) or ""
-    banned = load_banned(banned_file)
+    scene_rules = rules.rules_for(project, scene)
+    banned = load_banned(banned_file) + [r.phrase.strip() for r in scene_rules if r.type == "banned_phrase" and r.severity in ("block", "warn")]
     if banned:
         shown = [b[3:] if b.startswith("re:") else b for b in banned][:80]
         sections.append(Section("Phrases never to use", "\n".join(f"- {b}" for b in shown)))
     deps.style.append(tag("banned", banned_file))
+    style_part, constraint_part = rules.fingerprint_parts(project, scene)
+    if style_part:  # only when there are rules, so books written before the rules panel do not all go stale
+        deps.style.append(tag("rules", style_part))
+    if constraint_part:
+        deps.bible.append(tag("rules:hard-constraints", constraint_part))
+    rule_text = rules.prose_rules_text(project, scene)
+    if rule_text:
+        sections.append(Section("The author's rules for this scene", rule_text))
 
     # 3. cast, rules, state, time
     entity_ids = scene_entities(d.scenes, scene.id)

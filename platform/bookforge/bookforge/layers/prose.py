@@ -18,7 +18,7 @@ import logging
 
 import yaml
 
-from .. import scenefiles, vcs
+from .. import changes, rules, scenefiles, vcs
 from ..bible import store
 from ..bible.models import Scene
 from ..briefing import build_briefing
@@ -55,7 +55,7 @@ def check_context(project, scene: Scene, scenes: list[Scene], banned_text: str |
         banned_text = scenefiles.read(project.root / cfg.qc.banned_phrases) or ""
     return CheckContext(
         scene_words=tuple(cfg.layers["prose"].words or (1500, 3000)), pov=cfg.book.pov, tense=cfg.book.tense,
-        language=cfg.book.language, banned=load_banned(banned_text), names=names, pov_id=scene.pov,
+        language=cfg.book.language, banned=load_banned(banned_text), phrase_rules=rules.phrase_rules(rules.rules_for(project, scene, ("banned_phrase",))), names=names, pov_id=scene.pov,
         previous_tail=" ".join(prev_text.split()[-PREVIOUS_TAIL_WORDS:]) if prev_text else None,
         earlier_texts=earlier, qc=cfg.qc,
     )
@@ -121,10 +121,32 @@ def _write_drafts(ctx: StepContext, scene: Scene, briefing_text: str, drafts: in
     return texts
 
 
+def record_extraction(ctx: StepContext, scene: Scene, scenes: list[Scene], text: str, review: dict, paths: list) -> tuple[int, list]:
+    """Extract what the accepted text says about the tracked states; file change requests for gaps.
+
+    Returns (number of gaps, change requests filed). Adds the files it wrote to `paths`, fills `review`.
+    """
+    project, sid = ctx.project, scene.id
+    if not project.config.qc.extract_observed:
+        return 0, []
+    extraction = extract_observed(ctx, scene, scenes, text)
+    review["extraction"] = {"error": extraction.error, "observations": len(extraction.observations), "gaps": extraction.gaps}
+    if extraction.observations:
+        record_observed(project, sid, extraction)
+        scenefiles.extracted_path(project, sid).write_text(
+            yaml.safe_dump({"scene": sid, "observations": extraction.observations, "gaps": extraction.gaps},
+                           sort_keys=False, allow_unicode=True), encoding="utf-8")
+        paths += [scenefiles.extracted_path(project, sid), project.root / "bible" / "tracks.yaml"]
+    filed = changes.file_gaps(project, scene, scenes, extraction.gaps)
+    if filed:
+        review["extraction"]["change_requests"] = [c.id for c in filed]
+        paths += changes.paths(project, filed)
+    return len(extraction.gaps), filed
+
+
 def write_scene(ctx: StepContext, scene: Scene, scenes: list[Scene], drafts: int, words: tuple[int, int]) -> tuple[bool, list[str]]:
     """Write, check and settle one scene. Returns (accepted, files)."""
     project = ctx.project
-    qc = project.config.qc
     sid = scene.id
     d = scenefiles.scene_dir(project, sid)
     briefing = build_briefing(project, sid)
@@ -174,19 +196,9 @@ def write_scene(ctx: StepContext, scene: Scene, scenes: list[Scene], drafts: int
     review["summary_source"] = summary_source
     paths += [final, scenefiles.summary_path(project, sid)]
 
-    gaps = 0
-    if qc.extract_observed:
-        extraction = extract_observed(ctx, scene, scenes, text)
-        review["extraction"] = {"error": extraction.error, "observations": len(extraction.observations), "gaps": extraction.gaps}
-        if extraction.observations:
-            record_observed(project, sid, extraction)
-            scenefiles.extracted_path(project, sid).write_text(
-                yaml.safe_dump({"scene": sid, "observations": extraction.observations, "gaps": extraction.gaps},
-                               sort_keys=False, allow_unicode=True), encoding="utf-8")
-            paths += [scenefiles.extracted_path(project, sid), project.root / "bible" / "tracks.yaml"]
-        gaps = len(extraction.gaps)
+    gaps, filed = record_extraction(ctx, scene, scenes, text, review, paths)
     review_file.write_text(json.dumps(review, indent=2, ensure_ascii=False), encoding="utf-8")
-    note = f"{report.stats['words']} words, {len(report.warnings)} warning(s)" + (f", {gaps} gap(s) between plan and prose" if gaps else "")
+    note = f"{report.stats['words']} words, {len(report.warnings)} warning(s)" + (f", {gaps} gap(s) between plan and prose" if gaps else "") + (f" ({len(filed)} change request(s) filed, {sum(c.status == 'pending' for c in filed)} waiting for you)" if filed else "")
     _set_status(project, sid, "accepted", note)
     _commit(project, sid, "drafted, checked, accepted" if source == "written" else "adopted, checked, accepted", paths)
     return True, [scenefiles.rel(project, p) for p in paths if p.exists()]
@@ -213,10 +225,15 @@ def prose(ctx: StepContext) -> StepResult:
         log.warning("no style guide and no sample passages: the north stars' tone is the only voice guidance")
 
     done_now = 0
+    stale: list[str] = []
     for scene in scenes:
         if voice != "approved" and scene.chapter != first_chapter:
             break
-        if _item(project, scene.id).status == "accepted":
+        status = _item(project, scene.id).status
+        if status == "accepted":
+            continue
+        if status == "stale":
+            stale.append(scene.id)  # brought up to date by `stale --fix`, not rewritten from scratch
             continue
         accepted, scene_files = write_scene(ctx, scene, scenes, drafts, words)
         files += scene_files
@@ -225,7 +242,7 @@ def prose(ctx: StepContext) -> StepResult:
     items = project.state.items
     flagged = [s.id for s in scenes if items.get(s.id, Item()).status == "flagged"]
     accepted_n = sum(1 for s in scenes if items.get(s.id, Item()).status == "accepted")
-    note = f"{accepted_n}/{len(scenes)} scenes accepted" + (f", {len(flagged)} need you: {', '.join(flagged)}" if flagged else "")
+    note = f"{accepted_n}/{len(scenes)} scenes accepted" + (f", {len(flagged)} need you: {', '.join(flagged)}" if flagged else "") + (f", {len(stale)} stale (run `stale --fix`)" if stale else "")
     if voice != "approved":
         return StepResult(files=files, note=note, outcome="partial", checkpoint="voice")
     if flagged:

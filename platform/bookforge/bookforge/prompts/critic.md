@@ -4,6 +4,12 @@ Review the scene below as a demanding editor. Score it against the rubric.
 
 {rubric}
 
+## The author's own rules for this scene
+
+{rules}
+
+A rule marked MUST that the scene breaks caps the criterion it belongs to at 2 and should appear among the weakest lines. SHOULD and NOTE rules are weighed but do not cap a score.
+
 ## What the scene was meant to do
 
 {brief}
