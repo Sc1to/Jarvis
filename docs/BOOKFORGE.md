@@ -415,9 +415,11 @@ Docker is not needed. Installation takes an evening of hands-on work plus an ove
 ```bash
 sudo apt update && sudo apt upgrade -y
 sudo apt install -y git python3 python3-venv python3-pip build-essential \
-  mesa-vulkan-drivers vulkan-tools jq
+  mesa-vulkan-drivers vulkan-tools jq pandoc
 vulkaninfo --summary               # should list the Radeon 8060S
 ```
+
+`pandoc` is for `export`. For PDFs also install one engine: Typst (a single binary from its releases page) or LaTeX (`sudo apt install -y texlive-xetex`). `python -m bookforge doctor` shows what is found.
 
 **Step 2. colibri and the fast model**
 
@@ -705,7 +707,19 @@ Bookforge is built inside the Jarvis repository by Claude Code, one milestone at
    - Not done here: editing a scene in the browser (v3), the workbench (13), dragging track bars to preview a change, a link out to colibri's own dashboard, and component tests for the frontend (checked with the type checker, the build and screenshots against a seeded service).
 
 
-12. `export`: DOCX, EPUB, print PDF, companion PDF, with Git tags.
+12. Export (done 2026-11-05): `bookforge/export.py`, `data/scene-break.lua`, `data/epub.css`, command `export`, API `POST …/export`.
+
+   - **Command.** `python -m bookforge export <series> [-f docx|epub|pdf|companion|all] [--draft]` builds from `books/<book>/manuscript.md` with Pandoc (3.1 or newer). It refuses unless the `final` checkpoint is approved; `--draft` overrides that and marks the export a draft. Output is `books/<book>/exports/<tag>/` with the files and an `export.json` (formats, files, skipped formats, warnings, the manuscript's SHA-256, the commit, the Pandoc version, the PDF engine, the metadata). Exports are not kept in Git (`books/*/exports/` is added to the series' `.gitignore`): they can be rebuilt from the tag.
+   - **Git.** Before building, the manuscript and the matter files are committed (`b1: export source (<hash>)`), so what is built is exactly what the tag points at; after a successful build the commit is tagged `b1-export-<date>` (`b1-export-draft-<date>` for drafts; `-2`, `-3` if the name is taken) with the file names and the manuscript's hash in the tag message. Nothing built means no folder and no tag. If `manuscript.md` no longer equals what the accepted scenes assemble to (you edited it at the final read, or scenes changed afterwards) the export goes ahead from the file and says so in its warnings: the file is the single source.
+   - **Settings** (`export:` in the config): `title` (falls back to the series folder's name, with a warning), `subtitle`, `author`, `rights`, `pdf_engine` (`auto` picks the first installed of Typst, XeLaTeX, LuaLaTeX), `page_width_in` / `page_height_in` (6 x 9), `margin_in`, `font_size_pt`, `reference_docx`, `cover_image`. The book language becomes the document language.
+   - **Front and back matter.** Markdown files in `books/<book>/matter/front/` and `.../back/`, added in file-name order around the manuscript (`01-epigraph.md`, `02-dedication.md`, ...). The title page comes from the metadata. Nothing format-specific is ever written into the pipeline's own files.
+   - **DOCX** is a standard manuscript: Times New Roman 12 pt, double spaced, indented paragraphs (none after a heading or scene break), black headings, acts as the top level. The styles are made by patching Pandoc's default reference document at export time; `reference_docx` replaces them with your own.
+   - **EPUB** (EPUB 3): table of contents, one file per chapter, a small stylesheet, the cover image if set. A cover path that does not exist fails that format.
+   - **PDF** is the print interior at the configured trim size. Typst gets the page size, margins, justification and first-line indent from an include-in-header file; the LaTeX engines get `geometry`, the book class and parts as the top division. **Not verified:** no PDF engine was installed on the development machine, so the PDF commands are tested only by their arguments, never against a real Typst or LaTeX. Run one export on the mini PC and look at it before trusting the layout. Without an engine, `export` makes the other formats and reports `skipped pdf`.
+   - **Scene breaks** (`* * *` in the manuscript) are centred asterisks in every format, through one Lua filter, not a ruled line.
+   - **Companion** (`<book>-companion.md`, and `.pdf` with an engine): characters with their fixed facts and how their tracked states change through the book, places, other things, rules of the world, a timeline table (day, time, scene, chapter, viewpoint, place), the act and chapter outline, and the series ledger once it has content. Built only from the bible files, so it shows what the story bible says, which may differ from what the prose says where there are gaps.
+   - **API and dashboard.** `POST …/export {formats, draft}` is a background job (kind `export`); `GET …/exports` lists them; `GET …/exports/{name}/{file}` downloads a file (names are checked: no path, no hidden file, `export.json` is not served). The Read tab has an Export card with the formats, a draft switch and download links. `doctor` warns when Pandoc or a PDF engine is missing.
+   - Not done here: front-matter templates (a title page is the metadata only), a covers/ISBN/barcode workflow, store-specific EPUB validation (run EPUBCheck yourself before uploading), and checking that nothing resembles existing works too closely (a human task at the final checkpoint).
 
 13. The workbench, in this order: rules panel, briefing preview and X-ray, prompt A/B tests, feedback to rule, then the arc views.
 

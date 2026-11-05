@@ -348,3 +348,38 @@ def test_which_jobs_notify():
     assert api.notification_for(job("run", {"stopped": "complete", "assembled": {"path": "x"}}))[1].endswith("manuscript assembled")
     assert api.notification_for(job("run", {"stopped": "failed", "detail": "layer 'prose' needs you"}))[0] == "Bookforge: needs you"
     assert api.notification_for(job("run", status="failed", error="e"))[0] == "Bookforge: run failed"
+
+
+# ── export ──────────────────────────────────────────────────────────────────
+
+@pytest.fixture
+def exported(full):
+    from bookforge import assemble as asm
+    asm.assemble(full)
+    full.state.approve_checkpoint("final")
+    full.save_state()
+    (full.root / "config.yaml").write_text((full.root / "config.yaml").read_text() + "export:\n  title: T\n")
+    from bookforge import vcs
+    vcs.commit(full.root, "test: export config")
+    return full
+
+
+@pytest.mark.skipif(__import__("shutil").which("pandoc") is None, reason="pandoc is not installed")
+def test_export_is_a_job_and_its_files_can_be_downloaded(exported):
+    job = data(client.post(f"{B}/export", json={"formats": ["companion"]}), 202)
+    done = finish(job)
+    assert done["status"] == "done" and done["result"]["files"][0].endswith("b1-companion.md") and done["result"]["tag"].startswith("b1-export-")
+    [x] = data(client.get(f"{B}/exports"))
+    assert x["name"] == done["result"]["name"] and x["files"][0] == "b1-companion.md"
+    r = client.get(f"{B}/exports/{x['name']}/b1-companion.md")
+    assert r.status_code == 200 and "# Companion to T" in r.text
+    error(client.get(f"{B}/exports/{x['name']}/export.json"), 404)
+    error(client.get(f"{B}/exports/{x['name']}/.hidden"), 404)
+    error(client.get(f"{B}/exports/{x['name']}/nope.pdf"), 404)
+    error(client.get(f"{B}/exports/..%2f..%2fstate.json/x"), 404)
+
+
+def test_export_validates_formats_and_reports_a_blocked_book_as_a_failed_job(full):
+    error(client.post(f"{B}/export", json={"formats": ["mobi"]}), 422)
+    done = finish(data(client.post(f"{B}/export"), 202))  # the final checkpoint is not approved
+    assert done["status"] == "failed" and "final checkpoint is not approved" in done["error"]

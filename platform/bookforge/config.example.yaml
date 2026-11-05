@@ -77,6 +77,19 @@ qc:
   continuity_batch_size: 8             # questions per model call
   continuity_max_questions: 40         # per scene
 
+export:
+  title: ""                            # falls back to the series folder's name
+  subtitle: ""
+  author: ""
+  rights: ""
+  pdf_engine: auto                     # auto | typst | xelatex | lualatex (auto: the first one installed)
+  page_width_in: 6.0                   # print interior: 6 x 9 in
+  page_height_in: 9.0
+  margin_in: 0.8
+  font_size_pt: 11
+  reference_docx: ""                   # your own Word styles instead of the built-in manuscript format
+  cover_image: ""                      # EPUB cover, a path inside the series
+
 git:
   commit_each_step: true
   tag_checkpoints: true

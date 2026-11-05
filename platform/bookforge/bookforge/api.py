@@ -18,6 +18,8 @@ Everything lives under /api (Caddy strips /bookforge). Responses use the platfor
     POST /api/series/{s}/books/{b}/run                {until}      -> a background job
     POST /api/series/{s}/books/{b}/stale/fix          {only, accept} -> a background job
     POST /api/series/{s}/books/{b}/bench              {only, judge, accept, force} -> a background job
+    POST /api/series/{s}/books/{b}/export             {formats, draft} -> a background job (Pandoc)
+    GET  /api/series/{s}/books/{b}/exports[/{name}/{file}]   what was exported; download a file
     GET  /api/series/{s}/books/{b}/jobs[/{id}]
     GET  /api/series/{s}/books/{b}/structure          acts > chapters > scenes with status (the progress tree)
     GET  /api/series/{s}/books/{b}/tracks             state tracks with plan and observed, in story order
@@ -35,9 +37,10 @@ from pathlib import Path
 from typing import Callable
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from . import push, assemble as assembly, bench as benchmarks, changes as change_requests, ops, report as morning_report, scenefiles, stale as staleness
+from . import push, assemble as assembly, export as exporting, bench as benchmarks, changes as change_requests, ops, report as morning_report, scenefiles, stale as staleness
 from .bible import store
 from .constants import CHECKPOINTS, LAYER_ORDER
 from .doctor import run_doctor
@@ -53,6 +56,7 @@ log = logging.getLogger("platform_bookforge.api")
 
 SERIES_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 REPORT_RE = re.compile(r"^[0-9A-Za-z_-]+\.md$")
+SAFE_NAME = re.compile(r"^[0-9A-Za-z][0-9A-Za-z_.-]*$")  # an export folder or file name: no slash, no leading dot
 
 # Replaced in tests; the real clients need the colibri servers.
 make_llm: Callable = build_client
@@ -118,6 +122,11 @@ class PushSubscription(BaseModel):
 
 class PushUnsubscribe(BaseModel):
     endpoint: str
+
+
+class ExportBody(BaseModel):
+    formats: list[str] | None = None
+    draft: bool = False
 
 
 class AssembleBody(BaseModel):
@@ -427,6 +436,35 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
     @router.post("/push/test")
     def push_test():
         return ok({"delivered": push.send(push_db(), "Bookforge", "Notifications are working.", "/bookforge/", push_sender)})
+
+    @router.post("/series/{series}/books/{book}/export", status_code=202)
+    def export(series: str, book: str, body: ExportBody | None = None):
+        open_project(series, book)
+        body = body or ExportBody()
+        bad = [f for f in body.formats or [] if f not in exporting.FORMATS]
+        if bad:
+            raise HTTPException(422, f"unknown format {', '.join(bad)} (expected: {', '.join(exporting.FORMATS)})")
+        root = series_root(series)
+
+        def job() -> dict:
+            r = exporting.export_book(Project.open(root, book), body.formats, body.draft)
+            return {"name": r.name, "tag": r.tag, "files": r.files, "skipped": r.skipped, "warnings": r.warnings, "draft": r.draft}
+
+        return start_job(series, book, "export", body.model_dump(), job)
+
+    @router.get("/series/{series}/books/{book}/exports")
+    def exports(series: str, book: str):
+        return ok(exporting.list_exports(open_project(series, book)))
+
+    @router.get("/series/{series}/books/{book}/exports/{name}/{filename}")
+    def export_file(series: str, book: str, name: str, filename: str):
+        project = open_project(series, book)
+        if not (SAFE_NAME.match(name) and SAFE_NAME.match(filename)):
+            raise HTTPException(404, "no such file")
+        path = project.book_dir / "exports" / name / filename
+        if not path.is_file() or path.name == "export.json":
+            raise HTTPException(404, "no such file")
+        return FileResponse(path, filename=filename)
 
     @router.get("/series/{series}/books/{book}/jobs")
     def job_list(series: str, book: str):

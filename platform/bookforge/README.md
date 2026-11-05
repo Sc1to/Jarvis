@@ -30,6 +30,7 @@ python -m bookforge stale  <series> [--fix] [--accept b1.ch04.s3]   # what is ou
 python -m bookforge changes <series> [--approve cr-0001 | --reject cr-0001]   # the prose says something the plan does not
 python -m bookforge report  <series> [--write]                       # the morning report (run also writes one at the end)
 python -m bookforge assemble <series> [--partial]                    # manuscript.md from the accepted scenes; then `approve final`
+python -m bookforge export  <series> [-f docx -f epub -f pdf -f companion] [--draft]   # needs pandoc (+ typst or xelatex for PDF)
 python -m bookforge bench   <series> [--only quarrel] [--accept]     # redraft the benchmark scenes, compare with the accepted run
 python -m bookforge doctor  [<series>] [--offline]   # --offline skips the endpoint checks and the web fetch
 ```

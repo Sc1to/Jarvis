@@ -7,7 +7,7 @@ from typing import Optional
 
 import typer
 
-from . import assemble as assembly, changes as change_requests, ops, report as morning_report, stale as staleness, vcs
+from . import assemble as assembly, changes as change_requests, export as exporting, ops, report as morning_report, stale as staleness, vcs
 from .constants import CHECKPOINTS, LAYER_ORDER
 from . import scenefiles
 from .bible import store as bible_store
@@ -199,6 +199,29 @@ def assemble_cmd(
         typer.echo(f"left out (not accepted yet): {', '.join(result.missing)}")
     if not partial:
         typer.echo("Read it, then `approve final`.")
+
+
+@app.command("export")
+def export_cmd(
+    path: Path = PathArg,
+    book: str = BookOpt,
+    fmt: Optional[list[str]] = typer.Option(None, "--format", "-f", help=f"{', '.join(exporting.FORMATS)} or all (repeatable; default all)"),
+    draft: bool = typer.Option(False, "--draft", help="Export even though the final checkpoint is not approved (tagged as a draft)"),
+) -> None:
+    """Build DOCX, EPUB, print PDF and the companion book from the manuscript with Pandoc."""
+    formats = None if not fmt or "all" in fmt else list(fmt)
+    try:
+        project = Project.open(path, book)
+        result = exporting.export_book(project, formats, draft)
+    except BookforgeError as e:
+        _fail(e)
+    typer.echo(f"{result.directory}" + (f" (tagged {result.tag})" if result.tag else ""))
+    for f in result.files:
+        typer.echo(f"  {f}")
+    for k, why in result.skipped.items():
+        typer.secho(f"  skipped {k}: {why}", fg=typer.colors.YELLOW)
+    for w in result.warnings:
+        typer.secho(f"  warning: {w}", fg=typer.colors.YELLOW)
 
 
 @app.command()

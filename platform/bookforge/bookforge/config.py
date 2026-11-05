@@ -122,6 +122,21 @@ class QC(_Strict):
     continuity_max_questions: int = Field(40, gt=0)  # per scene
 
 
+class ExportSettings(_Strict):
+    """What `export` needs that is not in the story (docs/BOOKFORGE.md, Output and export)."""
+    title: str = ""  # falls back to the series folder's name, with a warning
+    subtitle: str = ""
+    author: str = ""
+    rights: str = ""  # a copyright line for the title page metadata
+    pdf_engine: Literal["auto", "typst", "xelatex", "lualatex"] = "auto"  # auto: the first one installed
+    page_width_in: float = Field(6.0, gt=0)  # print interior; 6 x 9 in is a common trade size
+    page_height_in: float = Field(9.0, gt=0)
+    margin_in: float = Field(0.8, gt=0)
+    font_size_pt: float = Field(11.0, gt=0)
+    reference_docx: str = ""  # a Word file whose styles replace the built-in manuscript format (path in the series)
+    cover_image: str = ""  # for the EPUB (path in the series)
+
+
 class GitSettings(_Strict):
     commit_each_step: bool = True
     tag_checkpoints: bool = True
@@ -135,6 +150,7 @@ class Config(_Strict):
     book: BookSettings = BookSettings()
     briefing: Briefing = Briefing()
     qc: QC = QC()
+    export: ExportSettings = ExportSettings()
     git: GitSettings = GitSettings()
 
     @field_validator("layers")
