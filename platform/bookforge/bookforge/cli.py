@@ -7,7 +7,7 @@ from typing import Optional
 
 import typer
 
-from . import assemble as assembly, changes as change_requests, export as exporting, ops, report as morning_report, stale as staleness, vcs
+from . import assemble as assembly, changes as change_requests, deletion, export as exporting, ops, report as morning_report, stale as staleness, vcs
 from .constants import CHECKPOINTS, LAYER_ORDER
 from . import scenefiles
 from .bible import store as bible_store
@@ -130,6 +130,52 @@ def approve(path: Path = PathArg, checkpoint: str = typer.Argument(..., help=f"O
     except BookforgeError as e:
         _fail(e)
     typer.echo(f"Approved '{checkpoint}'.")
+
+
+@app.command("delete")
+def delete_cmd(
+    path: Path = PathArg,
+    book: Optional[str] = typer.Option(None, "--book", help="Delete only this book (default: the whole series, moved to the trash)"),
+    yes: bool = typer.Option(False, "--yes", help="Do not ask"),
+) -> None:
+    """Delete a book (Git keeps its history), or move a whole series to the trash (`trash` restores or empties it)."""
+    what = f"book {book} of {path.name} (its entries in the shared bible files go too)" if book else f"the series {path.name} (moved to {path.parent / deletion.TRASH})"
+    if not yes and not typer.confirm(f"Delete {what}?"):
+        raise typer.Exit(1)
+    try:
+        if book:
+            r = deletion.delete_book(path, book)
+            typer.echo(f"deleted book {book}: {r['track_entries_removed']} track entries, {r['timeline_removed']} timeline entries removed"
+                       + (f"; {r['inactive_rules']} rule(s) were scoped to it and no longer apply" if r["inactive_rules"] else ""))
+        else:
+            dest = deletion.trash_series(path.parent, path.name)
+            typer.echo(f"moved to {dest}\nRestore: python -m bookforge trash {path.parent} --restore {dest.name}")
+    except BookforgeError as e:
+        _fail(e)
+
+
+@app.command("trash")
+def trash_cmd(
+    data_dir: Optional[Path] = typer.Argument(None, help="The bookforge data directory (default: data_dir from the config)"),
+    restore: Optional[str] = typer.Option(None, "--restore", help="Move this trashed series back"),
+    empty: bool = typer.Option(False, "--empty", help="Remove everything in the trash for good"),
+) -> None:
+    """List the trashed series, restore one, or empty the trash."""
+    from .config import load_config
+    try:
+        base = data_dir or Path(load_config().data_dir)
+        if restore:
+            typer.echo(f"restored as {deletion.restore(base, restore)}")
+        elif empty:
+            typer.echo(f"removed {deletion.empty_trash(base)} item(s) from the trash")
+        else:
+            items = deletion.list_trash(base)
+            for t in items:
+                typer.echo(f"{t['name']}  (series {t['series']}, books: {', '.join(t['books']) or 'none'}, deleted {t['deleted'] or '?'})")
+            if not items:
+                typer.echo("the trash is empty")
+    except BookforgeError as e:
+        _fail(e)
 
 
 @app.command()

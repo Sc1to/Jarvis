@@ -113,3 +113,5 @@ export interface TensionPreview { chapter: string; from: number; to: number; con
 
 export interface DocumentInfo { key: string; title: string; group: string; kind: 'markdown' | 'yaml' | 'text'; exists: boolean; words: number }
 export interface DocumentFull { key: string; title: string; group: string; kind: 'markdown' | 'yaml' | 'text'; exists: boolean; text: string; truncated: boolean }
+
+export interface TrashItem { name: string; series: string; deleted: string | null; books: string[] }

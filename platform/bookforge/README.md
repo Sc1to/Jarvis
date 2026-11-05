@@ -26,6 +26,8 @@ python -m bookforge state-at <series> b1.ch04.s3 [-e anna]   # what the bible sa
 python -m bookforge briefing <series> b1.ch04.s3 [--full]    # what the model is given for a scene, and how big each part is
 python -m bookforge check <series> b1.ch04.s3 [--file x.md]  # mechanical checks on a scene's text
 python -m bookforge review <series> b1.ch04.s3                # how the scene went through quality control
+python -m bookforge delete  <series> [--book b1] [--yes]            # a book (Git keeps it) or a whole series (moved to the trash)
+python -m bookforge trash   [<data dir>] [--restore NAME | --empty]   # list, restore or empty the trash of deleted series
 python -m bookforge rewrite <series> b1.ch01.s1 [b1.ch02 ...]    # write scenes/chapters again on the next run (deleting files does not)
 python -m bookforge stale  <series> [--fix] [--accept b1.ch04.s3]   # what is out of date and why; --fix re-checks, patches or redrafts
 python -m bookforge changes <series> [--approve cr-0001 | --reject cr-0001]   # the prose says something the plan does not

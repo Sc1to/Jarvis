@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { bookPath, post } from '../lib/api'
+import { api, bookPath, post } from '../lib/api'
 import { useAction } from '../lib/hooks'
 import type { BookStatus } from '../lib/types'
 import { href } from '../lib/route'
@@ -90,6 +90,14 @@ export default function Overview({ series, book, status, reload }: { series: str
             </li>
           ))}
         </ul>
+      </Card>
+
+      <Card title="Delete this book">
+        <p className="mb-2 text-sm text-slate-600">Removes the book's folder and its entries in the shared story-bible files (tracks, timeline). The cast, rules, style and other books stay. Git keeps the history, so it can be restored.</p>
+        <Button kind="danger" disabled={act.busy || busy} title={busy ? 'A job is running on this series' : undefined}
+          onClick={async () => {
+            if (window.confirm(`Delete the book ${book} from ${series}?`) && (await act.run(() => api(base, { method: 'DELETE' })))) window.location.hash = '#/'
+          }}>Delete book {book}</Button>
       </Card>
     </div>
   )
