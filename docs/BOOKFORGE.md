@@ -801,3 +801,7 @@ A typical run: start it in the evening with `python -m bookforge run /opt/platfo
 
 - Whether colibri's `/v1/systemone` exists and what its request shape is. `doctor` only checks that the URL answers; the continuity layer does not use it (the planner model answers the questions instead).
 
+
+## Operations note: Ollama request isolation
+
+Symptom seen on the first real run: a layer's reply was about the wrong task (for example JSON about another topic instead of a Markdown document). Cause: Ollama carried leftover state from the previous request when both requests began with the same words (the shared system prompt). Fix: `HttpLLMClient` puts a unique first line (`Request <random>.`) at the start of the system message of every call. It is on by default; switch off per endpoint with `isolate_requests: false` (for example for colibri, where the prefix cache is wanted). Cost: long prompts are processed in full on every call. The call log keeps the original messages without the added line.
