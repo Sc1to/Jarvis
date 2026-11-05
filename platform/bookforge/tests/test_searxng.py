@@ -14,7 +14,7 @@ from bookforge.research import probe as probe_mod, search as search_mod, searxng
 from bookforge.research.hits import Hit
 from bookforge.research.search import FakeWebClient, PlaywrightWebClient, WebError, WebResult, make_web_client
 from bookforge.research.searxng import SearxngWebClient, parse_results
-from bookforge.research.step import Question, answer_question, diversify, era_terms, rank_hits, relevant_excerpt, skipped
+from bookforge.research.step import Question, answer_question, diversify, era_terms, place_terms, rank_hits, relevant_excerpt, skipped
 from conftest import RuleLLM
 from test_web import FakeTool, good  # noqa: F401  (good builds a successful tool result)
 
@@ -350,3 +350,46 @@ def test_searxng_snippets_travel_with_the_results():
     from bookforge.research.hits import extract_hits
     [hit] = extract_hits(c.search("x").links, 5)
     assert hit.snippet == "An excerpt about ports."
+
+
+# ── place in the ranking, sources in the stop rule, the check's wording ─────
+
+def test_place_terms_expand_a_country_and_keep_other_words():
+    assert place_terms("England, 1880s") == ["england", "english", "britain", "british", "london", ".uk"]
+    assert place_terms("Port Haven, England, 1883")[:2] == ["port", "haven"] and "english" in place_terms("Port Haven, England, 1883")
+    assert place_terms("any time") == [] and place_terms("") == []
+
+
+def test_an_english_page_outranks_an_american_one_for_an_english_setting():
+    hits = [Hit("https://www.archives.gov/ellis-island", "Ellis Island immigration manifests", "Customs officers recorded arrivals in the 1880s."),
+            Hit("https://www.nationalarchives.gov.uk/customs", "Customs officers at English ports", "Duties of customs officers in the 1880s.")]
+    ranked = rank_hits(hits, "What did customs officers do?", "England, 1880s")
+    assert [h.url for h, _ in ranked][0] == "https://www.nationalarchives.gov.uk/customs" and ranked[0][1] > ranked[1][1]
+    # without the place in the setting the two score the same on era and words, and the engine's order stands
+    neutral = rank_hits(hits, "What did customs officers do?", "any time")
+    assert [h.url for h, _ in neutral] == [h.url for h in hits]
+
+
+def test_enough_facts_from_one_page_is_not_enough_to_stop(project):
+    page = "Fogs were thick. They were yellow. They smelled of coal. Ships waited. Bells rang."
+    pages = {"https://a.example/p": page, "https://b.example/p": page.replace("Bells rang.", "Lamps were lit."), "https://c.example/p": page}
+    web = FakeWebClient(searches={"q": "r"}, pages=pages, links={"q": [{"text": t, "href": u} for t, u in zip("ABC", pages)]})
+    project.config.research.facts_per_question = 3
+    project.config.research.sources_per_question = 2
+    facts = json.dumps({"facts": [{"claim": "Fogs were thick.", "quote": "Fogs were thick. They were yellow"},
+                                  {"claim": "They smelled of coal.", "quote": "They smelled of coal. Ships waited"},
+                                  {"claim": "Ships waited.", "quote": "Ships waited. Bells rang."}]})
+    llm = RuleLLM([("Source page:", facts), ("Which of these facts directly answer", json.dumps({"keep": [1, 2, 3]}))])
+    attempt = answer_question(make_ctx(project, llm, web), web, Question("fog", "q", False, ""), "story", set())
+    assert len(attempt.pages) == 2 and len({h.url for h, _ in attempt.facts}) == 2  # the first page gave 3 facts; a second source was still read
+    project.config.research.sources_per_question = 1
+    llm2 = RuleLLM([("Source page:", facts), ("Which of these facts directly answer", json.dumps({"keep": [1, 2, 3]}))])
+    again = answer_question(make_ctx(project, llm2, web), web, Question("fog", "q", False, ""), "story", set())
+    assert len(again.pages) == 1  # with one source enough, it stops after the first page
+
+
+def test_the_relevance_check_asks_to_keep_related_roles_and_not_to_drop_facts_for_sounding_old(project):
+    from bookforge.prompts import render
+    text = render("research_check", project.root, question="q", setting="England, 1880s", story="s", facts="1. x")
+    assert "closely related role" in text and "same institution" in text and "Do not drop a fact only because a word in it sounds old" in text
+    assert '"drop": [{"n": 2, "why"' in text

@@ -43,7 +43,8 @@ research:
   results_per_question: 10             # search results considered per question
   max_questions: 6                     # questions asked per layer
   pages_per_question: 5                # pages read per question, at most (a page with no readable text does not count)
-  facts_per_question: 3                # stop reading pages for a question once this many facts are kept
+  facts_per_question: 3                # stop reading pages for a question once this many facts are kept...
+  sources_per_question: 2              # ...and they come from at least this many different pages
   skip_domains: [facebook.com, instagram.com, tiktok.com, pinterest.com, twitter.com, x.com, youtube.com, youtu.be, amazon.com, ebay.com, etsy.com, reddit.com, quora.com]
   notes_model: writer                  # reads pages and extracts facts
   check_relevance: true                # drop facts that do not fit the question and the story's time and place
