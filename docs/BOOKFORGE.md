@@ -16,7 +16,7 @@ Differences from the original standalone spec, all decided 2026-11-05:
 | Model backend | colibri on ports 8000 and 8001 | colibri on **8040** (fast writer) and **8041** (planner/critic). 8000/8001 belong to the admin panel and the Conductor. Ollama remains the backend for every other app. |
 | Systemd names | `colibri-writer`, `colibri-critic` | `platform-colibri-writer`, `platform-colibri-critic`; `platform-bookforge` for the service |
 | Web research | SearXNG in Docker on 8080 | Jarvis Playwright web tool (`platform/tools/web_tool.py`). No SearXNG, no extra Docker container. Agents never make direct HTTP calls to the internet. |
-| Service port | n/a | First free port ≥ 8100 from the admin panel at registration (expected 8100) |
+| Service port | n/a | 8100 (pinned in STACK.md; wired into `scripts/deploy.sh` and `scripts/build-frontends.sh` like the other first-party apps) |
 | Data location | `series/` next to the repo | `/opt/platform/data/bookforge/<series>/`, one Git repo per series |
 | Notifications | ntfy | Platform Web Push (see STACK.md, Web Push Notifications) |
 | Dashboard binding | `127.0.0.1` over Tailscale | Behind Caddy like every app; Tailscale remains the only remote path |
@@ -423,7 +423,7 @@ Nothing to install. Research uses the Jarvis Playwright web tool (see STACK.md, 
 
 **Step 7. bookforge itself**
 
-Built with Claude Code (next sections) inside the Jarvis repository, deployed like any platform service. After deployment, register it in the admin panel (assigns the port and the `/bookforge` route), then:
+Built with Claude Code (next sections) inside the Jarvis repository, deployed like any platform service with `scripts/deploy.sh bookforge`. The Caddy route comes from `scripts/build-frontends.sh`. Then:
 
 ```bash
 cd /opt/platform/bookforge
@@ -517,7 +517,7 @@ Bookforge is built inside the Jarvis repository by Claude Code, one milestone at
 
 **Milestones**
 
-0. Service shell: `platform/bookforge/` with `GET /health`, `{data, status}` envelope, venv, requirements, systemd unit, health test, admin-panel registration at `/bookforge`. Empty frontend placeholder.
+0. Service shell: `platform/bookforge/` with `GET /health`, `{data, status}` envelope, venv, requirements, systemd unit, health test, deploy and Caddy wiring for `/bookforge`. Empty frontend placeholder. **Built 2026-11-05.**
 
 1. Skeleton: CLI (`new`, `run`, `status`, `approve`, `doctor`), config, `state.json`, fake LLM client for tests, Git commits through `vcs.py`.
 
@@ -547,7 +547,7 @@ Bookforge is built inside the Jarvis repository by Claude Code, one milestone at
 
 **First prompt to give Claude Code**
 
-> Read CLAUDE.md, docs/BOOKFORGE.md and docs/STACK.md. Build milestone 0 (service shell) with tests, register nothing yet, and stop when tests pass and show me how to run it. Then propose file structure and data schemas for milestone 1.
+> Read CLAUDE.md, docs/BOOKFORGE.md and docs/STACK.md. Build milestone 0 (service shell) with tests, and stop when tests pass and show me how to run it. Then propose file structure and data schemas for milestone 1.
 
 Use the regular Claude models in Claude Code to build the tool; the local models are for running it.
 

@@ -1356,7 +1356,7 @@ Components (Claude Code prompts to be written before each component):
 
 | Milestone | Component |
 |---|---|
-| 14.0  | Service shell — `platform/bookforge/`, health, systemd unit, admin-panel registration |
+| 14.0  | Service shell — `platform/bookforge/`, health, systemd unit, deploy-script and Caddy wiring. **Done 2026-11-05** |
 | 14.1  | Skeleton — CLI, config, state.json, fake LLM client, Git via vcs.py |
 | 14.2  | llm.py and doctor — real endpoint calls, retries, call logging |
 | 14.3  | Layer runner, layers 1–3, direction checkpoint |

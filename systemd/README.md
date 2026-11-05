@@ -16,6 +16,7 @@ All services are named `platform-<service-name>`. See STACK.md for the full regi
 | platform-chat.service | Chat app backend | 8010 |
 | platform-writer.service | Writer app backend | 8011 |
 | platform-coding.service | Coding assistant backend | 8012 |
+| platform-bookforge.service | Bookforge backend | 8100 |
 | platform-chromadb.service | ChromaDB vector store | 8020 |
 
 ## Deploy a unit file

@@ -44,7 +44,7 @@ done
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 FRONTEND="${REPO}/frontend"
 
-APPS=(admin chat writer coding autocoder trading)
+APPS=(admin chat writer coding autocoder trading bookforge)
 
 # ── Node check ────────────────────────────────────────────────────────────────
 if ! command -v node &>/dev/null; then
@@ -144,6 +144,18 @@ http://${TAILSCALE_IP} {
     handle /writer* {
         uri strip_prefix /writer
         root * ${FRONTEND}/writer/dist
+        header /index.html Cache-Control "no-cache, no-store, must-revalidate"
+        try_files {path} /index.html
+        file_server
+    }
+
+    handle /bookforge/api* {
+        uri strip_prefix /bookforge
+        reverse_proxy localhost:8100
+    }
+    handle /bookforge* {
+        uri strip_prefix /bookforge
+        root * ${FRONTEND}/bookforge/dist
         header /index.html Cache-Control "no-cache, no-store, must-revalidate"
         try_files {path} /index.html
         file_server

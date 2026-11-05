@@ -51,7 +51,8 @@ Last completed:    Phase 13.19 — Paper trading validation tooling; Phase DEV �
                    Writer app token-usage reduction II (2026-10-29) — QA ledger scoped to scene entities (+ names-only roster), QA gets condensed prior scenes, QA-failed retries use a targeted fix call (no ledger/history) instead of a full rewrite
                    Bible Workshop manual editing (2026-11-04) — edit unapproved Book/Acts/chapter-plan/scene-brief text directly; structural validation + confirm detected counts before save; optional brief QA
                    Phase 14 planning (2026-11-05) — bookforge spec adopted as docs/BOOKFORGE.md; ports, colibri backend, systemd names and BUILD_SEQUENCE entry documented (docs only, no code)
-Currently working: Phase 13.20 — Live trading activation (manual user decision); Phase 14 — Bookforge (planned, milestone 14.0 not started)
+                   Phase 14.0 (2026-11-05) — bookforge service shell: platform/bookforge (health + error envelope, 5 tests), systemd unit, frontend/bookforge placeholder, deploy.sh / build-frontends.sh wiring; not yet deployed
+Currently working: Phase 13.20 — Live trading activation (manual user decision); Phase 14 — Bookforge (milestone 14.0 done, 14.1 next)
 Blocked on:        Infra phases (1, 2) are hardware setup; 3-6 months paper trading runtime
 Remaining:         Phase 13.20 (manual user decision)
 ```
@@ -71,7 +72,7 @@ Remaining:         Phase 13.20 (manual user decision)
 - [x] Phase 12 — Documentation
 - [x] Phase DEV — Dev tooling (Docker, deployment scripts, test suite)
 - [ ] Phase 13  — Trading system (13.1–13.19 complete; 13.20 is manual user decision)
-- [ ] Phase 14  — Bookforge (spec and docs done; no code yet)
+- [ ] Phase 14  — Bookforge (14.0 service shell done; pipeline starts at 14.1)
 
 ---
 
@@ -163,7 +164,7 @@ These rules are non-negotiable. Follow them on every task without being reminded
 │   │       └── refactorer/
 │   ├── chat/
 │   ├── writer/
-│   ├── bookforge/              ← Phase 14, planned
+│   ├── bookforge/              ← Phase 14 (service shell only)
 │   ├── coding/
 │   ├── memory/                 ← shared memory package
 │   └── tools/                  ← shared tool library
@@ -172,7 +173,7 @@ These rules are non-negotiable. Follow them on every task without being reminded
 │   ├── autocoder/
 │   ├── chat/
 │   ├── writer/
-│   ├── bookforge/              ← Phase 14, planned
+│   ├── bookforge/              ← Phase 14 (placeholder)
 │   └── coding/
 └── systemd/                    ← all systemd unit files
     ├── platform-admin.service
