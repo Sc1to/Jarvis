@@ -672,7 +672,29 @@ Bookforge is built inside the Jarvis repository by Claude Code, one milestone at
    - **Benchmarks.** Five briefs ship in `platform/bookforge/benchmarks/` (quarrel, pursuit, reunion, discovery, farewell); `<series>/workbench/benchmarks/*.yaml` adds more, and a file with the same id replaces a shipped one. A brief is self-contained (purpose, point-of-view character, setting, cast with facts, beats, word range): no bible and no earlier scenes, so only the prompt, model or settings can change the result. `bench <series> [--only id] [--no-judge] [--accept [--force]]` writes one draft per brief with the writer (first draft temperature, the series' style guide, sample and banned list), checks it mechanically, and saves it under `workbench/experiments/bench-<stamp>/` (`<id>.md` and `results.json`, committed). Compared with the accepted run (`workbench/experiments/bench-accepted.json`), each brief gets the mechanical change and a pairwise judgment (new against old, run twice with the order swapped; a split is a tie; a judge that fails is "unknown", not a loss). The output lists which settings differ from the baseline (writer model and temperature, the `prose` and `prose_system` templates, style, banned list). **A change ships** if no brief gained a blocking problem it did not have and it does not lose more briefs than it wins; `bench` exits 1 otherwise. `--accept` makes the run the baseline, refusing a losing one unless `--force`. The first run has no baseline and just reports; accept it to start one.
    - Not done here: judging only the briefs a change could affect, your own blind vote on benchmark pairs, and A/B tests of two prompt versions side by side (workbench, 14.13).
 
-10. API endpoints on the service for runs, status, checkpoints and approvals (wrapping the same library as the CLI).
+10. Service API (done 2026-11-05): `platform/bookforge/bookforge/api.py` (router), `jobs.py`, `ops.py`; mounted by `main.py`.
+
+   - **One library, two front ends.** The multi-step operations the CLI runs (`run` with assembly and report, `stale` with accept/fix, `bench`, approving a checkpoint, deciding a change request) now live in `bookforge/ops.py`; the CLI and the API both call them, so they cannot drift apart.
+   - **Routes** (all under `/api`; Caddy strips `/bookforge`; envelope `{data, status}` / `{error, status, detail}`; a library error is a 400 with its message, an unknown series, book, scene, report or job is a 404). Series and book ids are validated before they touch the file system: series names are `^[a-z0-9][a-z0-9_-]{0,63}$` under `BOOKFORGE_DATA_DIR`, report names must be `*.md` with no path.
+
+     | Route | Does |
+     |---|---|
+     | `GET /doctor?offline=&series=` | the same checks as `doctor` |
+     | `GET /series`, `POST /series {name, premise, book}` | list; create (409 if it exists) |
+     | `GET …/books/{b}/status` | layers, checkpoints, scene counts by status, pending change requests, whether a manuscript exists, the running job |
+     | `GET …/scenes`, `GET …/scenes/{id}` | list with status, version, words; one scene with plan, text, summary, `review.json` and its change requests |
+     | `GET …/report`, `…/reports`, `…/reports/{name}` | the morning report now; the saved ones |
+     | `GET …/manuscript[?partial=true]` | the assembled Markdown |
+     | `GET …/stale` | what is out of date and why (reads only: it does not mark scenes stale) |
+     | `GET …/changes`, `POST …/changes/{id}/approve\|reject` | change requests; decide one |
+     | `POST …/approve/{checkpoint}` | approve a waiting checkpoint |
+     | `POST …/assemble {partial}` | assemble now (no model calls) |
+     | `POST …/run {until}`, `POST …/stale/fix {only, accept}`, `POST …/bench {only, judge, accept, force}` | start a **background job**; answer 202 with the job |
+     | `GET …/jobs`, `GET …/jobs/{id}` | job history and one job |
+
+   - **Jobs.** A run takes hours, so a request starts a thread and returns the job record (`id`, `kind`, `status`: running / done / failed / interrupted, `started`, `finished`, `params`, `result`, `error`). `result` holds what the CLI would print (for a run: where it stopped and why, the layers that ran and their notes, the assembly, the report path). Records are saved to `books/<book>/logs/jobs/<id>.json` at start and at end; one still saying `running` that this process does not know is shown as `interrupted` (the service restarted mid-run; start the run again, finished scenes are kept).
+   - **One job at a time per series** (the series is one Git repository). While one runs, anything that changes the series' files (approve, decide a change request, assemble, start another job) answers 409; reads always work. The job worker is a thread in the service process, so restarting `platform-bookforge` stops a run in progress.
+   - **Not done here:** authentication (the app sits behind the platform's reverse proxy and Tailscale, like the other apps), live progress inside a run (poll `status` and `scenes`; Web Push is 14.11), editing files through the API, and cancelling a job.
 
 11. Dashboard (`frontend/bookforge/`): progress tree, checkpoint inbox, draft compare, track timeline; Web Push notifications.
 

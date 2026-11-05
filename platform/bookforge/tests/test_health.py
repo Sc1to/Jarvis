@@ -27,7 +27,7 @@ def test_status_uses_success_envelope():
     body = r.json()
     assert body["status"] == "ok"
     assert body["data"]["service"] == "platform-bookforge"
-    assert body["data"]["milestone"] == "14.0"
+    assert body["data"]["milestone"] == "14.10"
 
 
 def test_data_dir_follows_env(monkeypatch, tmp_path):

@@ -7,8 +7,7 @@ from typing import Optional
 
 import typer
 
-from . import assemble as assembly, bench as benchmarks, changes as change_requests, report as morning_report, stale as staleness, vcs
-from datetime import datetime, timezone
+from . import assemble as assembly, changes as change_requests, ops, report as morning_report, stale as staleness, vcs
 from .constants import CHECKPOINTS, LAYER_ORDER
 from . import scenefiles
 from .bible import store as bible_store
@@ -19,7 +18,6 @@ from .doctor import run_doctor
 from .errors import BookforgeError
 from .layers import HANDLERS
 from .layers.prose import check_context
-from .layers.runner import StepContext, run as run_layers
 from .llm import build_client
 from .project import Project
 from .qc.mechanical import check_scene
@@ -65,26 +63,15 @@ def run(
     until: Optional[str] = typer.Option(None, "--until", help=f"Stop after this layer ({', '.join(LAYER_ORDER)})"),
 ) -> None:
     """Run the pipeline until a checkpoint, the --until layer, or the end."""
-    started = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
     try:
         project = Project.open(path, book)
         web = build_web_client(project) if project.config.research.enabled else None
-        summary = run_layers(project, llm=build_client(project), handlers=HANDLERS, until=until, web=web)
+        outcome = ops.run_pipeline(project, build_client(project), web, until, handlers=HANDLERS)
     except BookforgeError as e:
         _fail(e)
-    assembled = None
-    if summary.stopped == "complete":  # every layer accepted: put the book together for the final read
-        try:
-            assembled = assembly.assemble(project)
-        except BookforgeError as e:
-            summary.detail = f"not assembled: {e}"
-    report_path = None
-    try:
-        report_path = morning_report.write_report(project, since=started)
-        if project.config.git.commit_each_step:
-            vcs.commit(project.root, f"{project.book}: morning report", [report_path])
-    except (BookforgeError, OSError) as e:
-        typer.secho(f"warning: no morning report: {e}", fg=typer.colors.YELLOW, err=True)
+    summary, assembled, report_path = outcome.summary, outcome.assembled, outcome.report_path
+    if outcome.report_error:
+        typer.secho(f"warning: no morning report: {outcome.report_error}", fg=typer.colors.YELLOW, err=True)
     for layer in summary.ran:
         typer.echo(f"accepted: {layer}" + (f" ({summary.notes[layer]})" if layer in summary.notes else ""))
     if not summary.ran:
@@ -139,16 +126,7 @@ def approve(path: Path = PathArg, checkpoint: str = typer.Argument(..., help=f"O
     """Approve a checkpoint that is waiting for you."""
     try:
         project = Project.open(path, book)
-        project.state.approve_checkpoint(checkpoint)
-        project.save_state()
-        if checkpoint == "structure":
-            staleness.record_plan(project)  # from now on, a changed act or chapter makes what was planned from it stale
-        message = f"{project.book}: {checkpoint} approved"
-        # Commit everything: the approved version includes any edits you made while reviewing.
-        if project.config.git.commit_each_step or project.config.git.tag_checkpoints:
-            vcs.commit(project.root, message)
-        if project.config.git.tag_checkpoints:
-            vcs.tag(project.root, f"{project.book}-{checkpoint}-approved", message)
+        ops.approve_checkpoint(project, checkpoint)
     except BookforgeError as e:
         _fail(e)
     typer.echo(f"Approved '{checkpoint}'.")
@@ -165,25 +143,12 @@ def stale(
     """List everything that is out of date and why; with --fix, bring written scenes up to date."""
     try:
         project = Project.open(path, book)
-        scene_ids = {s.id for s in bible_store.load_scenes(project)} if bible_store.scenes_path(project).exists() else set()
-        for target in accept or []:
-            if target in scene_ids:
-                staleness.accept_as_is(project, target)
-            elif target in {c.id for c in bible_store.load_chapters(project)} | scene_ids:
-                staleness.record_plan(project, {target})
-            else:
-                raise BookforgeError(f"'{target}' is not a scene or chapter of this book")
-        if fix:
-            llm = build_client(project)
-            for r in staleness.fix_all(StepContext(project=project, layer="prose", llm=llm), set(only) if only else None):
-                typer.echo(f"{r.scene}: {r.action}" + (f" ({r.note})" if r.note else ""))
-        report = staleness.scan(project)
-        staleness.sync_status(project, report)
-        if project.config.git.commit_each_step:
-            keep = [project.state_path, staleness.plan_deps_path(project)]
-            vcs.commit(project.root, f"{project.book}: stale scan", [str(f.relative_to(project.root)) for f in keep if f.exists()])
+        result = ops.stale_pass(project, build_client(project) if fix else None, fix, list(accept or []), set(only) if only else None)
     except BookforgeError as e:
         _fail(e)
+    report = result.report
+    for r in result.fixes:
+        typer.echo(f"{r.scene}: {r.action}" + (f" ({r.note})" if r.note else ""))
     if report.empty and not report.problems:
         typer.echo("nothing is out of date")
         return
@@ -248,16 +213,10 @@ def bench(
     """Redraft the benchmark scenes and compare them with the last accepted run."""
     try:
         project = Project.open(path, book)
-        ctx = StepContext(project=project, layer="prose", llm=build_client(project))
-        baseline = benchmarks.accepted_run(project)
-        run_ = benchmarks.run_bench(ctx, list(only) if only else None)
-        comparison = benchmarks.compare(ctx, run_, baseline, judge=not no_judge) if baseline else None
-        accepted = accept and (comparison is None or comparison["ships"] or force)
-        if accepted:
-            benchmarks.accept(project, run_)
-        benchmarks.commit(project, run_, accepted)
+        outcome = ops.bench_pass(project, build_client(project), list(only) if only else None, accept, force, not no_judge)
     except BookforgeError as e:
         _fail(e)
+    run_, comparison, accepted = outcome.run, outcome.comparison, outcome.accepted
     typer.echo(f"{run_.name}: {len(run_.results)} benchmark scene(s) in workbench/experiments/{run_.name}/")
     for bid, r in run_.results.items():
         typer.echo(f"  {bid}: {r['words']} words, score {r['score']} ({r['blocking']} blocking, {r['warnings']} warning(s))")
@@ -291,12 +250,8 @@ def changes_cmd(
     try:
         project = Project.open(path, book)
         decided = None
-        if approve_id:
-            decided = change_requests.approve(project, approve_id)
-        elif reject_id:
-            decided = change_requests.reject(project, reject_id)
-        if decided and project.config.git.commit_each_step:
-            vcs.commit(project.root, f"{project.book}: change request {decided.id} {decided.status}")
+        if approve_id or reject_id:
+            decided = ops.decide_change(project, approve_id or reject_id, bool(approve_id))
         requests = change_requests.list_requests(project)
     except BookforgeError as e:
         _fail(e)

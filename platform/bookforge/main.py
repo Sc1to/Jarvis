@@ -1,7 +1,7 @@
-"""Bookforge service shell (Phase 14, milestone 14.0).
+"""Bookforge service (Phase 14).
 
-Only the platform plumbing exists so far: health check, response envelope and
-error handling. The pipeline itself arrives in milestones 14.1 onward.
+The platform plumbing (health check, response envelope, error handling) and, from milestone
+14.10, the HTTP API over the pipeline library: see bookforge/api.py.
 """
 
 import logging
@@ -19,12 +19,14 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from health import health_payload  # noqa: E402
 
 from bookforge import __version__  # noqa: E402
+from bookforge.api import create_router  # noqa: E402
+from bookforge.errors import BookforgeError  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("platform_bookforge")
 
 VERSION = __version__
-MILESTONE = "14.0"
+MILESTONE = "14.10"
 DATA_DIR = os.environ.get("BOOKFORGE_DATA_DIR", "/opt/platform/data/bookforge")
 _start = time.time()
 
@@ -46,10 +48,18 @@ async def _validation_error(_: Request, exc: RequestValidationError):
     return _error(422, "validation_error", str(exc.errors()))
 
 
+@app.exception_handler(BookforgeError)
+async def _bookforge_error(_: Request, exc: BookforgeError):
+    return _error(400, "bookforge_error", str(exc))
+
+
 @app.exception_handler(Exception)
 async def _unhandled_error(_: Request, exc: Exception):
     log.exception("Unhandled error")
     return _error(500, "internal_error", str(exc))
+
+
+app.include_router(create_router(lambda: DATA_DIR))  # DATA_DIR is looked up per request
 
 
 @app.get("/health")
