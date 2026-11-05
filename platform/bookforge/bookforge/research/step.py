@@ -173,15 +173,38 @@ def era_terms(setting: str) -> list[str]:
     return list(dict.fromkeys(terms))
 
 
+_PLACES = {
+    "england": ["england", "english", "britain", "british", "london", ".uk"], "britain": ["britain", "british", "england", "english", ".uk"],
+    "scotland": ["scotland", "scottish", "scots", ".uk"], "wales": ["wales", "welsh", ".uk"], "ireland": ["ireland", "irish"],
+    "france": ["france", "french", "paris"], "germany": ["germany", "german", "berlin"], "america": ["america", "american", "united states", "u.s."],
+    "usa": ["america", "american", "united states", "u.s."], "canada": ["canada", "canadian"], "australia": ["australia", "australian"],
+    "india": ["india", "indian"],
+}
+_NOT_PLACES = frozenset("any time today modern century early late mid around about the and of in".split())
+
+
+def place_terms(setting: str) -> list[str]:
+    """Words that mark a page as being about the setting's place: "England" also means english, british, london and .uk addresses."""
+    terms: list[str] = []
+    for w in re.findall(r"[A-Za-z]+", setting):
+        lw = w.casefold()
+        if lw in _PLACES:
+            terms += _PLACES[lw]
+        elif len(lw) >= 4 and lw not in _NOT_PLACES:
+            terms.append(lw)
+    return list(dict.fromkeys(terms))
+
+
 def rank_hits(hits: list[Hit], question: str, setting: str) -> list[tuple[Hit, int]]:
-    """Results ordered by how well their title, address and excerpt match the question and the setting's era (ties keep the
+    """Results ordered by how well their title, address and excerpt match the question and the setting's era and place (ties keep the
     search engine's order). Cheap, no model: the page itself is judged later; this only decides which pages are read first."""
     words = {w for w in re.findall(r"[a-z]{4,}", question.casefold()) if w not in _COMMON}
-    era = era_terms(setting)
+    era, places = era_terms(setting), place_terms(setting)
     scored = []
     for i, h in enumerate(hits):
         text = f"{h.title} {h.snippet} {h.url}".casefold()
-        score = min(4, sum(1 for w in words if w in text)) + (3 if any(t in text for t in era) else 0)
+        score = (min(4, sum(1 for w in words if w in text)) + (3 if any(t in text for t in era) else 0)
+                 + (2 if any(t in text for t in places) else 0))
         scored.append((-score, i, h, score))
     scored.sort(key=lambda x: (x[0], x[1]))
     return [(h, score) for _, _, h, score in scored]
@@ -300,8 +323,10 @@ def answer_question(ctx, web, q: Question, document: str, seen_urls: set[str]) -
         if not usable:
             attempt.reason = "every result was already read or from a skipped site"
         for hit in usable:
-            if len([p for p in attempt.pages if not p.error]) >= cfg.pages_per_question or len(attempt.facts) >= cfg.facts_per_question:
+            if len([p for p in attempt.pages if not p.error]) >= cfg.pages_per_question:
                 break
+            if len(attempt.facts) >= cfg.facts_per_question and len({h.url for h, _ in attempt.facts}) >= cfg.sources_per_question:
+                break  # enough facts, from enough different pages
             trace = PageTrace(hit.url, hit.title)
             try:
                 page = web.fetch(hit.url)
