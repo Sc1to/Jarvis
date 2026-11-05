@@ -14,12 +14,14 @@ from pathlib import Path
 import httpx
 
 from . import vcs
-from .config import Config, ModelEndpoint, host_config_path, load_config
+from .config import Config, ModelEndpoint, Research, host_config_path, load_config
 from .errors import BookforgeError
-from .research.search import PlaywrightWebClient, WebClient, WebError, load_web_tool_class, playwright_installed
+from .research.hits import search_hits
+from .research.search import WebClient, WebError, load_web_tool_class, make_web_client, playwright_installed
 from .state import load_state
 
 TEST_PAGE = "https://example.com"
+PROBE_QUERY = "history"
 PROBE_TIMEOUT = 5.0
 
 
@@ -47,7 +49,7 @@ def check_models_endpoint(role: str, endpoint: ModelEndpoint, transport: httpx.B
         return Check(name, "fail", f"{url} did not return an OpenAI-style model list")
     if not endpoint.model:
         return Check(name, "warn", f"reachable; set models.{role}.model to one of: {', '.join(ids) or '(none listed)'}")
-    if endpoint.model not in ids:
+    if endpoint.model not in ids and f"{endpoint.model}:latest" not in ids:  # Ollama adds ':latest' to untagged names
         return Check(name, "fail", f"model '{endpoint.model}' is not served at {url} (available: {', '.join(ids) or 'none'})")
     return Check(name, "pass", f"{url} serves {endpoint.model}")
 
@@ -63,7 +65,7 @@ def check_decide_endpoint(url: str, transport: httpx.BaseTransport | None = None
     return Check("endpoint_decide", "warn", f"{url} answered HTTP {resp.status_code}; System One support is unverified (not used yet: continuity questions are answered by the planner model)")
 
 
-def check_web(web_client: WebClient | None = None, fetch: bool = True) -> list[Check]:
+def check_web(web_client: WebClient | None = None, fetch: bool = True, research: Research | None = None) -> list[Check]:
     checks: list[Check] = []
     try:
         load_web_tool_class()
@@ -75,13 +77,19 @@ def check_web(web_client: WebClient | None = None, fetch: bool = True) -> list[C
         return checks
     if web_client is None:
         checks.append(Check("playwright", "pass", "installed"))
-        web_client = PlaywrightWebClient(attempts=1)
+        web_client = make_web_client(research or Research(), attempts=1)
     if fetch:
         try:
             result = web_client.fetch(TEST_PAGE)
             checks.append(Check("web_fetch", "pass", f"fetched {TEST_PAGE} ({len(result.text)} chars)"))
         except BookforgeError as e:
             checks.append(Check("web_fetch", "fail", str(e)))
+        source = (research or Research()).source
+        try:
+            hits = search_hits(web_client, PROBE_QUERY, 3)
+            checks.append(Check("web_search", "pass", f"{len(hits)} result(s) for '{PROBE_QUERY}' from {source}"))
+        except BookforgeError as e:
+            checks.append(Check("web_search", "fail", f"research.source '{source}' returned no usable results: {e}"))
     return checks
 
 
@@ -147,7 +155,7 @@ def run_doctor(
             checks.append(check_models_endpoint("writer", config.models.writer, transport))
             checks.append(check_models_endpoint("critic", config.models.critic, transport))
             checks.append(check_decide_endpoint(config.models.decide.url, transport))
-            checks.extend(check_web(web_client))
+            checks.extend(check_web(web_client, research=config.research))
         else:
             checks.append(Check("network", "warn", "endpoint and web checks skipped (--offline)"))
             checks.extend(check_web(web_client, fetch=False))

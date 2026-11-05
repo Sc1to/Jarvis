@@ -32,6 +32,8 @@ research:
   enabled: true
   required: false                      # true: a layer fails if none of its questions could be answered
   search: playwright_web_tool          # platform/tools/web_tool.py; no direct HTTP
+  source: wikipedia                    # wikipedia | duckduckgo (search-engine pages are usually blocked)
+  wikipedia_language: en               # which Wikipedia to search: en, de, fr, ...
   results_per_question: 5              # search results considered per question
   max_questions: 6                     # questions asked per layer
   pages_per_question: 2                # pages read per question

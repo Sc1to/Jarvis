@@ -163,9 +163,14 @@ def test_platform_web_tool_can_be_imported_from_the_service():
 
 
 def test_build_web_client_names_the_session(project):
-    c = web.build_web_client(project)
-    assert c._session_id == f"bookforge:{project.root.name}:b1"
-    assert c._log.path == project.book_dir / "logs" / "calls.jsonl"
+    from bookforge.research.wikipedia import WikipediaWebClient
+    c = web.build_web_client(project)  # the default source is Wikipedia, wrapped around the web-tool client
+    assert isinstance(c, WikipediaWebClient)
+    assert c._inner._session_id == f"bookforge:{project.root.name}:b1"
+    assert c._inner._log.path == project.book_dir / "logs" / "calls.jsonl"
+    project.config.research.source = "duckduckgo"
+    plain = web.build_web_client(project)
+    assert isinstance(plain, web.PlaywrightWebClient) and plain._session_id == c._inner._session_id
 
 
 # ── fake ──────────────────────────────────────────────────────────────────────
