@@ -28,6 +28,9 @@ python -m bookforge check <series> b1.ch04.s3 [--file x.md]  # mechanical checks
 python -m bookforge review <series> b1.ch04.s3                # how the scene went through quality control
 python -m bookforge stale  <series> [--fix] [--accept b1.ch04.s3]   # what is out of date and why; --fix re-checks, patches or redrafts
 python -m bookforge changes <series> [--approve cr-0001 | --reject cr-0001]   # the prose says something the plan does not
+python -m bookforge report  <series> [--write]                       # the morning report (run also writes one at the end)
+python -m bookforge assemble <series> [--partial]                    # manuscript.md from the accepted scenes; then `approve final`
+python -m bookforge bench   <series> [--only quarrel] [--accept]     # redraft the benchmark scenes, compare with the accepted run
 python -m bookforge doctor  [<series>] [--offline]   # --offline skips the endpoint checks and the web fetch
 ```
 

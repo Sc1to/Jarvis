@@ -1,0 +1,19 @@
+id: quarrel
+purpose: Two people who need each other say the thing that ends their trust.
+pov: Mara
+setting: a narrow kitchen at night, one lamp lit
+characters:
+- name: Mara
+  facts:
+  - a ferry pilot; speaks little when angry
+- name: Eli
+  facts:
+  - her younger brother; owes money to the wrong people
+beats:
+- Eli admits he sold their father's boat.
+- Mara controls her voice and asks who bought it.
+- Eli names the buyer, and Mara realises what it means.
+- Mara tells him to leave before morning.
+words:
+- 300
+- 600

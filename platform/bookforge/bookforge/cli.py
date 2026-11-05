@@ -7,7 +7,8 @@ from typing import Optional
 
 import typer
 
-from . import changes as change_requests, stale as staleness, vcs
+from . import assemble as assembly, bench as benchmarks, changes as change_requests, report as morning_report, stale as staleness, vcs
+from datetime import datetime, timezone
 from .constants import CHECKPOINTS, LAYER_ORDER
 from . import scenefiles
 from .bible import store as bible_store
@@ -64,12 +65,26 @@ def run(
     until: Optional[str] = typer.Option(None, "--until", help=f"Stop after this layer ({', '.join(LAYER_ORDER)})"),
 ) -> None:
     """Run the pipeline until a checkpoint, the --until layer, or the end."""
+    started = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
     try:
         project = Project.open(path, book)
         web = build_web_client(project) if project.config.research.enabled else None
         summary = run_layers(project, llm=build_client(project), handlers=HANDLERS, until=until, web=web)
     except BookforgeError as e:
         _fail(e)
+    assembled = None
+    if summary.stopped == "complete":  # every layer accepted: put the book together for the final read
+        try:
+            assembled = assembly.assemble(project)
+        except BookforgeError as e:
+            summary.detail = f"not assembled: {e}"
+    report_path = None
+    try:
+        report_path = morning_report.write_report(project, since=started)
+        if project.config.git.commit_each_step:
+            vcs.commit(project.root, f"{project.book}: morning report", [report_path])
+    except (BookforgeError, OSError) as e:
+        typer.secho(f"warning: no morning report: {e}", fg=typer.colors.YELLOW, err=True)
     for layer in summary.ran:
         typer.echo(f"accepted: {layer}" + (f" ({summary.notes[layer]})" if layer in summary.notes else ""))
     if not summary.ran:
@@ -78,6 +93,11 @@ def run(
         typer.echo(summary.detail)
     elif summary.stopped == "complete":
         typer.echo("all layers accepted")
+    if assembled:
+        typer.echo(f"assembled {assembled.path}: {assembled.words} words in {assembled.scenes} scenes"
+                   + (f", tagged {assembled.tag}" if assembled.tag else "") + "; read it, then `approve final`")
+    if report_path:
+        typer.echo(f"morning report: {report_path}")
     raise typer.Exit(summary.exit_code)
 
 
@@ -176,6 +196,88 @@ def stale(
     for line in report.problems:
         typer.echo(f"could not check {line}")
     raise typer.Exit(1)
+
+
+@app.command()
+def report(
+    path: Path = PathArg,
+    book: str = BookOpt,
+    write: bool = typer.Option(False, "--write", help="Save it under reports/ as well"),
+) -> None:
+    """Print the morning report: progress, what needs you, what is unsure, suggestions, facts to verify."""
+    try:
+        project = Project.open(path, book)
+        typer.echo(morning_report.build_report(project))
+        if write:
+            saved = morning_report.write_report(project)
+            if project.config.git.commit_each_step:
+                vcs.commit(project.root, f"{project.book}: morning report", [saved])
+            typer.echo(f"saved {saved}")
+    except (BookforgeError, OSError) as e:
+        _fail(e)
+
+
+@app.command("assemble")
+def assemble_cmd(
+    path: Path = PathArg,
+    book: str = BookOpt,
+    partial: bool = typer.Option(False, "--partial", help="Write what is accepted so far to manuscript-partial.md (no tag, no checkpoint)"),
+) -> None:
+    """Join the accepted scenes into books/<book>/manuscript.md and reach the final checkpoint."""
+    try:
+        project = Project.open(path, book)
+        result = assembly.assemble(project, partial)
+    except BookforgeError as e:
+        _fail(e)
+    typer.echo(f"{result.path}: {result.words} words in {result.scenes} scenes" + (f", tagged {result.tag}" if result.tag else ""))
+    if result.missing:
+        typer.echo(f"left out (not accepted yet): {', '.join(result.missing)}")
+    if not partial:
+        typer.echo("Read it, then `approve final`.")
+
+
+@app.command()
+def bench(
+    path: Path = PathArg,
+    book: str = BookOpt,
+    only: Optional[list[str]] = typer.Option(None, "--only", help="Only this benchmark (repeatable)"),
+    accept: bool = typer.Option(False, "--accept", help="Make this run the baseline (if it does not lose)"),
+    force: bool = typer.Option(False, "--force", help="With --accept: even if the comparison lost"),
+    no_judge: bool = typer.Option(False, "--no-judge", help="Skip the pairwise judgments (mechanical comparison only)"),
+) -> None:
+    """Redraft the benchmark scenes and compare them with the last accepted run."""
+    try:
+        project = Project.open(path, book)
+        ctx = StepContext(project=project, layer="prose", llm=build_client(project))
+        baseline = benchmarks.accepted_run(project)
+        run_ = benchmarks.run_bench(ctx, list(only) if only else None)
+        comparison = benchmarks.compare(ctx, run_, baseline, judge=not no_judge) if baseline else None
+        accepted = accept and (comparison is None or comparison["ships"] or force)
+        if accepted:
+            benchmarks.accept(project, run_)
+        benchmarks.commit(project, run_, accepted)
+    except BookforgeError as e:
+        _fail(e)
+    typer.echo(f"{run_.name}: {len(run_.results)} benchmark scene(s) in workbench/experiments/{run_.name}/")
+    for bid, r in run_.results.items():
+        typer.echo(f"  {bid}: {r['words']} words, score {r['score']} ({r['blocking']} blocking, {r['warnings']} warning(s))")
+    if comparison is None:
+        typer.echo("no accepted baseline yet" + ("" if accepted else "; run with --accept to make this one"))
+    else:
+        if comparison["changed"]:
+            typer.echo(f"changed since the baseline: {', '.join(comparison['changed'])}")
+        for bid, row in comparison["rows"].items():
+            extra = f" (score {row['score'][0]} -> {row['score'][1]})" if "score" in row else ""
+            typer.echo(f"  {bid}: {row['verdict']}{extra}")
+        for line in comparison["regressions"]:
+            typer.echo(f"  REGRESSION {line}")
+        typer.echo(f"{comparison['wins']} won, {comparison['losses']} lost, {comparison['ties']} tied: "
+                   + ("it does not lose." if comparison["ships"] else "it loses; do not ship this change."))
+    if accepted:
+        typer.echo(f"accepted {run_.name} as the baseline")
+    elif accept:
+        typer.echo("not accepted: it loses (use --force to accept anyway)")
+    raise typer.Exit(0 if comparison is None or comparison["ships"] else 1)
 
 
 @app.command("changes")

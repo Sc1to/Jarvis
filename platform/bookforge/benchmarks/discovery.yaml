@@ -1,0 +1,19 @@
+id: discovery
+purpose: A character finds something that changes what she believed.
+pov: Wren
+setting: an attic over a bakery
+characters:
+- name: Wren
+  facts:
+  - a baker's apprentice; curious and stubborn
+- name: Master Voss
+  facts:
+  - the baker, away for the day
+beats:
+- Wren climbs to the attic to fetch a sack and finds a locked chest.
+- She opens it with the key from the shelf and finds letters addressed to her mother.
+- She reads the first and understands her mother's name is wrong everywhere in town.
+- She hears the shop door and puts everything back.
+words:
+- 300
+- 600

@@ -100,7 +100,7 @@ platform/bookforge/            the tool (part of the Jarvis repository)
 ├── requirements.txt
 ├── config.example.yaml
 ├── bookforge/
-│   ├── cli.py                 new | run | status | approve | stale | changes | report | bench
+│   ├── cli.py                 new | run | status | approve | stale | changes | report | assemble | bench
 │   ├── llm.py                 OpenAI-compatible client, retries, logging
 │   ├── layers/                runner.py (the shared loop) + one settings file per layer
 │   ├── bible/                 tracks.py (state at a point), extract.py (prose → observed)
@@ -109,6 +109,9 @@ platform/bookforge/            the tool (part of the Jarvis repository)
 │   ├── changes.py             change requests (filed from gaps, approved or rejected)
 │   ├── vcs.py                 git commits, tags, change-request branches
 │   ├── briefing.py            builds the per-call context pack
+│   ├── report.py              morning report
+│   ├── assemble.py            manuscript.md from the accepted scenes
+│   ├── bench.py               benchmark runs and comparison
 │   ├── qc/                    mechanical.py critic.py continuity.py judge.py
 │   ├── research/              search.py (web tool) fetch.py notes.py
 │   └── prompts/               one .md template per layer and check
@@ -662,7 +665,12 @@ Bookforge is built inside the Jarvis repository by Claude Code, one milestone at
      - Git: the requests and the track change are committed with the scene or the command that made them. The spec's idea of a branch per change request is not used: a request is a small file, and the stale scan shows what it would touch.
    - Not done here, left for later: the critic accepting changes through a model call (the rule above is mechanical), change requests for anything other than a track state (beats, acts), and acting on a hand edit of `final.md` (the next scene notices a changed ending through `previous`, the edited scene itself is not re-checked).
 
-9. Morning report, assembly, `bench` command and benchmark scenes.
+9. Morning report, assembly, `bench` command and benchmark scenes (done 2026-11-05): `bookforge/report.py`, `assemble.py`, `bench.py`, the shipped `benchmarks/*.yaml`.
+
+   - **Morning report.** `run` writes `books/<book>/reports/<date>.md` at the end of every run, however it stopped, and prints the path (a second report on the same day gets a time suffix). `report <series> [--write]` prints one at any time. It reads only files the pipeline already keeps, so it costs no model calls. Sections: *Progress* (layers, scene counts, words against the target; model calls, failed calls, time and tokens, from `logs/calls.jsonl`, counting only this run when written by `run`; tokens read "the server did not report usage" if colibri sends none); *Needs you* (waiting checkpoints, flagged layers, flagged and stale scenes with the reason, pending change requests with the command to decide them, plan items out of date, unresolved plan-review notes); *Unsure* (continuity answers that were hesitant, scenes passing the critic only at the minimum score, gaps between plan and prose); *Suggestions for banned.txt* (four-word phrases found in at least 3 scenes and 10% of them that are not banned yet; names and all-stopword phrases left out; at most 10); *Facts to verify* (research facts marked sensitive, with their source and the scenes that cite them); *Revision samples* (3 before/after passages, chosen by a shuffle seeded with the date so a report is repeatable).
+   - **Assembly.** `assemble <series> [--partial]` writes `books/<book>/manuscript.md`: each act a `#` heading, each chapter a `##` heading, scenes within a chapter separated by `* * *`; no title page or styling (export adds those). It refuses unless every scene is accepted and nothing is stale or out of date, and names what is in the way. `--partial` writes the accepted scenes to `manuscript-partial.md` with no tag and no checkpoint. A full assembly is committed, reaches the `final` checkpoint, and is tagged `<book>-draft-N` when the text differs from the last assembly. `run` assembles by itself when every layer is accepted. Read the manuscript, then `approve final`.
+   - **Benchmarks.** Five briefs ship in `platform/bookforge/benchmarks/` (quarrel, pursuit, reunion, discovery, farewell); `<series>/workbench/benchmarks/*.yaml` adds more, and a file with the same id replaces a shipped one. A brief is self-contained (purpose, point-of-view character, setting, cast with facts, beats, word range): no bible and no earlier scenes, so only the prompt, model or settings can change the result. `bench <series> [--only id] [--no-judge] [--accept [--force]]` writes one draft per brief with the writer (first draft temperature, the series' style guide, sample and banned list), checks it mechanically, and saves it under `workbench/experiments/bench-<stamp>/` (`<id>.md` and `results.json`, committed). Compared with the accepted run (`workbench/experiments/bench-accepted.json`), each brief gets the mechanical change and a pairwise judgment (new against old, run twice with the order swapped; a split is a tie; a judge that fails is "unknown", not a loss). The output lists which settings differ from the baseline (writer model and temperature, the `prose` and `prose_system` templates, style, banned list). **A change ships** if no brief gained a blocking problem it did not have and it does not lose more briefs than it wins; `bench` exits 1 otherwise. `--accept` makes the run the baseline, refusing a losing one unless `--force`. The first run has no baseline and just reports; accept it to start one.
+   - Not done here: judging only the briefs a change could affect, your own blind vote on benchmark pairs, and A/B tests of two prompt versions side by side (workbench, 14.13).
 
 10. API endpoints on the service for runs, status, checkpoints and approvals (wrapping the same library as the CLI).
 
