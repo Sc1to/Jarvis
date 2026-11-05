@@ -4,7 +4,7 @@ from urllib.parse import quote_plus
 import httpx
 import pytest
 
-from bookforge.config import Config, ModelEndpoint
+from bookforge.config import Research, Config, ModelEndpoint
 from bookforge.doctor import check_models_endpoint, check_web
 from bookforge.errors import ConfigError
 from bookforge.layers.runner import StepContext
@@ -168,9 +168,9 @@ def test_a_research_step_over_wikipedia_stores_facts_with_the_article_address(pr
 
 # ── configuration and the doctor ────────────────────────────────────────────
 
-def test_wikipedia_is_the_default_source_and_the_language_is_validated(tmp_path):
+def test_auto_is_the_default_source_and_the_language_is_validated(tmp_path):
     cfg = Config()
-    assert cfg.research.source == "wikipedia" and cfg.research.wikipedia_language == "en"
+    assert cfg.research.source == "auto" and cfg.research.wikipedia_language == "en"
     host = tmp_path / "host.yaml"
     for bad in ("EN", "e/vil", "en.evil.example", ""):
         host.write_text(f'research:\n  wikipedia_language: "{bad}"\n')
@@ -186,11 +186,12 @@ def test_wikipedia_is_the_default_source_and_the_language_is_validated(tmp_path)
 def test_the_doctor_probes_search_and_says_which_source_failed():
     good = FakeWebClient(pages={"https://example.com": "Example"}, searches={"history": "r"},
                          links={"history": [{"text": "History", "href": "https://en.wikipedia.org/wiki/History"}]})
-    checks = {c.name: c for c in check_web(good)}
+    wiki = Research(source="wikipedia")
+    checks = {c.name: c for c in check_web(good, research=wiki)}
     assert checks["web_search"].level == "pass" and "1 result(s) for 'history' from wikipedia" in checks["web_search"].detail
     blocked = FakeWebClient(pages={"https://example.com": "Example"}, searches={"history": "If this persists, please email us."})
-    c = {x.name: x for x in check_web(blocked)}["web_search"]
-    assert c.level == "fail" and "research.source 'wikipedia' returned no usable results" in c.detail and "blocked or empty" in c.detail
+    c = {x.name: x for x in check_web(blocked, research=wiki)}["web_search"]
+    assert c.level == "fail" and "research source 'wikipedia' returned no usable results" in c.detail and "blocked or empty" in c.detail
 
 
 def test_the_doctor_search_probe_can_be_skipped():

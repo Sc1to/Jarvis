@@ -65,6 +65,23 @@ def check_decide_endpoint(url: str, transport: httpx.BaseTransport | None = None
     return Check("endpoint_decide", "warn", f"{url} answered HTTP {resp.status_code}; System One support is unverified (not used yet: continuity questions are answered by the planner model)")
 
 
+def check_searxng(research: Research, transport: httpx.BaseTransport | None = None) -> Check | None:
+    """The search service behind research. None when research is set to something else."""
+    if research.source not in ("auto", "searxng"):
+        return None
+    from .research.searxng import probe  # imported here: it pulls in the web client module
+    status = probe(research.searxng_url, transport=transport)
+    unusable = not (status["reachable"] and status["json"])
+    if unusable:
+        level = "fail" if research.source == "searxng" else "warn"
+        fallback = "" if research.source == "searxng" else "; research falls back to Wikipedia only"
+        return Check("searxng", level, f"{status['error'] or 'no answer'}{fallback} (setup: docs/STACK.md, SearXNG)")
+    detail = f"{research.searxng_url} answered with {status['results']} result(s) for a test search"
+    if status["failed_engines"]:
+        detail += f"; engines that did not answer: {status['failed_engines']}"
+    return Check("searxng", "pass" if status["results"] else "warn", detail if status["results"] else detail + " (no results: are any engines enabled?)")
+
+
 def check_web(web_client: WebClient | None = None, fetch: bool = True, research: Research | None = None) -> list[Check]:
     checks: list[Check] = []
     try:
@@ -84,12 +101,12 @@ def check_web(web_client: WebClient | None = None, fetch: bool = True, research:
             checks.append(Check("web_fetch", "pass", f"fetched {TEST_PAGE} ({len(result.text)} chars)"))
         except BookforgeError as e:
             checks.append(Check("web_fetch", "fail", str(e)))
-        source = (research or Research()).source
+        source = getattr(web_client, "source_name", (research or Research()).source)
         try:
             hits = search_hits(web_client, PROBE_QUERY, 3)
             checks.append(Check("web_search", "pass", f"{len(hits)} result(s) for '{PROBE_QUERY}' from {source}"))
         except BookforgeError as e:
-            checks.append(Check("web_search", "fail", f"research.source '{source}' returned no usable results: {e}"))
+            checks.append(Check("web_search", "fail", f"research source '{source}' returned no usable results: {e}"))
     return checks
 
 
@@ -164,6 +181,9 @@ def run_doctor(
             checks.append(check_models_endpoint("writer", config.models.writer, transport))
             checks.append(check_models_endpoint("critic", config.models.critic, transport))
             checks.append(check_decide_endpoint(config.models.decide.url, transport))
+            searx = check_searxng(config.research, transport)
+            if searx:
+                checks.append(searx)
             checks.extend(check_web(web_client, research=config.research))
         else:
             checks.append(Check("network", "warn", "endpoint and web checks skipped (--offline)"))

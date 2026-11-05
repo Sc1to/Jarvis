@@ -12,10 +12,11 @@ import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 from ..errors import BookforgeError
 from ..prompts import render
-from .hits import search_hits
+from .hits import Hit, search_hits
 from .notes import QuestionRecord, normalize_question, notes_for_prompt, stores_for
 
 log = logging.getLogger("platform_bookforge.research")
@@ -29,6 +30,8 @@ DOCUMENT_CHARS = 6000
 STORY_EXCERPT_CHARS = 1500
 MAX_CONTEXT_CHARS = 200
 LIST_TITLE_PREFIXES = ("list of", "lists of", "index of", "outline of", "timeline of")
+WINDOW_CHARS = 1500  # a long page is cut into windows this size; the ones that mention the question are read
+_COMMON = frozenset("what were was the how did does and for with from that this which when where who why are their they about into over under during between".split())
 
 
 @dataclass
@@ -135,22 +138,56 @@ def check_facts(ctx, question: str, context: str, story: str, facts: list[dict])
     return [f for n, f in enumerate(facts, 1) if n in wanted]
 
 
-def extract_facts(ctx, question: str, url: str, page_text: str, context: str = "", story: str = "") -> tuple[list[dict], int]:
+def relevant_excerpt(text: str, question: str, max_chars: int) -> str:
+    """At most `max_chars` of the page: all of it if it fits, else the windows that mention the question's words most.
+
+    A web page begins with menus and cookie notices, and a long article hides its answer deep inside, so the first
+    characters are a poor choice. The windows are cheap to score (no model), and are kept in page order.
+    """
+    if len(text) <= max_chars:
+        return text
+    words = {w for w in re.findall(r"[a-z]{4,}", question.casefold()) if w not in _COMMON}
+    windows = [text[i: i + WINDOW_CHARS] for i in range(0, len(text), WINDOW_CHARS)]
+    scored = sorted(range(len(windows)), key=lambda k: (-sum(1 for w in words if w in windows[k].casefold()), k))
+    keep = sorted(scored[: max(1, max_chars // WINDOW_CHARS)])
+    return "\n[...]\n".join(windows[k] for k in keep)
+
+
+def skipped(url: str, skip_domains: list[str]) -> bool:
+    host = (urlparse(url).hostname or "").lower()
+    return any(host == d or host.endswith("." + d) for d in skip_domains)
+
+
+def diversify(hits: list[Hit]) -> list[Hit]:
+    """Each site's first result first, the rest after: three pages from three sites beat three from one."""
+    firsts, rest, seen = [], [], set()
+    for h in hits:
+        host = (urlparse(h.url).hostname or "").lower()
+        (rest if host in seen else firsts).append(h)
+        seen.add(host)
+    return firsts + rest
+
+
+def extract_facts(ctx, question: str, url: str, page_text: str, context: str = "", story: str = "",
+                  stats: dict | None = None) -> tuple[list[dict], int]:
     """Facts a page states in answer to the question, each with a verbatim quote that is really in the page.
 
     Returns (facts kept, number of facts dropped because they do not fit the question and setting).
     """
     cfg = ctx.project.config
+    shown = relevant_excerpt(page_text, f"{question} {context}", cfg.research.page_max_chars)
     reply = ctx.llm.complete(
         cfg.research.notes_model,
         [{"role": "system", "content": render("research_system", ctx.project.root)},
          {"role": "user", "content": render("research_facts", ctx.project.root, question=question, url=url,
                                             setting=context or "not stated: use the story's own time and place",
-                                            page_text=page_text[: cfg.research.page_max_chars])}],
+                                            page_text=shown)}],
         max_tokens=1200,
     )
     data = parse_json_object(reply) or {}
     raw = data.get("facts") if isinstance(data.get("facts"), list) else []
+    if stats is not None:
+        stats.update(excerpt_chars=len(shown), model_facts=len(raw), quote_rejected=0)
     facts = []
     for item in raw[:MAX_FACTS_PER_PAGE]:
         if not isinstance(item, dict):
@@ -161,6 +198,8 @@ def extract_facts(ctx, question: str, url: str, page_text: str, context: str = "
             continue
         if not quote_in_page(quote, page_text):
             log.info("dropped a fact whose quote is not in %s", url)
+            if stats is not None:
+                stats["quote_rejected"] += 1
             continue
         facts.append({"claim": claim, "quote": quote})
     if not cfg.research.check_relevance:
@@ -173,6 +212,80 @@ def extract_facts(ctx, question: str, url: str, page_text: str, context: str = "
 
 def _list_like(hit) -> bool:
     return hit.title.casefold().startswith(LIST_TITLE_PREFIXES)
+
+
+@dataclass
+class PageTrace:
+    url: str
+    title: str
+    chars: int = 0
+    excerpt_chars: int = 0
+    model_facts: int = 0  # facts the model reported
+    quote_rejected: int = 0  # of those, dropped because the quote is not on the page
+    fit_rejected: int = 0  # dropped because they do not fit the question and the setting
+    kept: list[dict] = field(default_factory=list)
+    error: str = ""
+
+
+@dataclass
+class Attempt:
+    """What happened to one question: the search results, each page read, the facts kept, and why none if none."""
+    hits: list[Hit] = field(default_factory=list)
+    skipped: list[str] = field(default_factory=list)  # results not read (skipped site, or already read)
+    pages: list[PageTrace] = field(default_factory=list)
+    facts: list[tuple[Hit, dict]] = field(default_factory=list)
+    reason: str = ""
+
+
+def answer_question(ctx, web, q: Question, document: str, seen_urls: set[str]) -> Attempt:
+    """Search for a question, read the best pages, keep the facts that quote them. Never raises: a failure is the reason."""
+    cfg = ctx.project.config.research
+    attempt = Attempt()
+    rejected = 0
+    try:
+        found = search_hits(web, q.query, cfg.results_per_question)
+        attempt.hits = found
+        usable = []
+        for h in found:
+            if skipped(h.url, cfg.skip_domains):
+                attempt.skipped.append(f"{h.url} (site skipped)")
+            elif h.url in seen_urls:
+                attempt.skipped.append(f"{h.url} (already read)")
+            else:
+                usable.append(h)
+        usable.sort(key=_list_like)  # list articles last: they are broad and rarely answer a question
+        usable = diversify(usable)
+        if not usable:
+            attempt.reason = "every result was already read or from a skipped site"
+        for hit in usable:
+            if len([p for p in attempt.pages if not p.error]) >= cfg.pages_per_question:
+                break
+            trace = PageTrace(hit.url, hit.title)
+            try:
+                page = web.fetch(hit.url)
+                seen_urls.add(hit.url)
+                trace.chars = len(page.text)
+                stats: dict = {}
+                found_facts, dropped = extract_facts(ctx, q.question, hit.url, page.text, q.context, document, stats)
+                trace.excerpt_chars, trace.model_facts, trace.quote_rejected = (stats.get("excerpt_chars", 0), stats.get("model_facts", 0),
+                                                                                stats.get("quote_rejected", 0))
+                trace.fit_rejected, trace.kept = dropped, found_facts
+                rejected += dropped
+            except BookforgeError as e:
+                log.warning("%s: page %s skipped: %s", ctx.layer, hit.url, e)
+                trace.error = str(e)
+                attempt.reason = attempt.reason or f"page {hit.url} failed: {e}"
+                attempt.pages.append(trace)
+                continue
+            attempt.pages.append(trace)
+            attempt.facts += [(hit, f) for f in found_facts]
+        if not attempt.facts and not attempt.reason:
+            read = len([p for p in attempt.pages if not p.error])
+            attempt.reason = (f"{rejected} fact(s) found but none fit the question and the story's setting" if rejected
+                              else f"no supported facts in the {read} page(s) read")
+    except BookforgeError as e:
+        attempt.reason = str(e)
+    return attempt
 
 
 def run_research(ctx, scope: str, focus: str, document: str, max_questions: int | None = None) -> ResearchOutcome:
@@ -198,37 +311,13 @@ def run_research(ctx, scope: str, focus: str, document: str, max_questions: int 
     today = datetime.now(timezone.utc).date().isoformat()
     for q in questions:
         outcome.asked += 1
+        attempt = answer_question(ctx, web, q, document, seen_urls)
         fact_ids: list[str] = []
-        reason = ""
-        rejected = 0
-        try:
-            hits = [h for h in search_hits(web, q.query, cfg.results_per_question) if h.url not in seen_urls]
-            hits.sort(key=_list_like)  # list articles last: they are broad and rarely answer a question
-            if not hits:
-                reason = "every result was already read"
-            pages_read = 0
-            for hit in hits:
-                if pages_read >= cfg.pages_per_question:
-                    break
-                try:
-                    page = web.fetch(hit.url)
-                    seen_urls.add(hit.url)
-                    pages_read += 1
-                    found, dropped = extract_facts(ctx, q.question, hit.url, page.text, q.context, document)
-                    rejected += dropped
-                except BookforgeError as e:
-                    log.warning("%s: page %s skipped: %s", ctx.layer, hit.url, e)
-                    reason = reason or f"page {hit.url} failed: {e}"
-                    continue
-                for f in found:
-                    fact = store.add_fact(claim=f["claim"], url=hit.url, title=hit.title, fetched=today,
-                                          quote=f["quote"], layer=ctx.layer, question=q.question, sensitive=q.sensitive)
-                    fact_ids.append(fact.id)
-            if not fact_ids and not reason:
-                reason = (f"{rejected} fact(s) found but none fit the question and the story's setting"
-                          if rejected else f"no supported facts in the {pages_read} page(s) read")
-        except BookforgeError as e:
-            reason = str(e)
+        for hit, f in attempt.facts:
+            fact = store.add_fact(claim=f["claim"], url=hit.url, title=hit.title, fetched=today,
+                                  quote=f["quote"], layer=ctx.layer, question=q.question, sensitive=q.sensitive)
+            fact_ids.append(fact.id)
+        reason = "" if fact_ids else attempt.reason
         if fact_ids:
             outcome.answered += 1
             outcome.facts += len(fact_ids)

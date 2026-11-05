@@ -116,6 +116,19 @@ If both colibri servers cannot be resident at once, start only the writer and le
 layers use the critic role. `manage_service` (starting and stopping the critic around its stages) is **not wired up yet**.
 Either run both, or point `models.critic` at the same endpoint as the writer for the test book (as in the config above).
 
+### The search service (research)
+
+Research searches the real web through SearXNG, which has to be running on the box:
+
+```bash
+sudo bash ~/Jarvis/scripts/setup-searxng.sh
+python -m bookforge doctor                  # the 'searxng' line
+python -m bookforge research-test $S "What did a customs clerk do in an English port in the 1880s?" --setting "England, 1880s"
+```
+
+`doctor` names engines that did not answer (some will CAPTCHA a server address now and then). `research-test` shows what was
+searched, which pages were read and why facts were kept or dropped. Without SearXNG, research falls back to Wikipedia only.
+
 ### Dashboard and notifications
 
 Open `https://<tailscale-name>/bookforge/` on your phone and laptop. The series list loads. In the header, tap
