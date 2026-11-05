@@ -34,10 +34,13 @@
 | Writer app backend | 8011 |
 | Coding assistant backend | 8012 |
 | Autocoder dashboard | 8050 |
+| Bookforge backend (platform-bookforge) | 8100 (assigned via admin panel; first free port ≥ 8100 — confirm at registration) |
+| colibri — fast writer model (bookforge only) | 8040 |
+| colibri — planner/critic model (bookforge only) | 8041 |
 | platform-trading backend | 8030 |
 | platform-trading-auditor | 8031 |
 | Trading dashboard push endpoint | 8765 (internal only, not in Caddy) |
-| Ollama | 11434 |
+| Ollama | 11434 (default backend for every app except bookforge) |
 | ChromaDB | 8020 |
 | IBKR TWS — paper trading | 7497 |
 | IBKR TWS — live trading | 7496 |
@@ -124,8 +127,13 @@ ms-s1.tail-xxxx.ts.net {
     handle /coding* {
         reverse_proxy localhost:8012
     }
+    handle /bookforge* {
+        reverse_proxy localhost:8100
+    }
 }
 ```
+
+`/bookforge` is added by the admin panel when the app is registered — do not add it by hand.
 
 **Admin panel integration:**
 - Admin panel writes new route blocks to Caddyfile when apps are registered
@@ -638,6 +646,11 @@ await ib.connectAsync("127.0.0.1", 7497, clientId=1)  # paper
 ├── chat/                   # Chat app service
 ├── writer/                 # Writer app service
 ├── coding/                 # Coding assistant service
+├── bookforge/              # Bookforge service (Phase 14): pipeline library, CLI, FastAPI wrapper
+│   ├── venv/
+│   ├── main.py
+│   ├── requirements.txt
+│   └── tests/
 ├── trading/                # Trading system backend
 │   ├── venv/
 │   ├── main.py
@@ -649,10 +662,12 @@ await ib.connectAsync("127.0.0.1", 7497, clientId=1)  # paper
 │   ├── admin/
 │   ├── autocoder/
 │   ├── chat/
-│   └── writer/
+│   ├── writer/
+│   └── bookforge/
 ├── data/
 │   ├── platform.db         # SQLite database
 │   ├── chromadb/           # ChromaDB persistent storage
+│   ├── bookforge/          # One folder (and one Git repo) per series; plain files
 │   └── projects/           # Autocoder project workspaces
 │       └── <project-name>/
 │           ├── .git/
@@ -663,6 +678,27 @@ await ib.connectAsync("127.0.0.1", 7497, clientId=1)  # paper
     ├── BUILD_SEQUENCE.md
     └── SETUP.md
 ```
+
+---
+
+## COLIBRI (BOOKFORGE MODEL BACKEND)
+
+**Purpose:** Local model runner used by **bookforge only**. Colibri keeps the hot part of a mixture-of-experts model in RAM and streams the rest from the SSD, which makes very large models (hundreds of GB) usable on the mini PC. Every other app keeps using Ollama.
+**Status:** Not yet installed or measured on the MS-S1 Max (depends on Phases 1–2). Model names and speeds in `docs/BOOKFORGE.md` are the author's plan, not verified figures.
+**Repo:** `https://github.com/JustVugg/colibri`, cloned to `~/colibri` on the mini PC. Install steps live in `docs/BOOKFORGE.md` (Installation) — do not duplicate them here.
+
+**Endpoints (OpenAI-compatible `/v1`):**
+| Role | Port | Systemd unit |
+|---|---|---|
+| Fast writer model | 8040 | `platform-colibri-writer` |
+| Planner / critic model | 8041 | `platform-colibri-critic` |
+
+**Rules:**
+- Ports 8000/8001 from the original bookforge spec are **not used** — they belong to the admin panel and the Conductor.
+- Bookforge reads its model URLs from its own `config.yaml`; they are not hardcoded and not stored in the platform SQLite config table (no secrets involved).
+- The "Ollama is always at `http://localhost:11434`" rule is unchanged. Colibri is a separate backend for a single app, not a replacement.
+- Memory is shared with Ollama and the autocoder: the critic unit may be started and stopped per pipeline stage (`manage_service` in bookforge config) rather than kept running.
+- Colibri is an infrastructure service run as systemd, not Docker.
 
 ---
 
@@ -684,6 +720,9 @@ All platform services run as systemd units. Naming convention: `platform-<servic
 | platform-chat | /etc/systemd/system/platform-chat.service |
 | platform-writer | /etc/systemd/system/platform-writer.service |
 | platform-coding | /etc/systemd/system/platform-coding.service |
+| platform-bookforge | /etc/systemd/system/platform-bookforge.service |
+| platform-colibri-writer | /etc/systemd/system/platform-colibri-writer.service |
+| platform-colibri-critic | /etc/systemd/system/platform-colibri-critic.service |
 | platform-trading | /etc/systemd/system/platform-trading.service |
 | platform-chromadb | /etc/systemd/system/platform-chromadb.service |
 | platform-health-monitor | /etc/systemd/system/platform-health-monitor.service |

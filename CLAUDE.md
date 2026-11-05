@@ -31,6 +31,7 @@ in this order. They are the authoritative source of truth for this project.
 5. `/docs/TRADING_ARCHITECTURE.md` — trading system design, pools, agents, rules
 6. `/docs/IBKR_SETUP.md` — broker connection and IBKR gateway setup
 7. `/docs/PHASE_DEV_TOOLING.md` — local testing, deployment, and validation
+8. `/docs/BOOKFORGE.md` — bookforge book-writing pipeline (Phase 14, only when working on it)
 
 If anything in a task prompt contradicts these documents, flag the contradiction
 and ask before proceeding. Do not resolve contradictions silently.
@@ -49,7 +50,8 @@ Last completed:    Phase 13.19 — Paper trading validation tooling; Phase DEV �
                    Writer app token-usage reduction (2026-09-25) — LLM usage logging (llm_usage_log table), capped entity eventLog for QA prompts (cap_event_logs), fixed unbounded QA prior-scenes text in rewrite_scene
                    Writer app token-usage reduction II (2026-10-29) — QA ledger scoped to scene entities (+ names-only roster), QA gets condensed prior scenes, QA-failed retries use a targeted fix call (no ledger/history) instead of a full rewrite
                    Bible Workshop manual editing (2026-11-04) — edit unapproved Book/Acts/chapter-plan/scene-brief text directly; structural validation + confirm detected counts before save; optional brief QA
-Currently working: Phase 13.20 — Live trading activation (manual user decision)
+                   Phase 14 planning (2026-11-05) — bookforge spec adopted as docs/BOOKFORGE.md; ports, colibri backend, systemd names and BUILD_SEQUENCE entry documented (docs only, no code)
+Currently working: Phase 13.20 — Live trading activation (manual user decision); Phase 14 — Bookforge (planned, milestone 14.0 not started)
 Blocked on:        Infra phases (1, 2) are hardware setup; 3-6 months paper trading runtime
 Remaining:         Phase 13.20 (manual user decision)
 ```
@@ -69,6 +71,7 @@ Remaining:         Phase 13.20 (manual user decision)
 - [x] Phase 12 — Documentation
 - [x] Phase DEV — Dev tooling (Docker, deployment scripts, test suite)
 - [ ] Phase 13  — Trading system (13.1–13.19 complete; 13.20 is manual user decision)
+- [ ] Phase 14  — Bookforge (spec and docs done; no code yet)
 
 ---
 
@@ -118,7 +121,7 @@ These rules are non-negotiable. Follow them on every task without being reminded
 - Default SQLite path: `/opt/platform/data/platform.db`
 - Trading per-user path: set via `TRADING_DB_PATH` env var on each container
 - ChromaDB is always at `http://localhost:8020`
-- Ollama is always at `http://localhost:11434`
+- Ollama is always at `http://localhost:11434` (default model backend for all apps; the one exception is bookforge, which uses colibri on `:8040` / `:8041` — see STACK.md)
 
 **Testing:**
 - Every tool in the tool library must have unit tests
@@ -160,6 +163,7 @@ These rules are non-negotiable. Follow them on every task without being reminded
 │   │       └── refactorer/
 │   ├── chat/
 │   ├── writer/
+│   ├── bookforge/              ← Phase 14, planned
 │   ├── coding/
 │   ├── memory/                 ← shared memory package
 │   └── tools/                  ← shared tool library
@@ -168,6 +172,7 @@ These rules are non-negotiable. Follow them on every task without being reminded
 │   ├── autocoder/
 │   ├── chat/
 │   ├── writer/
+│   ├── bookforge/              ← Phase 14, planned
 │   └── coding/
 └── systemd/                    ← all systemd unit files
     ├── platform-admin.service
