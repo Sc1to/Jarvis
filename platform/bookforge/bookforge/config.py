@@ -107,6 +107,7 @@ class Research(_Strict):
     pages_per_question: int = Field(5, gt=0)  # pages read per question (at most; a page with no readable text does not count)
     facts_per_question: int = Field(3, gt=0)  # stop reading pages for a question once this many facts are kept...
     sources_per_question: int = Field(2, gt=0)  # ...and they come from at least this many different pages
+    model_pick: bool = True  # a model chooses which results to read from their titles and excerpts (one small call per question)
     skip_domains: list[str] = Field(default_factory=lambda: list(DEFAULT_SKIP_DOMAINS))  # results from these sites are not read
     notes_model: Literal["writer", "critic"] = "writer"  # reads pages and extracts facts
     check_relevance: bool = True  # a second look: drop facts that do not answer the question for the story's time and place

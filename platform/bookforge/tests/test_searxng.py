@@ -261,6 +261,7 @@ def test_the_describe_output_names_results_pages_and_the_verdict(project):
 
 
 def test_the_research_test_command(project, monkeypatch):
+    (project.root / "config.yaml").write_text("research:\n  model_pick: false\n")
     web = scripted_web()
     monkeypatch.setattr(cli, "build_client", lambda p: reader(p))
     monkeypatch.setattr(cli, "build_web_client", lambda p: web)
@@ -393,3 +394,64 @@ def test_the_relevance_check_asks_to_keep_related_roles_and_not_to_drop_facts_fo
     text = render("research_check", project.root, question="q", setting="England, 1880s", story="s", facts="1. x")
     assert "closely related role" in text and "same institution" in text and "Do not drop a fact only because a word in it sounds old" in text
     assert '"drop": [{"n": 2, "why"' in text
+
+
+# ── the model's pick of which results to read ───────────────────────────────
+
+PICK = "Choose which of these web search results"
+
+
+def pick_llm(pick_reply):
+    base = reader(None)
+    return RuleLLM([(PICK, pick_reply)] + base.rules)
+
+
+def pages_read(attempt):
+    return [p.url for p in attempt.pages]
+
+
+def test_the_models_pick_decides_the_reading_order(project):
+    project.config.research.model_pick = True
+    web = scripted_web()
+    llm = pick_llm(json.dumps({"read": [2, 1]}))  # the model is shown B then A (word match order) and puts A first
+    q = Question("What did customs clerks do?", "customs clerk 1880s", False, "England, 1880s")
+    attempt = answer_question(make_ctx(project, llm, web), web, q, "story", set())
+    order = [h.url for h, _ in attempt.order]
+    assert attempt.picked == 2 and order == [URL_A, URL_B]
+    assert llm.calls_matching(PICK)
+    text = "\n".join(probe_mod.describe(attempt, q, "searxng"))
+    assert "chosen by the model" in text
+
+
+def test_a_failed_pick_falls_back_to_word_matching(project):
+    project.config.research.model_pick = True
+    from bookforge.errors import BookforgeError
+
+    def boom(messages):
+        raise BookforgeError("model offline")
+
+    web = scripted_web()
+    q = Question("What did customs clerks do?", "customs clerk 1880s", False, "England, 1880s")
+    attempt = answer_question(make_ctx(project, pick_llm(boom), web), web, q, "story", set())
+    assert attempt.picked == 0 and pages_read(attempt) == [URL_B, URL_A]
+
+
+def test_a_nonsense_pick_falls_back_and_invalid_numbers_are_ignored(project):
+    project.config.research.model_pick = True
+    q = Question("What did customs clerks do?", "customs clerk 1880s", False, "England, 1880s")
+    for reply in ("not json at all", json.dumps({"read": [99, 0, -1, "x", True]}), json.dumps({"read": []})):
+        web = scripted_web()
+        attempt = answer_question(make_ctx(project, pick_llm(reply), web), web, q, "story", set())
+        assert attempt.picked == 0 and pages_read(attempt) == [URL_B, URL_A], reply
+    web = scripted_web()
+    attempt = answer_question(make_ctx(project, pick_llm(json.dumps({"read": [99, 2, 2, 1]})), web), web, q, "story", set())
+    assert attempt.picked == 2  # 99 ignored, the repeated 2 counted once
+
+
+def test_the_pick_can_be_switched_off(project):
+    project.config.research.model_pick = False
+    web = scripted_web()
+    llm = pick_llm(json.dumps({"read": [1]}))
+    q = Question("What did customs clerks do?", "customs clerk 1880s", False, "England, 1880s")
+    attempt = answer_question(make_ctx(project, llm, web), web, q, "story", set())
+    assert not llm.calls_matching(PICK) and attempt.picked == 0
