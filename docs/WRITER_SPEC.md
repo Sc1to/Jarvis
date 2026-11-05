@@ -1,12 +1,12 @@
 # Novel AI Pipeline
 ## Full System Specification · v6.0
-*Built for Minisforum AI370 · Ollama · Windows*
+*Built for Minisforum MS-S1 Max · Ollama*
 
 ---
 
 ## 1. System Overview
 
-The Novel AI Pipeline is a locally-hosted application that guides a novel from initial concept through to a fully written, canon-consistent manuscript. It is designed to run on the author's own hardware (Minisforum AI370) but can run entirely on free cloud LLM providers during development and testing, before local hardware is available.
+The Novel AI Pipeline is a locally-hosted application that guides a novel from initial concept through to a fully written, canon-consistent manuscript. It is designed to run on the author's own hardware (Minisforum MS-S1 Max) but can run entirely on free cloud LLM providers during development and testing, before local hardware is available.
 
 The system is split into three sequential phases:
 
@@ -22,8 +22,8 @@ The system is split into three sequential phases:
 
 The application runs in three modes, switchable at any time via the Settings page:
 
-- **Cloud mode** — all agents use cloud LLM providers (Google Gemini, OpenRouter). No local hardware required. Intended for development, testing, and use before the AI370 is available.
-- **Local mode** — agents use Ollama running on the Minisforum AI370. No data leaves the machine.
+- **Cloud mode** — all agents use cloud LLM providers (Google Gemini, OpenRouter). No local hardware required. Intended for development, testing, and use before the MS-S1 Max is available.
+- **Local mode** — agents use Ollama running on the Minisforum MS-S1 Max. No data leaves the machine.
 - **Hybrid mode** — agents are configured individually. Fast iteration tasks use cloud; prose writing uses local.
 
 > Cloud mode sends your story content to external servers. This is a conscious trade-off: use it freely during development, then migrate sensitive phases to local when the hardware is available.
@@ -32,7 +32,7 @@ The application runs in three modes, switchable at any time via the Settings pag
 
 | Component | Spec | Role |
 |---|---|---|
-| AI Server | Minisforum AI370 (Ryzen AI Max+ 395) | Runs all local models |
+| AI Server | Minisforum MS-S1 Max (Ryzen AI Max+ 395) | Runs all local models |
 | Memory | 128 GB LPDDR5x unified | Holds 70B models in full |
 | Network | Dual 10GbE + WiFi 7 | LAN access from all devices |
 | Form factor | 2U rack-mountable | Clean rack installation |

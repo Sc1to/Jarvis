@@ -31,6 +31,7 @@ in this order. They are the authoritative source of truth for this project.
 5. `/docs/TRADING_ARCHITECTURE.md` — trading system design, pools, agents, rules
 6. `/docs/IBKR_SETUP.md` — broker connection and IBKR gateway setup
 7. `/docs/PHASE_DEV_TOOLING.md` — local testing, deployment, and validation
+8. `/docs/BOOKFORGE.md` — bookforge book-writing pipeline (Phase 14, only when working on it)
 
 If anything in a task prompt contradicts these documents, flag the contradiction
 and ask before proceeding. Do not resolve contradictions silently.
@@ -49,7 +50,16 @@ Last completed:    Phase 13.19 — Paper trading validation tooling; Phase DEV �
                    Writer app token-usage reduction (2026-09-25) — LLM usage logging (llm_usage_log table), capped entity eventLog for QA prompts (cap_event_logs), fixed unbounded QA prior-scenes text in rewrite_scene
                    Writer app token-usage reduction II (2026-10-29) — QA ledger scoped to scene entities (+ names-only roster), QA gets condensed prior scenes, QA-failed retries use a targeted fix call (no ledger/history) instead of a full rewrite
                    Bible Workshop manual editing (2026-11-04) — edit unapproved Book/Acts/chapter-plan/scene-brief text directly; structural validation + confirm detected counts before save; optional brief QA
-Currently working: Phase 13.20 — Live trading activation (manual user decision)
+                   Phase 14 planning (2026-11-05) — bookforge spec adopted as docs/BOOKFORGE.md; ports, colibri backend, systemd names and BUILD_SEQUENCE entry documented (docs only, no code)
+                   Phase 14.0 (2026-11-05) — bookforge service shell: platform/bookforge (health + error envelope, 5 tests), systemd unit, frontend/bookforge placeholder, deploy.sh / build-frontends.sh wiring; not yet deployed
+                   Phase 14.1 (2026-11-05) — bookforge skeleton: CLI (new/run/status/approve/doctor), layered config, state.json, vcs.py (git per series), fake LLM client; 75 tests; layer handlers still empty
+                   Phase 14.2 (2026-11-05) — bookforge llm.py (retrying OpenAI-compatible client, call log), research/search.py (Playwright web tool wrapper with URL safety checks), doctor endpoint + web checks; 142 tests
+                   Phase 14.3 (2026-11-05) — bookforge layers 1-3: prompt templates (series-overridable), shared generate/check/correct loop, series + book north stars and synopsis, direction checkpoint (approve commits your edits); 184 tests; prompts are first drafts, not yet run against a real model
+                   Phase 14.4 (2026-11-05) — bookforge research step: questions, web-tool search + fetch, facts kept only with a verbatim quote from the page, sources.jsonl / questions.jsonl / notes per scope, blocked-search detection; shared web_tool now returns page links; 242 tests; only run against scripted searches (DuckDuckGo is blocked from the dev sandbox)
+                   Phase 14.5 (2026-11-05) — bookforge layers 4-6 + bible: acts, cast/constants, chapters (per act) + state tracks, scenes (per chapter) + timeline, cached resumable pieces, state_at lookups + `state-at` command, whole-book cross-checks; 355 tests; structural checks only, prompts not yet run against a real model
+                   Phase 14.6 (2026-11-05) — bookforge briefing builder (token budget, trimming order), deps.yaml content fingerprints, prose layer (drafts, best-of by mechanical score, summaries, voice checkpoint after chapter 1), mechanical checker, `briefing` and `check` commands, starter banned list; 432 tests; no model critic yet (14.7), prompts not yet run against a real model
+                   Phase 14.7 (2026-11-05) — bookforge quality control: pairwise judge, continuity questions (planner model stands in for System One), rubric critic, passage-level revision loop, extraction of observed states + gaps, critic review of layers 4-6 (unresolved notes in reports/review-notes.jsonl), `review` command; model-based layers each switchable under qc:; prompts not yet run against a real model
+Currently working: Phase 13.20 — Live trading activation (manual user decision); Phase 14 — Bookforge (14.0–14.7 done; 14.8 next)
 Blocked on:        Infra phases (1, 2) are hardware setup; 3-6 months paper trading runtime
 Remaining:         Phase 13.20 (manual user decision)
 ```
@@ -69,6 +79,7 @@ Remaining:         Phase 13.20 (manual user decision)
 - [x] Phase 12 — Documentation
 - [x] Phase DEV — Dev tooling (Docker, deployment scripts, test suite)
 - [ ] Phase 13  — Trading system (13.1–13.19 complete; 13.20 is manual user decision)
+- [ ] Phase 14  — Bookforge (14.0-14.7 done: shell, skeleton, llm + doctor, layers 1-3, research, layers 4-6 + bible, briefing + prose + mechanical checks, critic/continuity/judge/revision/extraction; 14.8 staleness + change requests next)
 
 ---
 
@@ -118,7 +129,7 @@ These rules are non-negotiable. Follow them on every task without being reminded
 - Default SQLite path: `/opt/platform/data/platform.db`
 - Trading per-user path: set via `TRADING_DB_PATH` env var on each container
 - ChromaDB is always at `http://localhost:8020`
-- Ollama is always at `http://localhost:11434`
+- Ollama is always at `http://localhost:11434` (default model backend for all apps; the one exception is bookforge, which uses colibri on `:8040` / `:8041` — see STACK.md)
 
 **Testing:**
 - Every tool in the tool library must have unit tests
@@ -160,6 +171,7 @@ These rules are non-negotiable. Follow them on every task without being reminded
 │   │       └── refactorer/
 │   ├── chat/
 │   ├── writer/
+│   ├── bookforge/              ← Phase 14 (shell + CLI skeleton)
 │   ├── coding/
 │   ├── memory/                 ← shared memory package
 │   └── tools/                  ← shared tool library
@@ -168,6 +180,7 @@ These rules are non-negotiable. Follow them on every task without being reminded
 │   ├── autocoder/
 │   ├── chat/
 │   ├── writer/
+│   ├── bookforge/              ← Phase 14 (placeholder)
 │   └── coding/
 └── systemd/                    ← all systemd unit files
     ├── platform-admin.service

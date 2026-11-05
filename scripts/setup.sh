@@ -156,9 +156,9 @@ sudo usermod -aG docker jarvis 2>/dev/null || true
 
 # ── 9. Directory structure ────────────────────────────────────────────────────
 step "Platform directory structure"
-sudo mkdir -p /opt/platform/{admin,chat,writer,coding,trading}
+sudo mkdir -p /opt/platform/{admin,chat,writer,coding,trading,bookforge}
 sudo mkdir -p /opt/platform/autocoder/{conductor,re-agent,specialists}
-sudo mkdir -p /opt/platform/frontend/{admin,autocoder,chat,writer,coding,trading}
+sudo mkdir -p /opt/platform/frontend/{admin,autocoder,chat,writer,coding,trading,bookforge}
 sudo mkdir -p /opt/platform/data/{chromadb,projects}
 sudo chown -R jarvis:jarvis /opt/platform
 ok "Directory structure ready"

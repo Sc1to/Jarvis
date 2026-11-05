@@ -1,0 +1,45 @@
+# Banned phrases for this series: one per line. A hit in a scene is a blocking problem.
+# Lines starting with # are comments. A line starting with re: is a regular expression;
+# anything else is matched as a phrase, ignoring case and line breaks.
+# This is a STARTER list of common model clichés (English). Edit it freely, and add to it at the
+# voice checkpoint and from the morning report's suggestions. It is yours: bookforge never overwrites it.
+
+a testament to
+a tapestry of
+a symphony of
+a dance of
+shiver down her spine
+shiver down his spine
+shivers down her spine
+shivers down his spine
+sent a shiver
+couldn't help but
+could not help but
+little did she know
+little did he know
+little did they know
+in that moment
+the weight of the world
+the air was thick with
+heart hammered in her chest
+heart hammered in his chest
+let out a breath she didn't know
+let out a breath he didn't know
+barely above a whisper
+barely more than a whisper
+eyes sparkled
+orbs
+ministrations
+unbeknownst to
+a mix of fear and
+a mixture of
+palpable tension
+the tension was palpable
+blood ran cold
+time seemed to slow
+time seemed to stand still
+a wave of emotion
+for what felt like an eternity
+for what seemed like an eternity
+re:\bsuddenly,? (she|he|they|it) (realized|realised|understood)\b
+re:\bdelve[sd]? (into|deeper)\b

@@ -17,7 +17,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 APP="${1:-}"
 if [ -z "$APP" ]; then
-  fail "Usage: $0 <app-name>  (admin|chat|writer|coding|autocoder|trading)"
+  fail "Usage: $0 <app-name>  (admin|chat|writer|coding|autocoder|trading|bookforge)"
   exit 1
 fi
 

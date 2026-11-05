@@ -1,0 +1,77 @@
+# Copy to config.yaml (gitignored) on the host. Every key is optional: values shown are the
+# built-in defaults. A series may override any key in its own <series>/config.yaml.
+# Starting points, not tested settings: tune on chapter 1 and the benchmarks.
+data_dir: /opt/platform/data/bookforge
+
+models:
+  writer:
+    base_url: http://127.0.0.1:8040/v1
+    model: ""                          # id from `c/coli status`
+    temperature: [0.7, 0.85, 1.0]      # one per draft
+    manage_service: null
+    timeout_seconds: 600               # seconds to wait for one reply
+  critic:
+    base_url: http://127.0.0.1:8041/v1
+    model: ""                          # id from `c/coli status`
+    temperature: 0.2
+    manage_service: platform-colibri-critic   # start/stop per step to save RAM (not wired up yet)
+    timeout_seconds: 1800              # the big model can take many minutes per reply
+  decide:
+    url: http://127.0.0.1:8041/v1/systemone
+
+layers:                                # model used for the refine step; review is always the critic
+  series_north_star: {model: critic, checkpoint: direction}
+  book_north_star:   {model: critic, checkpoint: direction}
+  synopsis:          {model: critic, checkpoint: direction}
+  acts:              {model: critic, count: [3, 4], checkpoint: structure}
+  chapters:          {model: critic, count: [25, 35], checkpoint: structure}
+  scenes:            {model: critic, per_chapter: [2, 4], checkpoint: structure}
+  prose:             {model: writer, drafts: 2, words: [1500, 3000]}
+
+research:
+  enabled: true
+  required: false                      # true: a layer fails if none of its questions could be answered
+  search: playwright_web_tool          # platform/tools/web_tool.py; no direct HTTP
+  results_per_question: 5              # search results considered per question
+  max_questions: 6                     # questions asked per layer
+  pages_per_question: 2                # pages read per question
+  notes_model: writer                  # reads pages and extracts facts
+  notes_max_chars: 6000                # research notes included in a prompt
+  page_max_chars: 12000                # page text given to the model
+  scene_questions: 2                   # questions researched per chapter before its scenes are planned (0 = none)
+
+book:
+  target_words: 90000
+  pov: third-limited
+  tense: past
+  language: English                    # section headings stay in English
+
+briefing:
+  max_tokens: 16000
+  previous_scene_words: 1500           # tail of the previous scene given verbatim
+  sample_passages: 2                   # style/samples/*.md files included
+  recent_chapters_full: 2              # chapters before this one summarised scene by scene; older ones in a line each
+
+qc:
+  continuity_flag_threshold: 0.3
+  critic_min_score: 3
+  max_revision_rounds: 2
+  banned_phrases: style/banned.txt
+  critic_may_accept: within_chapter    # larger change requests wait for you
+  dialogue_ratio: [0.05, 0.75]         # share of words inside quotes; outside it is a warning
+  sentence_variation_min: 0.45         # stdev / mean of sentence length; below it the rhythm is flagged as monotone
+  overused_word_percent: 1.0           # a content word above this share of the scene is flagged (names excluded)
+  overused_word_min_count: 8
+  repeat_ngram_size: 5                 # words in a phrase checked for repetition across scenes
+  repeat_ngram_scenes: 2               # earlier scenes that must contain a phrase before it is flagged
+  judge_drafts: true                   # choose between drafts with the pairwise judge (otherwise by mechanical score)
+  continuity_check: true               # yes/no questions about the story state, the cast and the world
+  critic_check: true                   # the rubric critique
+  extract_observed: true               # record what each accepted scene says about the tracked states
+  review_structure: true               # critic review of acts, chapters and scene plans against their parents
+  continuity_batch_size: 8             # questions per model call
+  continuity_max_questions: 40         # per scene
+
+git:
+  commit_each_step: true
+  tag_checkpoints: true

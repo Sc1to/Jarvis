@@ -14,7 +14,25 @@ except ImportError:
 DB_PATH = "/opt/platform/data/platform.db"
 SEARCH_URL = "https://html.duckduckgo.com/html/?q={query}"
 TIMEOUT_MS = 30_000
+MAX_LINKS = 300
+_LINKS_JS = (
+    "Array.from(document.querySelectorAll('a[href]'))"
+    ".map(a => ({text: (a.innerText || '').trim(), href: a.href}))"
+)
 _BLOCKED_DOMAINS = frozenset(["google-analytics.com", "doubleclick.net", "facebook.net", "ads.twitter.com"])
+
+
+def _clean_links(raw) -> list[dict]:
+    """Keep well-formed {text, href} pairs from the page, capped in number and size."""
+    links = []
+    for item in raw if isinstance(raw, list) else []:
+        if not isinstance(item, dict) or not isinstance(item.get("href"), str) or not item["href"]:
+            continue
+        text = item.get("text") if isinstance(item.get("text"), str) else ""
+        links.append({"text": text[:200], "href": item["href"][:2000]})
+        if len(links) >= MAX_LINKS:
+            break
+    return links
 
 
 def _is_blocked(method: str, url: str) -> bool:
@@ -113,7 +131,11 @@ class WebTool(Tool):
                 ))
                 await page.goto(url, timeout=TIMEOUT_MS, wait_until="domcontentloaded")
                 text = await page.evaluate("document.body.innerText")
-                return ToolResult(success=True, output=text[:50_000], metadata={"url": url, "chars": len(text)})
+                links = _clean_links(await page.evaluate(_LINKS_JS))
+                return ToolResult(
+                    success=True, output=text[:50_000],
+                    metadata={"url": url, "chars": len(text), "links": links},
+                )
             except Exception as e:
                 return ToolResult(success=False, output="", error=str(e))
             finally:

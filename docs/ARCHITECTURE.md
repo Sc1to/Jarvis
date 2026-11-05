@@ -65,6 +65,7 @@ ms-s1.tail123.ts.net/autocoder   → Multi-agent development system
 ms-s1.tail123.ts.net/chat        → Open WebUI (Docker, port 3000)
 ms-s1.tail123.ts.net/writer      → Long-form writing assistant
 ms-s1.tail123.ts.net/coding      → Personal coding assistant
+ms-s1.tail123.ts.net/bookforge   → Automated book-writing pipeline (Phase 14, planned)
 ms-s1.tail123.ts.net/trading     → Trading dashboard, both pools, positions, alerts, settings
 ms-s1.tail123.ts.net/...         → Extensible via admin panel
 ```

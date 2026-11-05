@@ -1347,6 +1347,34 @@ Components (Claude Code prompts to be written before each component):
 
 ---
 
+## PHASE 14 — BOOKFORGE
+
+**Goal:** A separate automated book-writing pipeline that stands next to the writer app: premise in, revised manuscript and a report of flagged problems out, with four human checkpoints.
+**Dependencies:** Phase 5 complete (admin panel registration). Phase 10 complete (stands next to it; shares nothing with it). Milestones 0–10 can be built without the mini PC; running real models needs Phases 1–2 and a colibri install.
+**See:** `docs/BOOKFORGE.md` for the full specification, milestone list and first prompt.
+**Decisions (2026-11-05):** separate tool; route `/bookforge`; colibri as model backend on ports 8040/8041; web research through the Playwright web tool; service port assigned by the admin panel (≥ 8100).
+
+| Milestone | Component |
+|---|---|
+| 14.0  | Service shell — `platform/bookforge/`, health, systemd unit, deploy-script and Caddy wiring. **Done 2026-11-05** |
+| 14.1  | Skeleton — CLI, config, state.json, fake LLM client, Git via vcs.py. **Done 2026-11-05** |
+| 14.2  | llm.py and doctor — real endpoint calls, retries, call logging. **Done 2026-11-05** |
+| 14.3  | Layer runner, layers 1–3, direction checkpoint. **Done 2026-11-05** |
+| 14.4  | Research step via Playwright web tool. **Done 2026-11-05** (web tool now returns page links) |
+| 14.5  | Layers 4–6 and the story bible. **Done 2026-11-05** |
+| 14.6  | Briefing builder, prose layer, mechanical checker. **Done 2026-11-05** |
+| 14.7  | Continuity, critic, pairwise judge, revision loop, extraction into `observed`, critic review of layers 4-6. **Done 2026-11-05** |
+| 14.8  | Staleness and change requests |
+| 14.9  | Morning report, assembly, benchmarks |
+| 14.10 | Service API wrapping the library |
+| 14.11 | Dashboard frontend — mobile-responsive, Web Push |
+| 14.12 | Export — DOCX, EPUB, PDF |
+| 14.13 | Workbench — rules, prompt studio, arc views |
+
+**Phase 14 complete when:** a short premise produces north stars and a synopsis and pauses at the direction checkpoint on the mini PC, and one full test book passes all four checkpoints.
+
+---
+
 ## BUILD COMPLETE (post-Phase 12)
 
 At this point the core platform is:
@@ -1360,6 +1388,7 @@ At this point the core platform is:
 **Remaining phases after 12:**
 - Phase DEV — local dev environment and deployment tooling
 - Phase 13 — Trading system
+- Phase 14 — Bookforge (planned)
 - Voice interface for RE-agent (future)
 - Wake-on-LAN for always-on services (future)
 - Additional apps via agent creator (ongoing)
