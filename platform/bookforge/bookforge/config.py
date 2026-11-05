@@ -85,19 +85,31 @@ def _default_layers() -> dict[str, LayerSettings]:
     }
 
 
+DEFAULT_SKIP_DOMAINS = [
+    "facebook.com", "instagram.com", "tiktok.com", "pinterest.com", "twitter.com", "x.com", "youtube.com", "youtu.be",
+    "amazon.com", "ebay.com", "etsy.com", "reddit.com", "quora.com",
+]  # no readable text, shopping, or answers nobody checked
+
+
 class Research(_Strict):
     enabled: bool = True
     required: bool = False  # True: a layer fails if none of its research questions could be answered
     search: Literal["playwright_web_tool"] = "playwright_web_tool"  # how pages are reached: always the platform web tool
-    source: Literal["wikipedia", "duckduckgo"] = "wikipedia"  # where results come from; search-engine pages are blocked to headless browsers
+    # Where search results come from. searxng: your own SearXNG metasearch instance (docs/STACK.md), the real web.
+    # wikipedia: Wikipedia's API only. auto: searxng if it answers, otherwise wikipedia. duckduckgo: reads a results page,
+    # which search engines block for headless browsers (kept for networks where it works).
+    source: Literal["auto", "searxng", "wikipedia", "duckduckgo"] = "auto"
+    searxng_url: str = "http://127.0.0.1:8060"  # localhost only: the one address the web wrapper may reach on this machine
+    search_language: str = Field("en", pattern=r"^(all|[a-z]{2,3}(-[A-Za-z0-9]+)?)$")  # language of the results SearXNG asks for
     wikipedia_language: str = Field("en", pattern=r"^[a-z]{2,8}(-[a-z0-9]+)?$")  # which Wikipedia to search (en, de, fr, ...)
-    results_per_question: int = Field(5, gt=0)  # search results considered per question
+    results_per_question: int = Field(8, gt=0)  # search results considered per question
     max_questions: int = Field(6, gt=0)  # questions asked per layer
-    pages_per_question: int = Field(2, gt=0)  # pages read per question
+    pages_per_question: int = Field(3, gt=0)  # pages read per question
+    skip_domains: list[str] = Field(default_factory=lambda: list(DEFAULT_SKIP_DOMAINS))  # results from these sites are not read
     notes_model: Literal["writer", "critic"] = "writer"  # reads pages and extracts facts
     check_relevance: bool = True  # a second look: drop facts that do not answer the question for the story's time and place
     notes_max_chars: int = Field(6000, gt=0)  # research notes included in a prompt
-    page_max_chars: int = Field(12000, gt=0)  # page text given to the model
+    page_max_chars: int = Field(12000, gt=0)  # page text given to the model (the parts of a long page that mention the question)
     scene_questions: int = Field(2, ge=0)  # questions researched per chapter before its scenes are planned (0 = none)
 
 

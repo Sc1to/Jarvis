@@ -90,6 +90,8 @@ def article_text(raw: str, title: str) -> str:
 class WikipediaWebClient:
     """A WebClient whose search results and article text come from Wikipedia. Other URLs pass straight through."""
 
+    source_name = "wikipedia"
+
     def __init__(self, inner: WebClient, language: str = "en", results: int = 5):
         self._inner = inner
         self._lang = language

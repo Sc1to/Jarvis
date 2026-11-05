@@ -1,0 +1,26 @@
+# SearXNG settings for Bookforge's research (see docs/STACK.md, "SearXNG").
+# scripts/setup-searxng.sh copies this to /opt/platform/data/searxng/settings.yml and fills in secret_key.
+use_default_settings: true
+
+general:
+  instance_name: "bookforge-search"
+  debug: false
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  default_lang: "en"
+  formats:        # json is what Bookforge reads; html lets you try it in a browser
+    - html
+    - json
+
+server:
+  secret_key: "__SECRET_KEY__"   # replaced by the setup script; SearXNG refuses to start with the default
+  limiter: false                 # local use only: the container is published on 127.0.0.1
+  public_instance: false
+  image_proxy: false
+  method: "GET"
+
+outgoing:
+  request_timeout: 6.0
+  max_request_timeout: 12.0

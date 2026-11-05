@@ -4,8 +4,6 @@ Bookforge never makes direct HTTP calls to the internet (CLAUDE.md, Security).
 This wrapper adds what the tool itself does not: URL checks (http/https only, no
 private or loopback hosts), query encoding, retries, and call logging.
 
-Note: `search` returns the raw text of a DuckDuckGo results page, not structured
-results. Parsing that into questions and notes is milestone 14.4.
 """
 
 import ipaddress
@@ -115,6 +113,8 @@ def check_url(url: str, resolver: Callable = socket.getaddrinfo) -> str:
 
 
 class PlaywrightWebClient:
+    source_name = "duckduckgo"  # what raw use of this client means: search-engine result pages
+
     def __init__(
         self,
         call_log: CallLog | None = None,
@@ -124,7 +124,10 @@ class PlaywrightWebClient:
         backoff_seconds: float = 2.0,
         sleep: Callable[[float], None] = time.sleep,
         resolver: Callable = socket.getaddrinfo,
+        allowed_origins: frozenset[str] | set[str] | None = None,
     ):
+        # Origins ("http://127.0.0.1:8060") that may be fetched although they are local: the configured SearXNG only.
+        self._allowed = frozenset(o.lower().rstrip("/") for o in (allowed_origins or ()))
         self._log = call_log or CallLog(None)
         self._session_id = session_id
         self._tool = tool
@@ -143,7 +146,11 @@ class PlaywrightWebClient:
         return self._call("search", query, {"op": "search", "query": quote_plus(query)})
 
     def fetch(self, url: str) -> WebResult:
-        url = check_url(url, self._resolver)
+        p = urlparse(url.strip())
+        if p.scheme in ("http", "https") and f"{p.scheme}://{p.netloc}".lower() in self._allowed:
+            url = url.strip()  # the configured search service: allowed although it is a local address
+        else:
+            url = check_url(url, self._resolver)
         return self._call("fetch", url, {"op": "fetch_page", "url": url})
 
     def _tool_instance(self):
@@ -176,9 +183,26 @@ class PlaywrightWebClient:
 
 
 def make_web_client(research, base: PlaywrightWebClient | None = None, **kw) -> WebClient:
-    """The client for `research.source`: Wikipedia over the web tool (the default), or raw search-engine pages."""
+    """The client for `research.source`.
+
+    searxng: results from your SearXNG instance. wikipedia: Wikipedia's API. auto: SearXNG if it answers, otherwise
+    Wikipedia (and a warning, so a missing search service is not silent). duckduckgo: raw search-engine pages.
+    """
+    source = research.source
+    if source in ("auto", "searxng"):
+        from .searxng import SearxngWebClient, origin_of, probe  # imported here: searxng.py imports this module
+        if source == "auto":
+            status = probe(research.searxng_url)
+            if not (status["reachable"] and status["json"]):
+                log.warning("research: SearXNG at %s is not usable (%s); using Wikipedia only", research.searxng_url,
+                            status["error"] or "no answer")
+                source = "wikipedia"
+        if source == "searxng" or source == "auto":
+            base = base or PlaywrightWebClient(allowed_origins={origin_of(research.searxng_url)}, **kw)
+            return SearxngWebClient(base, research.searxng_url, research.search_language, research.results_per_question,
+                                    research.wikipedia_language)
     base = base or PlaywrightWebClient(**kw)
-    if research.source == "wikipedia":
+    if source == "wikipedia":
         from .wikipedia import WikipediaWebClient  # imported here: wikipedia.py imports this module
         return WikipediaWebClient(base, research.wikipedia_language, research.results_per_question)
     return base

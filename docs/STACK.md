@@ -34,6 +34,7 @@
 | Writer app backend | 8011 |
 | Coding assistant backend | 8012 |
 | Autocoder dashboard | 8050 |
+| SearXNG (bookforge research; docker, 127.0.0.1 only, not in Caddy) | 8060 |
 | Bookforge backend (platform-bookforge) | 8100 |
 | colibri — fast writer model (bookforge only) | 8040 |
 | colibri — planner/critic model (bookforge only) | 8041 |
@@ -215,6 +216,26 @@ response = httpx.post("http://localhost:11434/api/chat", json={
 - Running models: `GET http://localhost:11434/api/ps`
 
 ---
+
+---
+
+## SEARXNG (BOOKFORGE RESEARCH SEARCH)
+
+**Purpose:** a self-hosted metasearch engine that bookforge's research stage asks its questions. Search engines answer a headless browser with block pages; SearXNG asks several of them (Google, Bing, DuckDuckGo, Brave, Wikipedia and more) from this machine and returns JSON. Infrastructure service in Docker, like Open WebUI.
+**Port:** 8060, published on `127.0.0.1` only (nothing outside this machine can reach it; not in Caddy).
+**Image:** `docker.io/searxng/searxng:latest`. **Data:** `/opt/platform/data/searxng/settings.yml` (holds a generated secret key; mode 600).
+
+**Install / update (idempotent):**
+```bash
+sudo bash scripts/setup-searxng.sh
+```
+It writes `settings.yml` from `docker/searxng/settings.yml` (JSON enabled, limiter off because the port is local), starts the container with `--restart always`, and waits until `http://127.0.0.1:8060/search?q=history&format=json` answers. Then `python -m bookforge doctor` shows a `searxng` line with the engines that did not answer.
+
+**Notes:**
+- Some engines will CAPTCHA or refuse a server address now and then; SearXNG reports them as unresponsive and answers from the others. To turn an engine off permanently, edit `settings.yml` (`engines:` with `disabled: true`) and `docker restart searxng`.
+- If a request returns HTTP 403, `json` is missing under `search.formats` in `settings.yml`.
+- Bookforge reaches it through the platform web tool; the web wrapper's one exception for a local address is the `research.searxng_url` in its config. Result pages are fetched through the web tool as usual.
+- Logs: `docker logs searxng`. Not verified on the mini PC when this was written: the container's user id and the first start.
 
 ---
 

@@ -132,6 +132,32 @@ def approve(path: Path = PathArg, checkpoint: str = typer.Argument(..., help=f"O
     typer.echo(f"Approved '{checkpoint}'.")
 
 
+@app.command("research-test")
+def research_test_cmd(
+    path: Path = PathArg,
+    question: str = typer.Argument(..., help="A factual question, in plain words"),
+    query: Optional[str] = typer.Option(None, "--query", help="What to search for (default: the question itself)"),
+    setting: str = typer.Option("any time", "--setting", help="The time and place an answer must fit, like 'England, 1880s'"),
+    book: str = BookOpt,
+) -> None:
+    """Try one research question end to end and show what was searched, read, kept and dropped. Stores nothing."""
+    from .layers.runner import StepContext
+    from .research import probe
+    from .research.step import Question, answer_question
+    try:
+        project = Project.open(path, book)
+        web = build_web_client(project)
+        ctx = StepContext(project=project, layer="synopsis", llm=build_client(project), web=web)
+        story = (project.root / "premise.md").read_text(encoding="utf-8") if (project.root / "premise.md").exists() else ""
+        q = Question(question, query or question, False, setting)
+        attempt = answer_question(ctx, web, q, story, set())
+    except BookforgeError as e:
+        _fail(e)
+    for line in probe.describe(attempt, q, probe.source_of(web)):
+        typer.echo(line)
+    raise typer.Exit(0 if attempt.facts else 1)
+
+
 @app.command("delete")
 def delete_cmd(
     path: Path = PathArg,
