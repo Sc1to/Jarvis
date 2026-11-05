@@ -85,7 +85,7 @@ sudo tailscale up
 - Enable as systemd service (done automatically on install)
 - Machine will appear in Tailscale admin console at https://login.tailscale.com
 - Assign a stable machine name (e.g. `ms-s1`) in Tailscale console
-- Access platform at `http://ms-s1.tail-xxxx.ts.net` from any Tailscale device
+- Access platform at `https://ms-s1.tail-xxxx.ts.net` from any Tailscale device (see HTTPS note in the Caddy section)
 
 **HTTPS (Tailscale certificates):** the generated site address is the machine's MagicDNS name
 (`<host>.<tailnet>.ts.net`) plus `http://<tailscale-ip>` as a fallback. Caddy fetches the
