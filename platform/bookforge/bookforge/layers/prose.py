@@ -16,6 +16,8 @@ stopped. Drafts already on disk for an unfinished scene are reused; a flagged sc
 import json
 import logging
 
+import yaml
+
 from .. import scenefiles, vcs
 from ..bible import store
 from ..bible.models import Scene
@@ -23,7 +25,9 @@ from ..briefing import build_briefing
 from ..deps import write_deps
 from ..errors import BookforgeError, LayerError
 from ..prompts import render
-from ..qc.mechanical import CheckContext, MechanicalReport, check_scene, load_banned
+from ..qc.extract import extract_observed, record_observed
+from ..qc.mechanical import CheckContext, check_scene, load_banned
+from ..qc.scene import settle_scene
 from ..state import Item, now
 from .document import ask_until_valid, prompt_values, word_count
 from .runner import StepContext, StepResult
@@ -120,6 +124,7 @@ def _write_drafts(ctx: StepContext, scene: Scene, briefing_text: str, drafts: in
 def write_scene(ctx: StepContext, scene: Scene, scenes: list[Scene], drafts: int, words: tuple[int, int]) -> tuple[bool, list[str]]:
     """Write, check and settle one scene. Returns (accepted, files)."""
     project = ctx.project
+    qc = project.config.qc
     sid = scene.id
     d = scenefiles.scene_dir(project, sid)
     briefing = build_briefing(project, sid)
@@ -127,35 +132,36 @@ def write_scene(ctx: StepContext, scene: Scene, scenes: list[Scene], drafts: int
     write_deps(deps, briefing.deps)
     check_ctx = check_context(project, scene, scenes)
     paths = [deps]
+    review: dict = {"budget_tokens": briefing.budget, "briefing_tokens": briefing.tokens, "briefing_trimmed": briefing.trimmed}
+    review_file = scenefiles.review_path(project, sid)
+    paths.append(review_file)
 
     adopted = scenefiles.read(scenefiles.final_path(project, sid))
-    reports: dict[str, MechanicalReport] = {}
     if adopted is not None:
-        text, chosen = adopted.strip(), "final"
+        # The author's own text: only the mechanical checks apply, and the file is never rewritten.
+        text, source, reasons = adopted.strip(), "adopted", []
         report = check_scene(text, check_ctx)
-        reports["final"] = report
-        source = "adopted"
+        review.update(source=source, chosen="final", mechanical={"final": report.to_dict()})
+        reasons = [i.message for i in report.blocking]
     else:
         if _item(project, sid).status == "flagged":
-            for old in d.glob("draft-*.md"):
-                old.unlink()
+            for old in list(d.glob("draft-*.md")) + [scenefiles.revised_path(project, sid)]:
+                old.unlink(missing_ok=True)
         texts = _write_drafts(ctx, scene, briefing.text(), drafts, words)
         _set_status(project, sid, "drafted")
         paths += [scenefiles.draft_path(project, sid, i) for i in range(1, len(texts) + 1)]
-        for i, t in enumerate(texts, 1):
-            reports[f"draft-{i}"] = check_scene(t, check_ctx)
-        chosen = min(reports, key=lambda k: (reports[k].score, k))
-        text, report = texts[int(chosen.split("-")[1]) - 1], reports[chosen]
-        source = "written"
+        result = settle_scene(ctx, scene, scenes, {f"draft-{i}": t for i, t in enumerate(texts, 1)}, check_ctx)
+        text, source, reasons = result.text, "written", [] if result.accepted else result.reasons
+        review.update(source=source, **result.review)
+        report = check_scene(text, check_ctx)
 
-    review = {"chosen": chosen, "source": source, "budget_tokens": briefing.budget, "briefing_tokens": briefing.tokens,
-              "briefing_trimmed": briefing.trimmed, "mechanical": {k: v.to_dict() for k, v in reports.items()}}
-    review_file = scenefiles.review_path(project, sid)
-    paths.append(review_file)
-    if report.blocking:
-        review["blocking"] = [i.message for i in report.blocking]
+    if reasons:
+        review["blocking"] = reasons
+        if source == "written" and review.get("revised"):
+            scenefiles.revised_path(project, sid).write_text(text.rstrip() + "\n", encoding="utf-8")
+            paths.append(scenefiles.revised_path(project, sid))
         review_file.write_text(json.dumps(review, indent=2, ensure_ascii=False), encoding="utf-8")
-        _set_status(project, sid, "flagged", "; ".join(review["blocking"])[:300])
+        _set_status(project, sid, "flagged", "; ".join(reasons)[:300])
         _commit(project, sid, "drafted, flagged", paths)
         return False, [scenefiles.rel(project, p) for p in paths if p.exists()]
 
@@ -166,9 +172,22 @@ def write_scene(ctx: StepContext, scene: Scene, scenes: list[Scene], drafts: int
     summary, summary_source = _summarise(ctx, scene, text)
     scenefiles.summary_path(project, sid).write_text(summary.rstrip() + "\n", encoding="utf-8")
     review["summary_source"] = summary_source
-    review_file.write_text(json.dumps(review, indent=2, ensure_ascii=False), encoding="utf-8")
     paths += [final, scenefiles.summary_path(project, sid)]
-    _set_status(project, sid, "accepted", f"{report.stats['words']} words, {len(report.warnings)} warning(s)")
+
+    gaps = 0
+    if qc.extract_observed:
+        extraction = extract_observed(ctx, scene, scenes, text)
+        review["extraction"] = {"error": extraction.error, "observations": len(extraction.observations), "gaps": extraction.gaps}
+        if extraction.observations:
+            record_observed(project, sid, extraction)
+            scenefiles.extracted_path(project, sid).write_text(
+                yaml.safe_dump({"scene": sid, "observations": extraction.observations, "gaps": extraction.gaps},
+                               sort_keys=False, allow_unicode=True), encoding="utf-8")
+            paths += [scenefiles.extracted_path(project, sid), project.root / "bible" / "tracks.yaml"]
+        gaps = len(extraction.gaps)
+    review_file.write_text(json.dumps(review, indent=2, ensure_ascii=False), encoding="utf-8")
+    note = f"{report.stats['words']} words, {len(report.warnings)} warning(s)" + (f", {gaps} gap(s) between plan and prose" if gaps else "")
+    _set_status(project, sid, "accepted", note)
     _commit(project, sid, "drafted, checked, accepted" if source == "written" else "adopted, checked, accepted", paths)
     return True, [scenefiles.rel(project, p) for p in paths if p.exists()]
 

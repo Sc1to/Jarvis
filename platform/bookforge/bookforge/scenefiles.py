@@ -28,6 +28,14 @@ def deps_path(project: Project, scene_id: str) -> Path:
     return scene_dir(project, scene_id) / "deps.yaml"
 
 
+def revised_path(project: Project, scene_id: str) -> Path:
+    return scene_dir(project, scene_id) / "revised.md"
+
+
+def extracted_path(project: Project, scene_id: str) -> Path:
+    return scene_dir(project, scene_id) / "extracted.yaml"
+
+
 def draft_path(project: Project, scene_id: str, n: int) -> Path:
     return scene_dir(project, scene_id) / f"draft-{n}.md"
 
@@ -53,6 +61,9 @@ def best_text(project: Project, scene_id: str) -> str | None:
     final = read(final_path(project, scene_id))
     if final:
         return final
+    revised = read(revised_path(project, scene_id))
+    if revised:
+        return revised  # a flagged scene's last revision
     import json
     review = read(review_path(project, scene_id))
     if review:

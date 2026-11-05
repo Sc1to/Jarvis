@@ -1363,7 +1363,7 @@ Components (Claude Code prompts to be written before each component):
 | 14.4  | Research step via Playwright web tool. **Done 2026-11-05** (web tool now returns page links) |
 | 14.5  | Layers 4–6 and the story bible. **Done 2026-11-05** |
 | 14.6  | Briefing builder, prose layer, mechanical checker. **Done 2026-11-05** |
-| 14.7  | Continuity, critic, pairwise judge, revision loop |
+| 14.7  | Continuity, critic, pairwise judge, revision loop, extraction into `observed`, critic review of layers 4-6. **Done 2026-11-05** |
 | 14.8  | Staleness and change requests |
 | 14.9  | Morning report, assembly, benchmarks |
 | 14.10 | Service API wrapping the library |

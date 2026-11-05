@@ -3,7 +3,7 @@
 Automated book-writing pipeline (Phase 14). Separate from the writer app: shares no database, files or settings with `platform/writer`.
 
 - Spec: `docs/BOOKFORGE.md`. Build plan: `docs/BUILD_SEQUENCE.md`, Phase 14.
-- Status: milestones 14.0–14.6 done: service shell, CLI skeleton, model client and doctor, layers 1–3 (north stars and synopsis) up to the direction checkpoint, the research step, layers 4–6 (acts, chapters, scenes) with the story bible up to the structure checkpoint, and the prose layer (drafts, mechanical checks, summaries) with the voice checkpoint after chapter 1. There is no model critic, continuity check or revision loop yet (14.7): a scene is accepted if its best draft has no blocking mechanical problem, and flagged otherwise. The prompts have not been run against a real model yet.
+- Status: milestones 14.0–14.7 done: service shell, CLI skeleton, model client and doctor, layers 1–3 (north stars and synopsis) up to the direction checkpoint, the research step, layers 4–6 (acts, chapters, scenes) with the story bible up to the structure checkpoint, and the prose layer (drafts, mechanical checks, summaries) with the voice checkpoint after chapter 1. Each scene goes through quality control, cheapest layer first: mechanical checks, the pairwise judge, continuity questions, the rubric critic, and passage-level revision (at most 2 rounds). What is left is flagged for you; each model-based layer can be switched off under `qc:` to make a run cheaper. The prompts have not been run against a real model yet.
 - Port 8100; systemd unit `platform-bookforge`; route `/bookforge` (API under `/bookforge/api`).
 - Data: `$BOOKFORGE_DATA_DIR` (default `/opt/platform/data/bookforge`), one Git repo per series.
 
@@ -25,6 +25,7 @@ python -m bookforge approve <series> direction
 python -m bookforge state-at <series> b1.ch04.s3 [-e anna]   # what the bible says is true at that point
 python -m bookforge briefing <series> b1.ch04.s3 [--full]    # what the model is given for a scene, and how big each part is
 python -m bookforge check <series> b1.ch04.s3 [--file x.md]  # mechanical checks on a scene's text
+python -m bookforge review <series> b1.ch04.s3                # how the scene went through quality control
 python -m bookforge doctor  [<series>] [--offline]   # --offline skips the endpoint checks and the web fetch
 ```
 

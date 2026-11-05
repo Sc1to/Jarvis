@@ -219,6 +219,44 @@ def check(
 
 
 @app.command()
+def review(
+    path: Path = PathArg,
+    scene: str = typer.Argument(..., help="A scene, like b1.ch04.s3"),
+    book: str = BookOpt,
+) -> None:
+    """Show how a scene went through quality control: draft choice, scores, flags, revisions, gaps."""
+    import json
+    try:
+        project = Project.open(path, book)
+        raw = scenefiles.read(scenefiles.review_path(project, scene))
+        if raw is None:
+            raise BookforgeError(f"{scene} has no review yet (it has not been written)")
+        r = json.loads(raw)
+    except (BookforgeError, ValueError) as e:
+        _fail(e)
+    item = project.state.items.get(scene)
+    typer.echo(f"{scene}: {item.status if item else 'pending'}" + (f" ({item.note})" if item and item.note else ""))
+    typer.echo(f"  chosen: {r.get('chosen')} ({r.get('source')}), briefing {r.get('briefing_tokens')} of {r.get('budget_tokens')} tokens")
+    for name, rep in (r.get("mechanical") or {}).items():
+        typer.echo(f"  mechanical {name}: score {rep['score']}, {len([i for i in rep['issues'] if i['severity'] == 'block'])} blocking, "
+                   f"{len([i for i in rep['issues'] if i['severity'] == 'warn'])} warning(s)")
+    if r.get("judge"):
+        typer.echo(f"  judge: wins {r['judge']['wins']}" + (f" (error: {r['judge']['error']})" if r['judge'].get('error') else ""))
+    for rd in r.get("rounds") or []:
+        typer.echo(f"  round {rd['round']}: blocking {len(rd['mechanical_blocking'])}, continuity flags {len(rd['continuity_flags'])}, "
+                   f"critic lowest {rd['critic_lowest']}, revised {len(rd['revisions'])} passage(s)")
+    if r.get("critic"):
+        c = r["critic"]
+        typer.echo("  critic: " + (f"error: {c['error']}" if c.get("error") else ", ".join(f"{k} {v}" for k, v in c["scores"].items())))
+    if r.get("continuity") and r["continuity"].get("unsure"):
+        typer.echo(f"  continuity: {len(r['continuity']['unsure'])} unsure answer(s)")
+    for g in (r.get("extraction") or {}).get("gaps", []):
+        typer.echo(f"  gap: {g['track']}: planned '{g['planned']}', the scene shows '{g['observed']}'")
+    for reason in r.get("blocking") or []:
+        typer.echo(f"  NEEDS YOU: {reason}")
+
+
+@app.command()
 def doctor(
     path: Optional[Path] = typer.Argument(None, help="Series folder to check as well"),
     book: str = BookOpt,

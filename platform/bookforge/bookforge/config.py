@@ -106,6 +106,14 @@ class QC(_Strict):
     overused_word_min_count: int = 8
     repeat_ngram_size: int = 5  # words in a phrase checked for repetition across scenes
     repeat_ngram_scenes: int = 2  # earlier scenes that must contain a phrase before it is flagged
+    # the model-based layers; switch any off to make a run cheaper
+    judge_drafts: bool = True  # choose between drafts with the pairwise judge (otherwise by mechanical score)
+    continuity_check: bool = True  # yes/no questions about the story state, the cast and the world
+    critic_check: bool = True  # the rubric critique
+    extract_observed: bool = True  # record what each accepted scene says about the tracked states
+    review_structure: bool = True  # critic review of acts, chapters and scene plans against their parents
+    continuity_batch_size: int = Field(8, gt=0)  # questions per model call
+    continuity_max_questions: int = Field(40, gt=0)  # per scene
 
 
 class GitSettings(_Strict):

@@ -58,7 +58,8 @@ Last completed:    Phase 13.19 — Paper trading validation tooling; Phase DEV �
                    Phase 14.4 (2026-11-05) — bookforge research step: questions, web-tool search + fetch, facts kept only with a verbatim quote from the page, sources.jsonl / questions.jsonl / notes per scope, blocked-search detection; shared web_tool now returns page links; 242 tests; only run against scripted searches (DuckDuckGo is blocked from the dev sandbox)
                    Phase 14.5 (2026-11-05) — bookforge layers 4-6 + bible: acts, cast/constants, chapters (per act) + state tracks, scenes (per chapter) + timeline, cached resumable pieces, state_at lookups + `state-at` command, whole-book cross-checks; 355 tests; structural checks only, prompts not yet run against a real model
                    Phase 14.6 (2026-11-05) — bookforge briefing builder (token budget, trimming order), deps.yaml content fingerprints, prose layer (drafts, best-of by mechanical score, summaries, voice checkpoint after chapter 1), mechanical checker, `briefing` and `check` commands, starter banned list; 432 tests; no model critic yet (14.7), prompts not yet run against a real model
-Currently working: Phase 13.20 — Live trading activation (manual user decision); Phase 14 — Bookforge (14.0–14.6 done; 14.7 next)
+                   Phase 14.7 (2026-11-05) — bookforge quality control: pairwise judge, continuity questions (planner model stands in for System One), rubric critic, passage-level revision loop, extraction of observed states + gaps, critic review of layers 4-6 (unresolved notes in reports/review-notes.jsonl), `review` command; model-based layers each switchable under qc:; prompts not yet run against a real model
+Currently working: Phase 13.20 — Live trading activation (manual user decision); Phase 14 — Bookforge (14.0–14.7 done; 14.8 next)
 Blocked on:        Infra phases (1, 2) are hardware setup; 3-6 months paper trading runtime
 Remaining:         Phase 13.20 (manual user decision)
 ```
@@ -78,7 +79,7 @@ Remaining:         Phase 13.20 (manual user decision)
 - [x] Phase 12 — Documentation
 - [x] Phase DEV — Dev tooling (Docker, deployment scripts, test suite)
 - [ ] Phase 13  — Trading system (13.1–13.19 complete; 13.20 is manual user decision)
-- [ ] Phase 14  — Bookforge (14.0-14.6 done: shell, skeleton, llm + doctor, layers 1-3, research, layers 4-6 + bible, briefing + prose + mechanical checks; 14.7 critic, continuity, judge, revision next)
+- [ ] Phase 14  — Bookforge (14.0-14.7 done: shell, skeleton, llm + doctor, layers 1-3, research, layers 4-6 + bible, briefing + prose + mechanical checks, critic/continuity/judge/revision/extraction; 14.8 staleness + change requests next)
 
 ---
 

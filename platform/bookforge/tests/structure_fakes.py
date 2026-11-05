@@ -13,6 +13,8 @@ layers:
   scenes: {per_chapter: [2, 3]}
 research:
   scene_questions: 0
+qc:
+  review_structure: false
 """
 
 

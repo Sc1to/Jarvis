@@ -16,11 +16,13 @@ from ..bible import store
 from ..bible.models import Act, Chapter, Constants, Track
 from ..bible.positions import parse_position
 from ..bible.store import dump_yaml, to_plain
+from .. import review_notes
 from ..bible.validate import (
     merge_constants, parse_acts, parse_cast, parse_chapters, parse_scenes, validate_bible,
 )
 from ..errors import LayerError
 from ..prompts import render
+from ..qc.plan_review import review_plan
 from ..research.notes import stores_for
 from ..research.step import run_research
 from .document import DocumentSpec, ask_until_valid, generate_document, prompt_values, research_layer
@@ -102,6 +104,7 @@ def piece_path(project, layer: str, name: str) -> Path:
 def get_piece(
     ctx: StepContext, layer: str, name: str, build_messages: Callable[[], list[dict]],
     parse: Callable[[str], tuple[object, list[str]]], max_tokens: int, before: Callable[[], None] | None = None,
+    review: Callable[[str], list[str]] | None = None,
 ):
     """One checked model reply, cached on disk. Returns the parsed result."""
     project = ctx.project
@@ -120,8 +123,12 @@ def get_piece(
     options: dict = {"max_tokens": max_tokens}
     if layer_cfg.temperature is not None:
         options["temperature"] = layer_cfg.temperature
+    sink: list = []
     text = ask_until_valid(ctx, f"{layer}/{name}", layer_cfg.model, build_messages(), lambda t: parse(t)[1], options,
-                           strip_preamble=False)
+                           strip_preamble=False, soft_validate=review if project.config.qc.review_structure else None,
+                           soft_sink=sink)
+    for label, problems in sink:
+        review_notes.add(project, layer, label, problems)
     result, _ = parse(text)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text.rstrip() + "\n", encoding="utf-8")
@@ -154,6 +161,19 @@ def _north_stars(project) -> dict[str, str]:
     }
 
 
+def _reviewer(ctx: StepContext, label: str, what: str, parent: str, tracks_text: str, stars: dict[str, str]):
+    """A soft check for get_piece / generate_document: the critic's review of a plan against its parent."""
+    return lambda text: review_plan(ctx, label, what, parent, text, tracks_text, stars)
+
+
+def _note_reviews(project, layer: str, note: str, files: list[str]) -> str:
+    n = len(review_notes.read(project, layer))
+    if n:
+        files.append(str(review_notes.path(project).relative_to(project.root)))
+        note += f"; {n} review note(s) for you in {files[-1]}"
+    return note
+
+
 def _adopt_problems(project, extra: list[str]) -> list[str]:
     return extra + validate_bible(project)
 
@@ -175,6 +195,8 @@ def acts(ctx: StepContext) -> StepResult:
         slots=lambda c: {**_north_stars(project), "act_min": str(lo), "act_max": str(hi),
                          "chapter_min": str(clo), "chapter_max": str(chi)},
         normalize=normalize, research_scope="book",
+        review=_reviewer(ctx, "acts", "acts of the book", _north_stars(project)["synopsis"], "none yet", _north_stars(project))
+        if project.config.qc.review_structure else None,
         research_focus="Rarely needed: only real-world facts that the large-scale structure of the story depends on.",
     )
     return generate_document(ctx, spec)
@@ -205,6 +227,7 @@ def chapters(ctx: StepContext) -> StepResult:
     else:
         note = _build_chapters(ctx, files)
 
+    note = _note_reviews(project, "chapters", note, files)
     focus = "Settings and events of the chapters: real-world facts about the places, periods, trades and events they use."
     chapters_list = store.load_chapters(project)
     outcome = research_layer(ctx, "book", focus, chapters_digest(chapters_list))
@@ -247,6 +270,7 @@ def _build_chapters(ctx: StepContext, files: list[str]) -> str:
                 text, project=project, act=act, first_number=first, constants=constants, tracks_so_far=tracks,
                 fact_ids=_fact_ids(project)),
             max_tokens=6000,
+            review=_reviewer(ctx, f"chapters {act.id}", f"chapters of {act.id}", dump_yaml(to_plain(act)), tracks_digest(tracks), stars),
         )
         done += bundle.chapters
         tracks = store.upsert_plan(tracks, bundle.tracks)
@@ -289,6 +313,7 @@ def scenes(ctx: StepContext) -> StepResult:
                              + " (fix the file, or delete it to have it regenerated)")
         return StepResult(files=files, note="adopted existing file")
     note = _build_scenes(ctx, files)
+    note = _note_reviews(project, "scenes", note, files)
     return StepResult(files=files, note=note)
 
 
@@ -339,6 +364,8 @@ def _build_scenes(ctx: StepContext, files: list[str]) -> str:
                 text, project=project, chapter=chapter, prev_day=prev_day, constants=constants, tracks_so_far=tracks,
                 fact_ids=_fact_ids(project)),
             max_tokens=3500, before=before,
+            review=_reviewer(ctx, f"scenes {chapter.id}", f"scenes of {chapter.id}",
+                             dump_yaml(to_plain(chapter)), tracks_in_chapter_digest(tracks, project.book, ch_num), stars),
         )
         scenes_all += bundle.scenes
         timeline_all += bundle.timeline

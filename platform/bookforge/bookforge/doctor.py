@@ -57,10 +57,10 @@ def check_decide_endpoint(url: str, transport: httpx.BaseTransport | None = None
         with httpx.Client(timeout=httpx.Timeout(PROBE_TIMEOUT), transport=transport) as client:
             resp = client.get(url)
     except httpx.HTTPError as e:
-        return Check("endpoint_decide", "warn", f"cannot reach {url} (System One is first used in milestone 14.7): {e}")
+        return Check("endpoint_decide", "warn", f"cannot reach {url}: {e}. Not used yet: continuity questions are answered by the planner model")
     if resp.status_code < 300:
-        return Check("endpoint_decide", "pass", f"{url} answered HTTP {resp.status_code}")
-    return Check("endpoint_decide", "warn", f"{url} answered HTTP {resp.status_code}; System One support is unverified")
+        return Check("endpoint_decide", "pass", f"{url} answered HTTP {resp.status_code} (not used yet: continuity questions are answered by the planner model)")
+    return Check("endpoint_decide", "warn", f"{url} answered HTTP {resp.status_code}; System One support is unverified (not used yet: continuity questions are answered by the planner model)")
 
 
 def check_web(web_client: WebClient | None = None, fetch: bool = True) -> list[Check]:

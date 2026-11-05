@@ -550,6 +550,13 @@ qc:
   overused_word_min_count: 8
   repeat_ngram_size: 5             # words in a phrase checked for repetition across scenes
   repeat_ngram_scenes: 2           # earlier scenes that must contain a phrase before it is flagged
+  judge_drafts: true               # choose between drafts with the pairwise judge (otherwise by mechanical score)
+  continuity_check: true           # yes/no questions about the story state, the cast and the world
+  critic_check: true               # the rubric critique
+  extract_observed: true           # record what each accepted scene says about the tracked states
+  review_structure: true           # critic review of acts, chapters and scene plans against their parents
+  continuity_batch_size: 8         # questions per model call
+  continuity_max_questions: 40     # per scene
 
 git:
   commit_each_step: true
@@ -578,7 +585,7 @@ Bookforge is built inside the Jarvis repository by Claude Code, one milestone at
 
 **Model and service endpoints**
 - Writer model: `http://127.0.0.1:8040/v1` (OpenAI-compatible)
-- Critic model: `http://127.0.0.1:8041/v1`, System One at `/v1/systemone`
+- Critic model: `http://127.0.0.1:8041/v1`. (`models.decide.url`, System One at `/v1/systemone`, is not used: see milestone 7.)
 - Web research: platform Playwright web tool
 
 **Milestones**
@@ -606,9 +613,9 @@ Bookforge is built inside the Jarvis repository by Claude Code, one milestone at
    - Research is best-effort: a blocked search or unreadable page costs that question, and the layer's note reports it (for example `research: 1/3 questions answered, 2 facts (search … blocked or empty)`). Set `research.required: true` to make a layer fail instead when none of its questions has an answer; the document is kept and the rerun retries the research. `research.enabled: false` turns it off.
    - The shared web tool now returns the page's links in `ToolResult.metadata["links"]`, which is how result links are found. Without it, only the page text was available.
 
-5. Layers 4–6 and the bible: constants, state tracks, timeline, state-at-a-point lookups (done 2026-11-05; formats under *Story bible*). The checks are structural only (ids, counts, references to the cast, track guards, timeline order); the critic review of these layers is milestone 14.7. Two choices the spec left open: the cast and world are created by the chapters layer, and the scenes layer researches `research.scene_questions` (default 2) questions per chapter before planning its scenes, so scenes can cite fact ids.
+5. Layers 4–6 and the bible: constants, state tracks, timeline, state-at-a-point lookups (done 2026-11-05; formats under *Story bible*). The checks are structural only (ids, counts, references to the cast, track guards, timeline order); the critic's review of these layers was added in 14.7 (see below). Two choices the spec left open: the cast and world are created by the chapters layer, and the scenes layer researches `research.scene_questions` (default 2) questions per chapter before planning its scenes, so scenes can cite fact ids.
 
-6. Briefing builder with `deps.yaml`, the prose layer, and the mechanical checker (done 2026-11-05). The model critic, continuity checks, judge and revision loop are milestone 14.7, so for now a scene's best draft is accepted if it has no *blocking* mechanical problem and flagged otherwise.
+6. Briefing builder with `deps.yaml`, the prose layer, and the mechanical checker (done 2026-11-05). The checks described here are the first layer; the judge, continuity, critic, revision loop and extraction were added in 14.7 (see below), so a scene's best draft is accepted if it has no blocking problem left after them, and flagged otherwise.
 
    - **Briefing** (`bookforge/briefing.py`): the six parts of the briefing pack, within `briefing.max_tokens` (an estimate, about 3.5 characters per token). Over budget, it is cut in a fixed order: older chapter summaries, research notes, the previous scene's tail, sample passages, the style guide. The north stars, beats and story state are never cut; if they alone do not fit, the build fails with the largest parts named. `python -m bookforge briefing <series> b1.ch04.s3 [--full] [--tokens N]` shows the size of each part, or the whole text.
    - **deps.yaml** (per scene, written whenever a scene is drafted) records what the scene was built from as `id@fingerprint`. A fingerprint is the first 8 hex digits of the SHA-256 of the record's content, not a counter, so a hand edit counts as a change (this replaces the `@v3` style above). Tracks are fingerprinted by their state *at that scene*, so editing a later chapter's entry does not mark earlier scenes stale. Keys: `scene`, `parent`, `north_stars`, `style`, `bible`, `research`, `timeline`, `previous`, `summaries`. Staleness handling is milestone 14.8.
@@ -618,7 +625,21 @@ Bookforge is built inside the Jarvis repository by Claude Code, one milestone at
    - **Mechanical checks** (`bookforge/qc/mechanical.py`, no model): *blocking*: banned phrases, assistant chatter or formatting (headings, lists, "Scene 3:" labels, code fences), a cut-off ending, a length under half the minimum or over twice the maximum; *warnings*: phrases repeated from earlier scenes or inside the scene, overused words (names excluded), monotone sentence rhythm, over-long sentences, repeated sentence openings, dialogue share outside the range, a scene that opens by repeating the end of the previous one, tense and point-of-view slips and head-hopping. The last three use English-only heuristics and are skipped for other `book.language` values. Every finding carries the character span, for passage-level revision in 14.7. `python -m bookforge check <series> b1.ch01.s1 [--file x.md]` runs them on a scene or a file.
    - **`style/banned.txt`** is created with a starter list of common model clichés (English). It is yours: edit it, and add to it at the voice checkpoint. A line is a phrase (matched ignoring case and line breaks) or `re:` plus a regular expression; `#` starts a comment. The list is also given to the writer model.
 
-7. Continuity (System One), critic, pairwise judge, revision loop, extraction into `observed`.
+7. Continuity (System One), critic, pairwise judge, revision loop, extraction into `observed` (done 2026-11-05). Quality control for a scene now runs cheapest layer first (`bookforge/qc/`):
+
+   1. **Mechanical** on every draft (14.6).
+   2. **Judge.** If more than one draft has no blocking problem, the planner model compares them pairwise, A against B and then B against A; if the two runs name different drafts the pair is a tie. With three drafts every pair is judged. Wins decide; ties go to the lower mechanical score, then the lower draft number. A judge that fails falls back to the mechanical score.
+   3. **Continuity** on the chosen draft, only if it has no blocking mechanical problem. One yes/no question per relevant fact: every tracked state at the scene, the fixed facts of the people and places in it, the rules of the world, and the research facts it cites; changes marked `must_show` also get a "shown on the page?" question. P(contradiction) is the confidence for a yes and 1 - confidence for a no. A yes whose quoted evidence is really in the scene and whose P is above `qc.continuity_flag_threshold` is a flag; a hesitant answer, or a yes without quotable evidence, is only "unsure" (recorded, never revised). A `must_show` change that is not shown cannot be repaired by rewriting one passage, so that scene is left for you.
+   4. **Critic** on the chosen draft, only if the cheaper layers passed. Six criteria scored 1-5 (stakes, voice, show_dont_tell, pacing, dialogue, beats_covered) and the three weakest lines quoted. A quote that is not in the scene is sent back. The rubric is `prompts/critic_rubric.md`; to calibrate the critic against your own reading, copy it to `<series>/workbench/prompts/` and reword it. The critic is given the scene, its beats and the voice (style guide and one sample), never the bible.
+   5. **Revision**, at most `qc.max_revision_rounds` rounds. Flags come from blocking mechanical problems (banned phrases, a cut-off ending, chatter, formatting), continuity contradictions, and the critic's weakest lines when a score is under `qc.critic_min_score`. The fast model gets the paragraph around each flag, the problems, and (for the critic) the rubric line; only that paragraph is replaced, and several flags in one paragraph cost one call. Short chatter and formatting lines are deleted instead. A revised paragraph must stay within 0.4x-2.5x of the original length and must not contain a banned phrase. Layers 1-2 then run again; the critic runs again only if its scores were under the minimum.
+   6. **What is left** (a blocking problem the revision could not fix, an unmet `must_show`, scores still under the minimum, a scene too short) is written to `review.json` as `blocking`, the scene is flagged, and its latest text is kept as `revised.md` (a flagged scene's drafts are rewritten on the next run).
+   7. **Extraction.** After a scene is accepted the fast model reports, for each track with a state at the scene, what the prose shows (`extracted.yaml`, and into the track's `observed`). A verdict needs quotable evidence from the scene. A clear difference from the plan is a *gap*: recorded and counted in the scene's note, but it does not block the scene; a deliberate change of plan becomes a change request in 14.8.
+
+   Layers 4-6 get the critic's **plan review**: each piece (the acts, the chapters of an act, the scenes of a chapter) is reviewed against its parent, both north stars and the state tracks, and problems are sent back for correction like structural ones. Problems still open after the correction rounds never fail the layer: they go to `books/<book>/reports/review-notes.jsonl` and are counted in the layer's note. The state-track check ("System One" for plans) is part of this one critic call.
+
+   **System One.** Its request shape could not be verified, so the continuity questions are answered by the planner model. Its confidence is self-reported, which is less reliable than a probability read from the model, so the 0.3 threshold is applied to it conservatively. If colibri's endpoint turns out to exist, only `qc/decide.py` needs to change. `models.decide.url` is unused and `doctor` only checks that it answers.
+
+   **Cost.** A scene can now take 15-25 model calls (2 drafts, 2 judge, 2-5 continuity batches, the critic, revisions and re-checks, a summary, an extraction), most of them on the slow planner model. Each model-based layer has a switch under `qc:` to make a run cheaper. `python -m bookforge review <series> b1.ch04.s3` shows how a scene went: draft choice, scores, flags, revisions, gaps.
 
 8. Staleness and change requests: dependency graph, re-check / patch / redraft, `stale` command.
 
@@ -776,5 +797,5 @@ A typical run: start it in the evening with `python -m bookforge run /opt/platfo
 
 - Whether colibri answers long requests without streaming. The client waits for the whole reply (`timeout_seconds`); if colibri supports streaming, switching to it would keep slow replies from hitting the timeout.
 
-- Whether colibri's `/v1/systemone` exists and what its request shape is. `doctor` only checks that the URL answers.
+- Whether colibri's `/v1/systemone` exists and what its request shape is. `doctor` only checks that the URL answers; the continuity layer does not use it (the planner model answers the questions instead).
 

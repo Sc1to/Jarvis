@@ -64,6 +64,13 @@ qc:
   overused_word_min_count: 8
   repeat_ngram_size: 5                 # words in a phrase checked for repetition across scenes
   repeat_ngram_scenes: 2               # earlier scenes that must contain a phrase before it is flagged
+  judge_drafts: true                   # choose between drafts with the pairwise judge (otherwise by mechanical score)
+  continuity_check: true               # yes/no questions about the story state, the cast and the world
+  critic_check: true                   # the rubric critique
+  extract_observed: true               # record what each accepted scene says about the tracked states
+  review_structure: true               # critic review of acts, chapters and scene plans against their parents
+  continuity_batch_size: 8             # questions per model call
+  continuity_max_questions: 40         # per scene
 
 git:
   commit_each_step: true

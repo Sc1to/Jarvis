@@ -7,11 +7,12 @@ checkpoint (and the critic's, from milestone 14.7).
 """
 
 import logging
-import re
 from dataclasses import dataclass
 from typing import Callable
 
+from ..ask import ask_until_valid, clean_reply, word_count  # noqa: F401  (re-exported: other modules import them from here)
 from ..errors import LayerError
+from .. import review_notes
 from ..prompts import render
 from ..research.notes import notes_for_prompt, stores_for
 from ..research.step import run_research
@@ -20,28 +21,6 @@ from .runner import StepContext, StepResult
 log = logging.getLogger("platform_bookforge.layers")
 
 Validator = Callable[[str], list[str]]
-
-_FENCE = re.compile(r"\A(.*?)```[a-zA-Z]*\n(.*?)\n?```(.*?)\Z", re.DOTALL)
-_MAX_CHATTER = 400  # characters of text around a fenced block that we treat as chatter
-
-
-def word_count(text: str) -> int:
-    return len(re.findall(r"[\w'’-]+", text))
-
-
-def clean_reply(text: str, strip_preamble: bool) -> str:
-    """Remove a code fence the model wrapped around the document and, if asked, chatter before the first heading."""
-    text = text.strip()
-    m = _FENCE.match(text)
-    if m and len(m.group(1)) + len(m.group(3)) <= _MAX_CHATTER:
-        text = m.group(2).strip()
-    if strip_preamble and not text.startswith("#"):
-        lines = text.split("\n")
-        for i, line in enumerate(lines):
-            if line.startswith("#"):
-                text = "\n".join(lines[i:]).strip()
-                break
-    return text
 
 
 @dataclass
@@ -53,6 +32,7 @@ class DocumentSpec:
     max_tokens: int
     strip_preamble: bool
     slots: Callable[[StepContext], dict[str, str]]
+    review: Callable[[str], list[str]] | None = None  # critic review of a valid reply; its problems are soft
     normalize: Callable[[str], str] | None = None  # rewrites a validated reply before saving (YAML layers)
     research_scope: str | None = None  # "series" or "book": where this layer's research notes are kept
     research_focus: str = ""  # what this layer needs researched (docs/BOOKFORGE.md, layer table)
@@ -60,6 +40,7 @@ class DocumentSpec:
 
 def generate_document(ctx: StepContext, spec: DocumentSpec) -> StepResult:
     project = ctx.project
+    files_extra: list[str] = []
     out_rel = spec.out_path.format(book=project.book)
     out = project.resolve(out_rel)
 
@@ -73,14 +54,18 @@ def generate_document(ctx: StepContext, spec: DocumentSpec) -> StepResult:
         log.info("%s: adopted existing %s", spec.layer, out_rel)
         note = "adopted existing file"
     else:
-        text = _draft(ctx, spec)
+        sink: list = []
+        text = _draft(ctx, spec, sink)
+        for label, problems in sink:
+            review_notes.add(project, spec.layer, label, problems)
+            files_extra.append(str(review_notes.path(project).relative_to(project.root)))
         if spec.normalize is not None:
             text = spec.normalize(text)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(text.rstrip() + "\n", encoding="utf-8")
-        note = f"{word_count(text)} words"
+        note = f"{word_count(text)} words" + (f", {len(sink)} review note(s) for you" if sink else "")
 
-    files = [out_rel]
+    files = [out_rel] + sorted(set(files_extra))
     outcome = _research(ctx, spec, text)
     if outcome is not None:
         files += outcome.files
@@ -117,7 +102,7 @@ def research_layer(ctx: StepContext, scope: str, focus: str, document: str):
     return outcome
 
 
-def _draft(ctx: StepContext, spec: DocumentSpec) -> str:
+def _draft(ctx: StepContext, spec: DocumentSpec, soft_sink: list | None = None) -> str:
     """Refine: ask for the document, check it, and ask for corrections until it passes."""
     project = ctx.project
     if ctx.llm is None:
@@ -135,27 +120,5 @@ def _draft(ctx: StepContext, spec: DocumentSpec) -> str:
         {"role": "user", "content": render(spec.prompt, project.root, **values)},
     ]
 
-    return ask_until_valid(ctx, spec.layer, layer_cfg.model, messages, spec.validate, options, spec.strip_preamble)
-
-
-def ask_until_valid(
-    ctx: StepContext, label: str, role: str, messages: list[dict], validate: Validator,
-    options: dict, strip_preamble: bool,
-) -> str:
-    """Ask the model, check the reply, and ask for corrections (at most qc.max_revision_rounds) until it passes."""
-    rounds = ctx.project.config.qc.max_revision_rounds
-    text = clean_reply(ctx.llm.complete(role, messages, **options), strip_preamble)
-    problems = validate(text)
-    for attempt in range(1, rounds + 1):
-        if not problems:
-            break
-        log.info("%s: reply has %d problem(s); correction round %d/%d", label, len(problems), attempt, rounds)
-        messages = messages + [
-            {"role": "assistant", "content": text},
-            {"role": "user", "content": render("correct", ctx.project.root, problems="\n".join(f"- {p}" for p in problems))},
-        ]
-        text = clean_reply(ctx.llm.complete(role, messages, **options), strip_preamble)
-        problems = validate(text)
-    if problems:
-        raise LayerError(f"{label} still has problems after {rounds} correction round(s): " + "; ".join(problems))
-    return text
+    return ask_until_valid(ctx, spec.layer, layer_cfg.model, messages, spec.validate, options, spec.strip_preamble,
+                           soft_validate=spec.review, soft_sink=soft_sink)

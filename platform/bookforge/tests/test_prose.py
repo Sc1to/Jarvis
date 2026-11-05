@@ -16,7 +16,8 @@ from conftest import RuleLLM
 from prose_fakes import prose
 from structure_fakes import SMALL_CONFIG, ready, rules
 
-PROSE_CONFIG = SMALL_CONFIG.replace("research:", "  prose: {words: [100, 600], drafts: 2}\nresearch:")
+PROSE_CONFIG = (SMALL_CONFIG.replace("research:", "  prose: {words: [100, 600], drafts: 2}\nresearch:")
+                + "  judge_drafts: false\n  continuity_check: false\n  critic_check: false\n  extract_observed: false\n  max_revision_rounds: 0\n")
 SCENES = [f"b1.ch0{c}.s{s}" for c in range(1, 5) for s in (1, 2)]
 SUMMARY = "Anna meets Jonas on the quay and they quarrel about the ledger before they part for the night."
 BANNED = "She felt a testament to her own stubbornness, a testament to everything."
@@ -288,6 +289,9 @@ def test_the_summary_falls_back_to_the_plan_when_the_model_fails(book):
 
 
 def test_a_summary_of_the_wrong_length_is_corrected(book):
+    (book.root / "config.yaml").write_text(PROSE_CONFIG.replace("max_revision_rounds: 0", "max_revision_rounds: 1"))
+    book = Project.open(book.root)
+
     def reply(messages):
         return "Too short." if len(messages) == 2 else SUMMARY
 
