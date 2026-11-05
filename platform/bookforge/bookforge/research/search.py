@@ -175,8 +175,18 @@ class PlaywrightWebClient:
                          "duration_seconds": round(time.monotonic() - started, 3), "ok": "error" not in extra, **extra})
 
 
-def build_web_client(project) -> PlaywrightWebClient:
-    return PlaywrightWebClient(
+def make_web_client(research, base: PlaywrightWebClient | None = None, **kw) -> WebClient:
+    """The client for `research.source`: Wikipedia over the web tool (the default), or raw search-engine pages."""
+    base = base or PlaywrightWebClient(**kw)
+    if research.source == "wikipedia":
+        from .wikipedia import WikipediaWebClient  # imported here: wikipedia.py imports this module
+        return WikipediaWebClient(base, research.wikipedia_language, research.results_per_question)
+    return base
+
+
+def build_web_client(project) -> WebClient:
+    return make_web_client(
+        project.config.research,
         call_log=CallLog(project.book_dir / "logs" / "calls.jsonl"),
         session_id=f"bookforge:{project.root.name}:{project.book}",
     )

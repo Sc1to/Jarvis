@@ -70,7 +70,9 @@ def _default_layers() -> dict[str, LayerSettings]:
 class Research(_Strict):
     enabled: bool = True
     required: bool = False  # True: a layer fails if none of its research questions could be answered
-    search: Literal["playwright_web_tool"] = "playwright_web_tool"
+    search: Literal["playwright_web_tool"] = "playwright_web_tool"  # how pages are reached: always the platform web tool
+    source: Literal["wikipedia", "duckduckgo"] = "wikipedia"  # where results come from; search-engine pages are blocked to headless browsers
+    wikipedia_language: str = Field("en", pattern=r"^[a-z]{2,8}(-[a-z0-9]+)?$")  # which Wikipedia to search (en, de, fr, ...)
     results_per_question: int = Field(5, gt=0)  # search results considered per question
     max_questions: int = Field(6, gt=0)  # questions asked per layer
     pages_per_question: int = Field(2, gt=0)  # pages read per question

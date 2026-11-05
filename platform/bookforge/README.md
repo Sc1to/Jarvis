@@ -39,6 +39,8 @@ Every model and web call is appended to `<series>/books/<book>/logs/calls.jsonl`
 
 Research notes are written to `research/` (series) and `books/<book>/research/`: `sources.jsonl` (facts with a quote from their source page), `questions.jsonl` and one readable file per layer. Turn research off with `research.enabled: false`.
 
+Research looks things up on Wikipedia by default (`research.source: wikipedia`, `wikipedia_language: en`): search-engine pages are blocked to headless browsers, and `doctor` tells you whether search works from your network.
+
 Research web access goes only through `platform/tools/web_tool.py` (Playwright); it needs `playwright install chromium` on the host.
 
 Tests: `pytest tests` from this directory with the venv active.

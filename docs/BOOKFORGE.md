@@ -524,6 +524,8 @@ layers:                            # model for the refine step; review is always
 
 research:
   search: playwright_web_tool      # platform/tools/web_tool.py; no direct HTTP
+  source: wikipedia                # wikipedia | duckduckgo (search-engine pages are blocked to headless browsers)
+  wikipedia_language: en           # which Wikipedia to search: en, de, fr, ...
   results_per_question: 5
 
 book:
@@ -606,7 +608,7 @@ Bookforge is built inside the Jarvis repository by Claude Code, one milestone at
 4. The research step inside the runner: questions, web-tool search, fetch, notes, `sources.jsonl` (done 2026-11-05). After a layer's document is written, the step (`bookforge/research/`) works like this:
 
    - The planner model proposes at most `research.max_questions` factual questions the document depends on, each with a short search query and a `sensitive` flag (history, medicine, real places, real people). Questions already answered, in the series or the book, are skipped; unanswered ones are retried on the next run.
-   - Each query goes through the web tool. The result links are read from the tool's `links` metadata (DuckDuckGo's redirect links are unwrapped); a results page with no usable links is reported as blocked or empty. Up to `research.pages_per_question` pages are fetched, never the same page twice.
+   - **Where results come from (`research.source`).** The default is `wikipedia`: a search request to Wikipedia's API returns article titles, and an extracts request returns the article as plain text, both fetched through the web tool like any page (so the URL checks, retries and logging still apply). The fact's source is the article's normal address; its quote is checked against the plain text the API returned. `wikipedia_language` picks the edition (`en`, `de`, ...). Coverage is what Wikipedia has: good for history, customs, medicine and places, thin on niche topics. The other source, `duckduckgo`, reads a search-engine results page and unwraps its redirect links; in practice DuckDuckGo, Bing and Brave answer a headless browser with a block page or an empty page, so it is kept only for networks where it works. Each query's result links are read from the tool's `links` metadata.
    - The notes model (`research.notes_model`, default the fast writer) extracts up to 3 facts per page, each with a quote. **A fact is kept only if its quote appears verbatim in the page** (case, spacing and typographic quotes ignored), so the model cannot add facts the page does not contain. Page text is given to the models as data, never as instructions.
    - Files, per scope (`research/` for the series, `books/<book>/research/` for a book): `sources.jsonl` (one fact per line: id, claim, url, title, date fetched, quote, layer, question, sensitive), `questions.jsonl` (every question, answered or not, with the reason), and a readable `<layer>.md`. Fact ids are `s-0001` for the series and `b1-0001` for book b1; scenes will cite them.
    - Stored facts (newest first, within `research.notes_max_chars`) are shown to later layers as reference data in the `{research_notes}` slot.
@@ -793,7 +795,7 @@ A typical run: start it in the evening with `python -m bookforge run /opt/platfo
 
 - Language of the books (affects model choice and the banned-phrase list)
 
-- Whether web search works from the mini PC. The platform web tool's search loads a DuckDuckGo results page; from the dev sandbox it returned a block page ("If this persists, please email us") that the tool still reported as success. The research step now reports such a page as blocked or empty instead of using it, but it has only been run against scripted search results. That DuckDuckGo result links look like `duckduckgo.com/l/?uddg=<url>` is an assumption from memory; check it on the first real run, and if search stays blocked, a different search page (or SearXNG, as an explicit exception to the Playwright-only rule) is needed.
+- Search: on the mini PC (2026-11-05) the web tool's DuckDuckGo, Bing and Brave pages all loaded but returned a block page or an empty page, so `research.source` defaults to Wikipedia, whose API answered. `doctor` now runs a real search (`web_search`) so this shows up at once. Wikipedia-only research is a real limit; a general-web source (for example a self-hosted SearXNG) would be an exception to the Playwright-only and Docker rules and is your decision.
 
 - Whether colibri answers long requests without streaming. The client waits for the whole reply (`timeout_seconds`); if colibri supports streaming, switching to it would keep slow replies from hitting the timeout.
 
