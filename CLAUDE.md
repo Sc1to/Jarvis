@@ -56,7 +56,8 @@ Last completed:    Phase 13.19 — Paper trading validation tooling; Phase DEV �
                    Phase 14.2 (2026-11-05) — bookforge llm.py (retrying OpenAI-compatible client, call log), research/search.py (Playwright web tool wrapper with URL safety checks), doctor endpoint + web checks; 142 tests
                    Phase 14.3 (2026-11-05) — bookforge layers 1-3: prompt templates (series-overridable), shared generate/check/correct loop, series + book north stars and synopsis, direction checkpoint (approve commits your edits); 184 tests; prompts are first drafts, not yet run against a real model
                    Phase 14.4 (2026-11-05) — bookforge research step: questions, web-tool search + fetch, facts kept only with a verbatim quote from the page, sources.jsonl / questions.jsonl / notes per scope, blocked-search detection; shared web_tool now returns page links; 242 tests; only run against scripted searches (DuckDuckGo is blocked from the dev sandbox)
-Currently working: Phase 13.20 — Live trading activation (manual user decision); Phase 14 — Bookforge (14.0–14.4 done; 14.5 next)
+                   Phase 14.5 (2026-11-05) — bookforge layers 4-6 + bible: acts, cast/constants, chapters (per act) + state tracks, scenes (per chapter) + timeline, cached resumable pieces, state_at lookups + `state-at` command, whole-book cross-checks; 355 tests; structural checks only, prompts not yet run against a real model
+Currently working: Phase 13.20 — Live trading activation (manual user decision); Phase 14 — Bookforge (14.0–14.5 done; 14.6 next)
 Blocked on:        Infra phases (1, 2) are hardware setup; 3-6 months paper trading runtime
 Remaining:         Phase 13.20 (manual user decision)
 ```
@@ -76,7 +77,7 @@ Remaining:         Phase 13.20 (manual user decision)
 - [x] Phase 12 — Documentation
 - [x] Phase DEV — Dev tooling (Docker, deployment scripts, test suite)
 - [ ] Phase 13  — Trading system (13.1–13.19 complete; 13.20 is manual user decision)
-- [ ] Phase 14  — Bookforge (14.0-14.4 done: shell, skeleton, llm + doctor, layers 1-3, research; 14.5 layers 4-6 + bible next)
+- [ ] Phase 14  — Bookforge (14.0-14.5 done: shell, skeleton, llm + doctor, layers 1-3, research, layers 4-6 + bible; 14.6 briefing + prose next)
 
 ---
 

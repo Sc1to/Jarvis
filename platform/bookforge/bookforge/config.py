@@ -77,6 +77,7 @@ class Research(_Strict):
     notes_model: Literal["writer", "critic"] = "writer"  # reads pages and extracts facts
     notes_max_chars: int = Field(6000, gt=0)  # research notes included in a prompt
     page_max_chars: int = Field(12000, gt=0)  # page text given to the model
+    scene_questions: int = Field(2, ge=0)  # questions researched per chapter before its scenes are planned (0 = none)
 
 
 class BookSettings(_Strict):

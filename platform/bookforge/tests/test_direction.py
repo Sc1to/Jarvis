@@ -257,8 +257,9 @@ def git(project, *args):
     return subprocess.run(["git", "-C", str(project.root), *args], capture_output=True, text=True).stdout
 
 
-def test_run_review_edit_approve_continue(project, cli_runner):
+def test_run_review_edit_approve_continue(project, cli_runner, monkeypatch):
     runner, llm = cli_runner
+    monkeypatch.setattr(cli, "HANDLERS", {n: HANDLERS[n] for n in ("series_north_star", "book_north_star", "synopsis")})
     result = runner.invoke(cli.app, ["run", str(project.root)])
     assert result.exit_code == 0, result.output
     assert "accepted: synopsis" in result.output and "approve direction" in result.output

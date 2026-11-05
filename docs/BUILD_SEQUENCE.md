@@ -1361,7 +1361,7 @@ Components (Claude Code prompts to be written before each component):
 | 14.2  | llm.py and doctor — real endpoint calls, retries, call logging. **Done 2026-11-05** |
 | 14.3  | Layer runner, layers 1–3, direction checkpoint. **Done 2026-11-05** |
 | 14.4  | Research step via Playwright web tool. **Done 2026-11-05** (web tool now returns page links) |
-| 14.5  | Layers 4–6 and the story bible |
+| 14.5  | Layers 4–6 and the story bible. **Done 2026-11-05** |
 | 14.6  | Briefing builder, prose layer, mechanical checker |
 | 14.7  | Continuity, critic, pairwise judge, revision loop |
 | 14.8  | Staleness and change requests |

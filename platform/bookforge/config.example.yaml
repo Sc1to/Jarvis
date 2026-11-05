@@ -38,6 +38,7 @@ research:
   notes_model: writer                  # reads pages and extracts facts
   notes_max_chars: 6000                # research notes included in a prompt
   page_max_chars: 12000                # page text given to the model
+  scene_questions: 2                   # questions researched per chapter before its scenes are planned (0 = none)
 
 book:
   target_words: 90000

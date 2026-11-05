@@ -14,7 +14,7 @@ log = logging.getLogger("platform_bookforge.project")
 
 BOOK_ID_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 
-_GITIGNORE = "books/*/logs/\n"
+_GITIGNORE = "books/*/logs/\nbooks/*/work/\n"
 
 # Files every new series starts with (path relative to the series root -> content).
 _SERIES_FILES = {

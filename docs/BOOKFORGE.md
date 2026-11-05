@@ -245,6 +245,58 @@ The bible answers one question: what is true at this exact point in the story? I
 
 - **Knowledge:** "who knows the secret by ch12" is a track like any other, which prevents characters reacting to things they cannot know yet.
 
+**File formats** (milestone 14.5; each file is written from validated records, unknown keys a model adds are dropped)
+
+```yaml
+# books/b1/acts.yaml  (layer 4)
+acts:
+  - {id: b1.act1, title: ..., summary: ..., purpose: ..., turning_point: ..., chapter_count: 8}
+
+# books/b1/chapters.yaml  (layer 5)
+chapters:
+  - {id: b1.ch04, act: b1.act1, title: ..., purpose: ..., summary: ..., pov: anna, setting: harbor, tension: 6, research: [s-0003]}
+
+# books/b1/scenes.yaml  (layer 6): what and why, not how
+scenes:
+  - id: b1.ch04.s3
+    chapter: b1.ch04
+    purpose: ...
+    pov: anna
+    setting: harbor
+    characters: [anna, jonas]      # always includes the pov character
+    beats: [Anna confronts Jonas about the ledger., He lies badly.]   # 2-8 events in order
+    research: [b1-0002]
+
+# bible/constants.yaml  (series-wide, created by the chapters layer, never changes during the story)
+entities:                           # kind: character | place | object | group | concept
+  - {id: anna, kind: character, name: Anna Voss, facts: [grey eyes, left-handed]}
+rules:
+  - {id: ledger-cost, text: each name crossed out costs a year of memory}
+
+# bible/tracks.yaml  (the spec's track format, under a top-level `tracks:` key)
+tracks:
+  - id: anna-shoulder-wound
+    entity: anna
+    kind: physical                 # physical | location | relationship | possession | knowledge | status | other
+    version: 3
+    plan:
+      - {from: b1.ch04.s3, value: "deep cut, left shoulder; bleeding", must_show: true}
+    observed: []
+
+# bible/timeline.yaml  (written by the scene layer; time is a story-day number so it works in invented calendars)
+scenes:
+  - {id: b1.ch04.s3, day: 12, time: evening, date: "14 March 1893", flashback: false, travel: ""}   # date, flashback, travel optional
+```
+
+How the pieces fit:
+
+- **Positions.** A `from` is a chapter id (the state holds from the start of the chapter) or a scene id. Within a book, positions are ordered by (chapter, scene), and a chapter counts as scene 0. Ordering across books is not supported yet.
+- **Who creates what.** Layer 4 writes the acts, with a chapter count per act that must add up to the configured range. Layer 5 first writes the cast and world to `constants.yaml` (the tracks and scenes need entity ids to point at), then plans the chapters of one act per model call, creating or extending tracks with chapter-level positions. Layer 6 plans the scenes of one chapter per call and gives each scene a story day and time.
+- **Tracks are refined, never silently rewritten.** In layer 6 the model restates each track's entries for the chapter at scene level. Every track that already has entries in that chapter must be restated, with at least as many entries and as many `must_show` flags, or the reply is sent back for correction. A track's `version` starts at 1 and goes up by one for every chapter whose entries the scene layer changes. After layer 6 no `must_show` entry is left at chapter level.
+- **State at a point.** `bookforge/bible/lookup.py` answers "what is true at scene X": for every track, the latest entry at or before X, with `since`, `begins_here`, `must_show` (only on the scene where the entry begins) and the `previous` value. `scene_entities` gives the characters and setting of a scene, which is the filter the briefing builder uses (milestone 14.6). `python -m bookforge state-at <series> b1.ch04.s1` prints it, with the scene's story day.
+- **Timeline checks.** Story days must not go backwards between scenes unless a scene is marked `flashback: true`; every scene needs a timeline entry; `elapsed_days` gives the gap between two scenes for plausibility checks.
+- **Resuming.** Each model reply for layers 5 and 6 is checked, corrected if needed, and saved in `books/<book>/work/<layer>/` (not tracked by Git). A stopped run reuses the saved pieces; when all pieces are in they are assembled, cross-checked (`validate_bible`), and the work folder is removed. Hand-written `acts.yaml`, `chapters.yaml` or `scenes.yaml` files are checked and kept, like the direction files.
+
 **Series ledger** (`ledger.yaml`): open threads, foreshadowing still to pay off, and each track's state at the end of every book. The next book's north star starts from it.
 
 ## Version control and incremental updates
@@ -546,7 +598,7 @@ Bookforge is built inside the Jarvis repository by Claude Code, one milestone at
    - Research is best-effort: a blocked search or unreadable page costs that question, and the layer's note reports it (for example `research: 1/3 questions answered, 2 facts (search … blocked or empty)`). Set `research.required: true` to make a layer fail instead when none of its questions has an answer; the document is kept and the rerun retries the research. `research.enabled: false` turns it off.
    - The shared web tool now returns the page's links in `ToolResult.metadata["links"]`, which is how result links are found. Without it, only the page text was available.
 
-5. Layers 4–6 and the bible: constants, state tracks, timeline, state-at-a-point lookups.
+5. Layers 4–6 and the bible: constants, state tracks, timeline, state-at-a-point lookups (done 2026-11-05; formats under *Story bible*). The checks are structural only (ids, counts, references to the cast, track guards, timeline order); the critic review of these layers is milestone 14.7. Two choices the spec left open: the cast and world are created by the chapters layer, and the scenes layer researches `research.scene_questions` (default 2) questions per chapter before planning its scenes, so scenes can cite fact ids.
 
 6. Briefing builder with `deps.yaml`, the prose layer, and the mechanical checker.
 

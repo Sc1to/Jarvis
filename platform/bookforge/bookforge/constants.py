@@ -26,5 +26,6 @@ STATE_SCHEMA_VERSION = 1
 # Files you review at each checkpoint ({book} is the book id). `run` lists the ones that exist.
 CHECKPOINT_REVIEW_FILES = {
     "direction": ("north-star.md", "books/{book}/north-star.md", "books/{book}/synopsis.md"),
-    "structure": ("books/{book}/acts.yaml", "books/{book}/chapters.yaml", "books/{book}/scenes.yaml"),
+    "structure": ("books/{book}/acts.yaml", "books/{book}/chapters.yaml", "books/{book}/scenes.yaml",
+                  "bible/constants.yaml", "bible/tracks.yaml", "bible/timeline.yaml"),
 }

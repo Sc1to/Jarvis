@@ -73,11 +73,11 @@ def quote_in_page(quote: str, page_text: str) -> bool:
     return _norm_text(quote) in _norm_text(page_text)
 
 
-def generate_questions(ctx, already_answered: set[str], focus: str, document: str) -> list[Question]:
+def generate_questions(ctx, already_answered: set[str], focus: str, document: str, max_questions: int) -> list[Question]:
     cfg = ctx.project.config
     prompt = render(
         "research_questions", ctx.project.root,
-        layer_focus=focus, document=document[:DOCUMENT_CHARS], max_questions=str(cfg.research.max_questions),
+        layer_focus=focus, document=document[:DOCUMENT_CHARS], max_questions=str(max_questions),
         research_notes=notes_for_prompt(ctx.project, cfg.research.notes_max_chars),
         language=cfg.book.language,
     )
@@ -101,7 +101,7 @@ def generate_questions(ctx, already_answered: set[str], focus: str, document: st
             continue
         asked.add(key)
         out.append(Question(question, query, bool(item.get("sensitive", False))))
-        if len(out) >= cfg.research.max_questions:
+        if len(out) >= max_questions:
             break
     return out
 
@@ -133,7 +133,7 @@ def extract_facts(ctx, question: str, url: str, page_text: str) -> list[dict]:
     return facts
 
 
-def run_research(ctx, scope: str, focus: str, document: str) -> ResearchOutcome:
+def run_research(ctx, scope: str, focus: str, document: str, max_questions: int | None = None) -> ResearchOutcome:
     """Research for ctx.layer. `scope` is "series" or "book" (where the notes are kept)."""
     project, web = ctx.project, ctx.web
     cfg = project.config.research
@@ -146,7 +146,7 @@ def run_research(ctx, scope: str, focus: str, document: str) -> ResearchOutcome:
         return outcome
 
     try:
-        questions = generate_questions(ctx, answered, focus, document)
+        questions = generate_questions(ctx, answered, focus, document, max_questions or cfg.max_questions)
     except BookforgeError as e:
         outcome.failures.append(f"could not generate questions: {e}")
         log.warning("%s: %s", ctx.layer, outcome.failures[-1])

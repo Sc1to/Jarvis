@@ -53,6 +53,7 @@ class DocumentSpec:
     max_tokens: int
     strip_preamble: bool
     slots: Callable[[StepContext], dict[str, str]]
+    normalize: Callable[[str], str] | None = None  # rewrites a validated reply before saving (YAML layers)
     research_scope: str | None = None  # "series" or "book": where this layer's research notes are kept
     research_focus: str = ""  # what this layer needs researched (docs/BOOKFORGE.md, layer table)
 
@@ -73,6 +74,8 @@ def generate_document(ctx: StepContext, spec: DocumentSpec) -> StepResult:
         note = "adopted existing file"
     else:
         text = _draft(ctx, spec)
+        if spec.normalize is not None:
+            text = spec.normalize(text)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(text.rstrip() + "\n", encoding="utf-8")
         note = f"{word_count(text)} words"
@@ -85,13 +88,30 @@ def generate_document(ctx: StepContext, spec: DocumentSpec) -> StepResult:
     return StepResult(files=files, note=note)
 
 
+def prompt_values(project) -> dict[str, str]:
+    """The slot values every planning prompt can use."""
+    cfg = project.config
+    return {
+        "language": cfg.book.language, "pov": cfg.book.pov, "tense": cfg.book.tense,
+        "target_words": str(cfg.book.target_words), "book_id": project.book,
+        "research_notes": notes_for_prompt(project, cfg.research.notes_max_chars),
+    }
+
+
 def _research(ctx: StepContext, spec: DocumentSpec, document: str):
     """The layer's research step. None when it does not apply (no scope, disabled, no web client)."""
-    cfg = ctx.project.config.research
-    if spec.research_scope is None or not cfg.enabled or ctx.web is None:
+    if spec.research_scope is None:
         return None
-    outcome = run_research(ctx, spec.research_scope, spec.research_focus, document)
-    if cfg.required and stores_for(ctx.project)[spec.research_scope].answered_count(spec.layer) == 0:
+    return research_layer(ctx, spec.research_scope, spec.research_focus, document)
+
+
+def research_layer(ctx: StepContext, scope: str, focus: str, document: str):
+    """Run research for ctx.layer after its output exists. None if research is off or there is no web client."""
+    cfg = ctx.project.config.research
+    if not cfg.enabled or ctx.web is None:
+        return None
+    outcome = run_research(ctx, scope, focus, document)
+    if cfg.required and stores_for(ctx.project)[scope].answered_count(ctx.layer) == 0:
         raise LayerError("research is required but no question could be answered: "
                          + ("; ".join(outcome.failures) or "no questions were asked"))
     return outcome
@@ -109,30 +129,33 @@ def _draft(ctx: StepContext, spec: DocumentSpec) -> str:
     if layer_cfg.temperature is not None:
         options["temperature"] = layer_cfg.temperature
 
-    values = {
-        "language": cfg.book.language, "pov": cfg.book.pov, "tense": cfg.book.tense,
-        "target_words": str(cfg.book.target_words), "book_id": project.book,
-        "research_notes": notes_for_prompt(project, cfg.research.notes_max_chars),
-        **spec.slots(ctx),
-    }
+    values = {**prompt_values(project), **spec.slots(ctx)}
     messages = [
         {"role": "system", "content": render("system", project.root, **values)},
         {"role": "user", "content": render(spec.prompt, project.root, **values)},
     ]
 
-    rounds = cfg.qc.max_revision_rounds
-    text = clean_reply(ctx.llm.complete(layer_cfg.model, messages, **options), spec.strip_preamble)
-    problems = spec.validate(text)
+    return ask_until_valid(ctx, spec.layer, layer_cfg.model, messages, spec.validate, options, spec.strip_preamble)
+
+
+def ask_until_valid(
+    ctx: StepContext, label: str, role: str, messages: list[dict], validate: Validator,
+    options: dict, strip_preamble: bool,
+) -> str:
+    """Ask the model, check the reply, and ask for corrections (at most qc.max_revision_rounds) until it passes."""
+    rounds = ctx.project.config.qc.max_revision_rounds
+    text = clean_reply(ctx.llm.complete(role, messages, **options), strip_preamble)
+    problems = validate(text)
     for attempt in range(1, rounds + 1):
         if not problems:
             break
-        log.info("%s: draft has %d problem(s); correction round %d/%d", spec.layer, len(problems), attempt, rounds)
+        log.info("%s: reply has %d problem(s); correction round %d/%d", label, len(problems), attempt, rounds)
         messages = messages + [
             {"role": "assistant", "content": text},
-            {"role": "user", "content": render("correct", project.root, problems="\n".join(f"- {p}" for p in problems))},
+            {"role": "user", "content": render("correct", ctx.project.root, problems="\n".join(f"- {p}" for p in problems))},
         ]
-        text = clean_reply(ctx.llm.complete(layer_cfg.model, messages, **options), spec.strip_preamble)
-        problems = spec.validate(text)
+        text = clean_reply(ctx.llm.complete(role, messages, **options), strip_preamble)
+        problems = validate(text)
     if problems:
-        raise LayerError(f"{spec.layer} still has problems after {rounds} correction round(s): " + "; ".join(problems))
+        raise LayerError(f"{label} still has problems after {rounds} correction round(s): " + "; ".join(problems))
     return text

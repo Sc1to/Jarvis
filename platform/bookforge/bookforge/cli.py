@@ -9,6 +9,9 @@ import typer
 
 from . import vcs
 from .constants import CHECKPOINTS, LAYER_ORDER
+from .bible import store as bible_store
+from .bible.lookup import day_of, scene_entities, state_at
+from .bible.positions import parse_position
 from .doctor import run_doctor
 from .errors import BookforgeError
 from .layers import HANDLERS
@@ -116,6 +119,38 @@ def approve(path: Path = PathArg, checkpoint: str = typer.Argument(..., help=f"O
     except BookforgeError as e:
         _fail(e)
     typer.echo(f"Approved '{checkpoint}'.")
+
+
+@app.command("state-at")
+def state_at_cmd(
+    path: Path = PathArg,
+    position: str = typer.Argument(..., help="A chapter or scene, like b1.ch05 or b1.ch05.s2"),
+    entity: Optional[list[str]] = typer.Option(None, "--entity", "-e", help="Only tracks of this entity (repeatable). Default for a scene: its characters and setting"),
+    book: str = BookOpt,
+) -> None:
+    """Show what is true at a point in the story, according to the bible."""
+    try:
+        project = Project.open(path, book)
+        pos = parse_position(position)
+        scenes = bible_store.load_scenes(project)
+        timeline = bible_store.load_timeline(project)
+        tracks = bible_store.load_tracks(project)
+        wanted = set(entity) if entity else (scene_entities(scenes, pos.id) if pos.is_scene else set())
+    except (BookforgeError, ValueError) as e:
+        _fail(e)
+    day = day_of(timeline, pos.id)
+    when = next((t for t in timeline if t.id == pos.id), None)
+    typer.echo(f"{pos.id}" + (f"  day {day}, {when.time}" if when else ""))
+    if wanted:
+        typer.echo("entities: " + ", ".join(sorted(wanted)))
+    states = state_at(tracks, pos.id, wanted or None)
+    if not states:
+        typer.echo("no tracked states apply here")
+    for s in states:
+        flags = (" [begins here]" if s.begins_here else "") + (" [must show on the page]" if s.must_show else "")
+        typer.echo(f"- {s.track_id} ({s.entity}, {s.kind}) since {s.since}: {s.value}{flags}")
+        if s.begins_here and s.previous:
+            typer.echo(f"    before: {s.previous}")
 
 
 @app.command()

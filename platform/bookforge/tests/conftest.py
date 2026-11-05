@@ -62,11 +62,13 @@ class RuleLLM:
 
     def complete(self, role, messages, **options):
         self.calls.append({"role": role, "messages": [dict(m) for m in messages], "options": options})
+        # Match on the first user message, so a correction round (which has no marker of its own) gets the same rule.
+        first = next((m["content"] for m in messages if m["role"] == "user"), "")
         last = messages[-1]["content"]
         for marker, reply in self.rules:
-            if marker in last:
+            if marker in first:
                 return reply(messages) if callable(reply) else reply
-        raise AssertionError(f"no rule matches this prompt: {last[:120]!r}")
+        raise AssertionError(f"no rule matches this prompt: {first[:120]!r}")
 
     def calls_matching(self, marker):
         return [c for c in self.calls if marker in c["messages"][-1]["content"]]

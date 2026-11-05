@@ -3,7 +3,7 @@
 Automated book-writing pipeline (Phase 14). Separate from the writer app: shares no database, files or settings with `platform/writer`.
 
 - Spec: `docs/BOOKFORGE.md`. Build plan: `docs/BUILD_SEQUENCE.md`, Phase 14.
-- Status: milestones 14.0–14.4 done: service shell, CLI skeleton, model client and doctor, layers 1–3 (north stars and synopsis) up to the direction checkpoint, and the research step. Layers 4–7 have no handlers yet, so `run` stops there (exit code 2). The prompts have not been run against a real model yet.
+- Status: milestones 14.0–14.5 done: service shell, CLI skeleton, model client and doctor, layers 1–3 (north stars and synopsis) up to the direction checkpoint, the research step, and layers 4–6 (acts, chapters, scenes) with the story bible up to the structure checkpoint. The prose layer has no handler yet, so `run` stops there (exit code 2). The prompts have not been run against a real model yet.
 - Port 8100; systemd unit `platform-bookforge`; route `/bookforge` (API under `/bookforge/api`).
 - Data: `$BOOKFORGE_DATA_DIR` (default `/opt/platform/data/bookforge`), one Git repo per series.
 
@@ -22,6 +22,7 @@ python -m bookforge new /opt/platform/data/bookforge/my-series --premise premise
 python -m bookforge status  <series> [--book b1] [--json]
 python -m bookforge run     <series> [--book b1] [--until synopsis]
 python -m bookforge approve <series> direction
+python -m bookforge state-at <series> b1.ch04.s3 [-e anna]   # what the bible says is true at that point
 python -m bookforge doctor  [<series>] [--offline]   # --offline skips the endpoint checks and the web fetch
 ```
 
