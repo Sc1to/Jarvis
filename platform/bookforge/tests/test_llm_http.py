@@ -265,3 +265,39 @@ def test_retries_of_one_call_send_the_same_line(tmp_path):
 def test_isolation_is_on_by_default():
     from bookforge.config import Config
     assert Config().models.writer.isolate_requests and Config().models.critic.isolate_requests
+
+
+# ── extra_body and reasoning models ─────────────────────────────────────────
+
+def test_extra_body_is_added_to_every_request_and_logged(tmp_path):
+    bodies = sent_bodies(tmp_path, {"extra_body": {"reasoning_effort": "none", "keep_alive": -1}})
+    assert all(b["reasoning_effort"] == "none" and b["keep_alive"] == -1 and b["model"] == "glm-test" for b in bodies)
+    assert all(r["extra_body"] == {"reasoning_effort": "none", "keep_alive": -1} for r in records(tmp_path))
+
+
+def test_without_extra_body_nothing_extra_is_sent(tmp_path):
+    [body] = sent_bodies(tmp_path, calls=1)
+    assert set(body) == {"model", "messages", "stream", "temperature"}
+
+
+def test_extra_body_cannot_override_what_bookforge_sets():
+    from pydantic import ValidationError
+    from bookforge.config import ModelEndpoint
+    with pytest.raises(ValidationError) as e:
+        ModelEndpoint(base_url="http://x/v1", extra_body={"model": "other", "stream": True})
+    assert "cannot set model, stream" in str(e.value)
+
+
+def test_a_reasoning_model_that_only_thought_gets_a_clear_error(tmp_path):
+    thinking = httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": "", "reasoning": "Let me think..."}, "finish_reason": "length"}]})
+    c = client(lambda req: thinking, tmp_path)
+    with pytest.raises(LLMError) as e:
+        c.complete("writer", MSGS)
+    assert "only its thinking" in str(e.value) and "ran out of tokens" in str(e.value) and "reasoning_effort: none" in str(e.value)
+
+
+def test_an_empty_reply_without_thinking_is_still_just_empty(tmp_path):
+    c = client(lambda req: ok(text=""), tmp_path)
+    with pytest.raises(LLMError) as e:
+        c.complete("writer", MSGS)
+    assert "empty reply" in str(e.value)

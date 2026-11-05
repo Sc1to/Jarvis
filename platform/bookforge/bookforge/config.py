@@ -6,7 +6,7 @@ Unknown keys are errors so typos do not silently fall back to defaults.
 import logging
 import os
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
@@ -24,6 +24,9 @@ class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+RESERVED_BODY_KEYS = {"model", "messages", "stream", "temperature", "max_tokens", "top_p", "stop", "seed"}
+
+
 class ModelEndpoint(_Strict):
     base_url: str
     model: str = ""  # id from `c/coli status`; doctor warns while empty
@@ -33,6 +36,18 @@ class ModelEndpoint(_Strict):
     # Start every request with a unique first line. Ollama was seen to carry leftover state from the previous request
     # into the next when both began with the same words (answers about the wrong task). Costs speed on long prompts.
     isolate_requests: bool = True
+    # Extra fields added to every request body, for things a model needs that bookforge does not know about. The case that
+    # matters: reasoning models (Qwen3 and others) spend the whole token budget on hidden thinking and return an empty reply;
+    # `{reasoning_effort: none}` turns that off on Ollama's OpenAI-compatible endpoint.
+    extra_body: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("extra_body")
+    @classmethod
+    def _not_reserved(cls, v: dict[str, Any]) -> dict[str, Any]:
+        reserved = sorted(set(v) & RESERVED_BODY_KEYS)
+        if reserved:
+            raise ValueError(f"extra_body cannot set {', '.join(reserved)}: bookforge sets those itself")
+        return v
 
 
 class DecideEndpoint(_Strict):

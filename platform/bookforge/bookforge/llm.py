@@ -117,7 +117,8 @@ class HttpLLMClient:
         if not msgs or any("role" not in m or "content" not in m for m in msgs):
             raise LLMError("messages must be a non-empty list of {role, content}")
 
-        body = {"model": endpoint.model, "messages": _isolated(msgs) if endpoint.isolate_requests else msgs, "stream": False}
+        body = {**endpoint.extra_body, "model": endpoint.model,
+                "messages": _isolated(msgs) if endpoint.isolate_requests else msgs, "stream": False}
         body["temperature"] = self._temperature(endpoint, options)
         for key in ("max_tokens", "top_p", "stop", "seed"):
             if key in options:
@@ -126,6 +127,8 @@ class HttpLLMClient:
         url = endpoint.base_url.rstrip("/") + "/chat/completions"
         record = {"kind": "llm", "role": role, "model": endpoint.model, "url": url,
                   "temperature": body["temperature"], "messages": msgs}
+        if endpoint.extra_body:
+            record["extra_body"] = endpoint.extra_body
         started = time.monotonic()
         last: Exception | None = None
         for attempt in range(1, self._attempts + 1):
@@ -191,6 +194,11 @@ class HttpLLMClient:
         except (KeyError, IndexError, TypeError) as e:
             raise LLMError(f"{role} model returned an unexpected response shape") from e
         if not isinstance(text, str) or not text.strip():
+            message = choice.get("message") or {}
+            if message.get("reasoning") or message.get("reasoning_content"):
+                raise LLMError(f"{role} model returned only its thinking and no reply"
+                               + (" (it ran out of tokens while thinking)" if choice.get("finish_reason") == "length" else "")
+                               + f": set models.{role}.extra_body to {{reasoning_effort: none}} (or give it a larger token budget)")
             raise LLMError(f"{role} model returned an empty reply")
         finish = choice.get("finish_reason")
         if finish == "length":
