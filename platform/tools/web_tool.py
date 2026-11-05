@@ -15,11 +15,36 @@ DB_PATH = "/opt/platform/data/platform.db"
 SEARCH_URL = "https://html.duckduckgo.com/html/?q={query}"
 TIMEOUT_MS = 30_000
 MAX_LINKS = 300
+# A page that builds itself with scripts is empty when its HTML has loaded. Only if the text is nearly empty then,
+# wait for the page's network activity to settle and for text to appear; a normal page is read at once, as before.
+MIN_TEXT_CHARS = 200
+SETTLE_MS = 8_000
+POLL_MS = 3_000
+POLL_STEP_MS = 250
+_TEXT_JS = "document.body ? document.body.innerText : ''"
 _LINKS_JS = (
     "Array.from(document.querySelectorAll('a[href]'))"
     ".map(a => ({text: (a.innerText || '').trim(), href: a.href}))"
 )
 _BLOCKED_DOMAINS = frozenset(["google-analytics.com", "doubleclick.net", "facebook.net", "ads.twitter.com"])
+
+
+async def _page_text(page) -> str:
+    """The visible text of the page; for a nearly empty one, after waiting for scripts to fill it in (bounded)."""
+    text = await page.evaluate(_TEXT_JS)
+    if len(text.strip()) >= MIN_TEXT_CHARS:
+        return text
+    try:
+        await page.wait_for_load_state("networkidle", timeout=SETTLE_MS)
+    except Exception:  # a page that never goes quiet (live updates, ads): look at what is there
+        pass
+    waited = 0
+    while True:
+        text = await page.evaluate(_TEXT_JS)
+        if len(text.strip()) >= MIN_TEXT_CHARS or waited >= POLL_MS:
+            return text
+        await page.wait_for_timeout(POLL_STEP_MS)
+        waited += POLL_STEP_MS
 
 
 def _clean_links(raw) -> list[dict]:
@@ -130,7 +155,7 @@ class WebTool(Tool):
                     ) else route.continue_()
                 ))
                 await page.goto(url, timeout=TIMEOUT_MS, wait_until="domcontentloaded")
-                text = await page.evaluate("document.body.innerText")
+                text = await _page_text(page)
                 links = _clean_links(await page.evaluate(_LINKS_JS))
                 return ToolResult(
                     success=True, output=text[:50_000],
