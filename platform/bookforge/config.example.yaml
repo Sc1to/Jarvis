@@ -40,6 +40,7 @@ research:
   max_questions: 6                     # questions asked per layer
   pages_per_question: 2                # pages read per question
   notes_model: writer                  # reads pages and extracts facts
+  check_relevance: true                # drop facts that do not fit the question and the story's time and place
   notes_max_chars: 6000                # research notes included in a prompt
   page_max_chars: 12000                # page text given to the model
   scene_questions: 2                   # questions researched per chapter before its scenes are planned (0 = none)

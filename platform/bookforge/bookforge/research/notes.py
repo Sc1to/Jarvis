@@ -41,6 +41,7 @@ class QuestionRecord:
     fact_ids: list[str] = field(default_factory=list)
     reason: str = ""  # why it was not answered
     sensitive: bool = False
+    context: str = ""  # the time and place an answer had to fit
 
 
 def normalize_question(q: str) -> str:
