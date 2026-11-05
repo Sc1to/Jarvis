@@ -46,6 +46,7 @@ class Job:
 
 class JobManager:
     def __init__(self) -> None:
+        self.on_finish: Callable[[Job], None] | None = None  # called in the job's thread after it has ended
         self._lock = threading.Lock()
         self._jobs: dict[str, Job] = {}
         self._active: dict[str, str] = {}  # series -> job id
@@ -85,6 +86,11 @@ class JobManager:
             with self._lock:
                 if self._active.get(job.series) == job.id:
                     del self._active[job.series]
+            if self.on_finish:
+                try:
+                    self.on_finish(job)
+                except Exception:  # a notification problem must not turn a finished job into a dead thread
+                    log.exception("on_finish failed for job %s", job.id)
 
     def wait(self, job_id: str, timeout: float | None = None) -> None:
         """Block until a job ends (tests)."""

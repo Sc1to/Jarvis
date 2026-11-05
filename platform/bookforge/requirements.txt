@@ -6,3 +6,4 @@ typer==0.27.3
 pyyaml==6.0.3
 pydantic==2.14.3
 playwright>=1.47.0
+pywebpush>=2.0

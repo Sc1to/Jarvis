@@ -19,6 +19,10 @@ Everything lives under /api (Caddy strips /bookforge). Responses use the platfor
     POST /api/series/{s}/books/{b}/stale/fix          {only, accept} -> a background job
     POST /api/series/{s}/books/{b}/bench              {only, judge, accept, force} -> a background job
     GET  /api/series/{s}/books/{b}/jobs[/{id}]
+    GET  /api/series/{s}/books/{b}/structure          acts > chapters > scenes with status (the progress tree)
+    GET  /api/series/{s}/books/{b}/tracks             state tracks with plan and observed, in story order
+    GET  /api/series/{s}/books/{b}/research           facts with their sources and the scenes that cite them
+    GET  /api/push/key, POST /api/push/subscribe|unsubscribe|test    Web Push for finished runs
 
 A series runs one job at a time; while one is running, anything that would change the series' files
 answers 409 (reads are always allowed). The model clients come from `make_llm` / `make_web`, which tests replace.
@@ -33,7 +37,7 @@ from typing import Callable
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from . import assemble as assembly, bench as benchmarks, changes as change_requests, ops, report as morning_report, scenefiles, stale as staleness
+from . import push, assemble as assembly, bench as benchmarks, changes as change_requests, ops, report as morning_report, scenefiles, stale as staleness
 from .bible import store
 from .constants import CHECKPOINTS, LAYER_ORDER
 from .doctor import run_doctor
@@ -42,6 +46,7 @@ from .jobs import BusyError, JobManager
 from .llm import build_client
 from .project import BOOK_ID_RE, Project
 from .research.search import build_web_client
+from .research.notes import stores_for
 from .state import Item
 
 log = logging.getLogger("platform_bookforge.api")
@@ -54,6 +59,25 @@ make_llm: Callable = build_client
 make_web: Callable = lambda project: build_web_client(project) if project.config.research.enabled else None
 
 jobs = JobManager()
+push_sender: Callable | None = None  # replaced in tests; None sends for real with pywebpush
+
+
+def notification_for(job) -> tuple[str, str] | None:
+    """(title, body) for a job that ends in a way you should hear about, else None."""
+    where = f"{job.series}/{job.book}"
+    if job.status != "done":
+        return f"Bookforge: {job.kind} failed", f"{where}: {job.error or job.status}"
+    r = job.result or {}
+    if job.kind == "run":
+        if r.get("stopped") == "checkpoint":
+            return "Bookforge: waiting for you", f"{where}: {r.get('detail', '').splitlines()[0] if r.get('detail') else 'a checkpoint was reached'}"
+        if r.get("stopped") == "failed":
+            return "Bookforge: needs you", f"{where}: {r.get('detail', 'a layer needs you')}"
+        if r.get("stopped") == "complete":
+            return "Bookforge: book finished", f"{where}: every layer is accepted" + (", manuscript assembled" if r.get("assembled") else "")
+    if job.kind == "bench" and r.get("comparison") and not r["comparison"].get("ships"):
+        return "Bookforge: benchmark loses", f"{where}: the change loses against the baseline"
+    return None
 
 
 def ok(data) -> dict:
@@ -82,12 +106,36 @@ class BenchBody(BaseModel):
     force: bool = False
 
 
+class PushKeys(BaseModel):
+    p256dh: str
+    auth: str
+
+
+class PushSubscription(BaseModel):
+    endpoint: str
+    keys: PushKeys
+
+
+class PushUnsubscribe(BaseModel):
+    endpoint: str
+
+
 class AssembleBody(BaseModel):
     partial: bool = False
 
 
 def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
     router = APIRouter(prefix="/api")
+
+    def push_db() -> Path:
+        return Path(get_data_dir()) / "push.db"
+
+    def notify(job) -> None:
+        message = notification_for(job)
+        if message:
+            push.send(push_db(), message[0], message[1], f"/bookforge/#/series/{job.series}/{job.book}", push_sender)
+
+    jobs.on_finish = notify
 
     # ── helpers ──────────────────────────────────────────────────────────────
 
@@ -202,6 +250,7 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
             "plan": found.model_dump(), "status": item.status, "version": item.version, "note": item.note,
             "text": scenefiles.best_text(project, scene_id), "summary": scenefiles.read(scenefiles.summary_path(project, scene_id)),
             "review": review,
+            "drafts": {p.stem: p.read_text(encoding="utf-8") for p in sorted(scenefiles.scene_dir(project, scene_id).glob("draft-*.md"))},
             "change_requests": [c.model_dump() for c in change_requests.list_requests(project) if c.proposed_by == scene_id],
         })
 
@@ -319,6 +368,65 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
                     "accept_refused": out.accept_refused}
 
         return start_job(series, book, "bench", body.model_dump(), job)
+
+    @router.get("/series/{series}/books/{book}/structure")
+    def structure(series: str, book: str):
+        project = open_project(series, book)
+        acts = store.load_acts(project) if store.acts_path(project).exists() else []
+        chapters = store.load_chapters(project) if store.chapters_path(project).exists() else []
+        scenes_ = store.load_scenes(project) if store.scenes_path(project).exists() else []
+
+        def scene_row(s):
+            item = project.state.items.get(s.id, Item())
+            return {"id": s.id, "purpose": s.purpose, "status": item.status, "note": item.note}
+
+        def chapter_row(c):
+            return {"id": c.id, "title": c.title, "tension": c.tension, "scenes": [scene_row(s) for s in scenes_ if s.chapter == c.id]}
+
+        out = [{"id": a.id, "title": a.title, "chapters": [chapter_row(c) for c in chapters if c.act == a.id]} for a in acts]
+        loose = [chapter_row(c) for c in chapters if c.act not in {a.id for a in acts}]
+        if loose:
+            out.append({"id": "", "title": "Chapters", "chapters": loose})
+        return ok(out)
+
+    @router.get("/series/{series}/books/{book}/tracks")
+    def tracks(series: str, book: str):
+        project = open_project(series, book)
+        names = {e.id: e.name for e in store.load_constants(project).entities}
+        order = [{"id": s.id, "chapter": s.chapter} for s in (store.load_scenes(project) if store.scenes_path(project).exists() else [])]
+        out = [{"id": t.id, "entity": t.entity, "entity_name": names.get(t.entity, t.entity), "kind": t.kind, "version": t.version,
+                "plan": [{"from": e.from_, "value": e.value, "must_show": e.must_show} for e in t.plan], "observed": t.observed}
+               for t in store.load_tracks(project)]
+        return ok({"scenes": order, "chapters": [c.id for c in (store.load_chapters(project) if store.chapters_path(project).exists() else [])], "tracks": out})
+
+    @router.get("/series/{series}/books/{book}/research")
+    def research(series: str, book: str):
+        project = open_project(series, book)
+        chapters = {c.id: c for c in store.load_chapters(project)} if store.chapters_path(project).exists() else {}
+        cited: dict[str, list[str]] = {}
+        for s in store.load_scenes(project) if store.scenes_path(project).exists() else []:
+            for fid in s.research + (chapters[s.chapter].research if s.chapter in chapters else []):
+                if s.id not in cited.setdefault(fid, []):
+                    cited[fid].append(s.id)
+        return ok([{**vars(f), "used_in": cited.get(f.id, [])} for st in stores_for(project).values() for f in st.facts()])
+
+    @router.get("/push/key")
+    def push_key():
+        return ok({"public_key": push.public_key(push_db()), "subscriptions": push.subscription_count(push_db())})
+
+    @router.post("/push/subscribe")
+    def push_subscribe(body: PushSubscription):
+        push.subscribe(push_db(), body.endpoint, body.keys.p256dh, body.keys.auth)
+        return ok({"subscriptions": push.subscription_count(push_db())})
+
+    @router.post("/push/unsubscribe")
+    def push_unsubscribe(body: PushUnsubscribe):
+        push.unsubscribe(push_db(), body.endpoint)
+        return ok({"subscriptions": push.subscription_count(push_db())})
+
+    @router.post("/push/test")
+    def push_test():
+        return ok({"delivered": push.send(push_db(), "Bookforge", "Notifications are working.", "/bookforge/", push_sender)})
 
     @router.get("/series/{series}/books/{book}/jobs")
     def job_list(series: str, book: str):

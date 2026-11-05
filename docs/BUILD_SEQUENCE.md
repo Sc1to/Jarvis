@@ -1367,7 +1367,7 @@ Components (Claude Code prompts to be written before each component):
 | 14.8  | Staleness and change requests — `stale` (scan, `--fix`: re-check / patch / redraft, `--accept`), plan snapshot, `changes`. **Done 2026-11-05** |
 | 14.9  | Morning report, assembly, benchmarks — `report`, `assemble`, `bench`. **Done 2026-11-05** |
 | 14.10 | Service API wrapping the library — `api.py`, `jobs.py`, `ops.py`; background jobs, one per series. **Done 2026-11-05** |
-| 14.11 | Dashboard frontend — mobile-responsive, Web Push |
+| 14.11 | Dashboard frontend — mobile-responsive, Web Push. **Done 2026-11-05** |
 | 14.12 | Export — DOCX, EPUB, PDF |
 | 14.13 | Workbench — rules, prompt studio, arc views |
 

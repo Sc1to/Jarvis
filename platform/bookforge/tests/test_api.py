@@ -227,3 +227,124 @@ def test_bench_is_a_job_and_a_bad_name_fails_at_once(book, monkeypatch):
 def test_doctor_offline(book):
     checks = data(client.get("/api/doctor?offline=true&series=series"))
     assert checks and {"name", "level", "detail"} <= set(checks[0])
+
+
+# ── the dashboard's views ───────────────────────────────────────────────────
+
+def test_structure_is_acts_chapters_scenes_with_status(full):
+    tree = data(client.get(f"{B}/structure"))
+    assert [a["title"] for a in tree] == ["Act 1", "Act 2"]
+    assert [c["id"] for c in tree[0]["chapters"]] == ["b1.ch01", "b1.ch02"]
+    assert [s["id"] for s in tree[1]["chapters"][0]["scenes"]] == ["b1.ch03.s1", "b1.ch03.s2"]
+    assert {s["status"] for a in tree for c in a["chapters"] for s in c["scenes"]} == {"accepted"}
+
+
+def test_structure_of_a_fresh_book_is_empty():
+    assert data(client.get(f"{B}/structure")) != []  # the book fixture has its plan, nothing written
+    assert {s["status"] for a in data(client.get(f"{B}/structure")) for c in a["chapters"] for s in c["scenes"]} == {"pending"}
+
+
+def test_tracks_come_with_plan_observed_and_the_story_order(full):
+    t = data(client.get(f"{B}/tracks"))
+    assert [s["id"] for s in t["scenes"]] == ALL and t["chapters"] == ["b1.ch01", "b1.ch02", "b1.ch03", "b1.ch04"]
+    wound = next(x for x in t["tracks"] if x["id"] == "anna-wound")
+    assert wound["entity_name"] == "Anna Voss" and [e["from"] for e in wound["plan"]][0].startswith("b1.ch0")
+    assert wound["plan"][0]["must_show"] is True
+
+
+def test_research_lists_facts_with_the_scenes_that_use_them(full):
+    from bookforge.research.notes import stores_for
+    st = next(iter(stores_for(full).values()))
+    f = st.add_fact(claim="A claim.", url="https://example.org/a", title="A", fetched="2026-01-01", quote="q", layer="chapters", question="?", sensitive=True)
+    scenes = store.load_scenes(full)
+    scenes[1].research = [f.id]
+    store.save_scenes(full, scenes)
+    [fact] = data(client.get(f"{B}/research"))
+    assert fact["claim"] == "A claim." and fact["sensitive"] is True and fact["used_in"] == [scenes[1].id]
+
+
+def test_a_scene_carries_its_drafts_for_comparison(full):
+    one = data(client.get(f"{B}/scenes/b1.ch01.s1"))
+    assert sorted(one["drafts"]) == ["draft-1", "draft-2"] and all(len(t) > 100 for t in one["drafts"].values())
+    assert one["review"]["chosen"] in one["drafts"]
+
+
+# ── Web Push ────────────────────────────────────────────────────────────────
+
+SUB = {"endpoint": "https://push.example/abc", "keys": {"p256dh": "pk", "auth": "ak"}}
+
+
+@pytest.fixture
+def sent(monkeypatch):
+    calls = []
+    monkeypatch.setattr(api, "push_sender", lambda **kw: calls.append(kw))
+    return calls
+
+
+def test_push_key_is_stable_and_subscriptions_are_counted():
+    first = data(client.get("/api/push/key"))
+    assert len(first["public_key"]) > 60 and first["subscriptions"] == 0
+    assert data(client.get("/api/push/key"))["public_key"] == first["public_key"]
+    assert data(client.post("/api/push/subscribe", json=SUB))["subscriptions"] == 1
+    assert data(client.post("/api/push/subscribe", json=SUB))["subscriptions"] == 1  # same endpoint: replaced
+    assert data(client.post("/api/push/unsubscribe", json={"endpoint": SUB["endpoint"]}))["subscriptions"] == 0
+    error(client.post("/api/push/subscribe", json={"endpoint": "x"}), 422)
+
+
+def test_the_keys_live_outside_the_series_folder(book):
+    data(client.get("/api/push/key"))
+    assert (book.root.parent / "push.db").exists() and not list(book.root.rglob("push.db"))
+
+
+def test_a_test_notification_reaches_every_subscription(sent):
+    client.post("/api/push/subscribe", json=SUB)
+    client.post("/api/push/subscribe", json={**SUB, "endpoint": "https://push.example/def"})
+    assert data(client.post("/api/push/test"))["delivered"] == 2
+    payload = json.loads(sent[0]["data"])
+    assert payload["title"] == "Bookforge" and sent[0]["subscription_info"]["keys"] == {"p256dh": "pk", "auth": "ak"}
+    assert sent[0]["vapid_private_key"].startswith("-----BEGIN")
+
+
+def test_dead_subscriptions_are_removed(monkeypatch):
+    class Gone(Exception):
+        response = type("R", (), {"status_code": 410})()
+
+    def sender(**kw):
+        raise Gone()
+
+    monkeypatch.setattr(api, "push_sender", sender)
+    client.post("/api/push/subscribe", json=SUB)
+    assert data(client.post("/api/push/test"))["delivered"] == 0
+    assert data(client.get("/api/push/key"))["subscriptions"] == 0
+
+
+def test_a_run_that_reaches_a_checkpoint_sends_a_notification(book, sent):
+    client.post("/api/push/subscribe", json=SUB)
+    finish(data(client.post(f"{B}/run", json={"until": "prose"}), 202))
+    [call] = sent
+    p = json.loads(call["data"])
+    assert p["title"] == "Bookforge: waiting for you" and "voice" in p["body"] and p["url"] == "/bookforge/#/series/series/b1"
+
+
+def test_a_failed_job_sends_a_notification(sent, monkeypatch):
+    def boom(project):
+        raise RuntimeError("the model server is gone")
+
+    monkeypatch.setattr(api, "make_llm", boom)
+    client.post("/api/push/subscribe", json=SUB)
+    finish(data(client.post(f"{B}/run"), 202))
+    assert json.loads(sent[0]["data"])["title"] == "Bookforge: run failed" and "the model server is gone" in json.loads(sent[0]["data"])["body"]
+
+
+def test_which_jobs_notify():
+    from bookforge.jobs import Job
+    def job(kind, result=None, status="done", error=None):
+        return Job(id="1", series="s", book="b1", kind=kind, status=status, result=result, error=error)
+
+    assert api.notification_for(job("run", {"stopped": "until"})) is None
+    assert api.notification_for(job("stale-fix", {"fixes": []})) is None
+    assert api.notification_for(job("bench", {"comparison": {"ships": True}})) is None
+    assert api.notification_for(job("bench", {"comparison": {"ships": False}}))[0] == "Bookforge: benchmark loses"
+    assert api.notification_for(job("run", {"stopped": "complete", "assembled": {"path": "x"}}))[1].endswith("manuscript assembled")
+    assert api.notification_for(job("run", {"stopped": "failed", "detail": "layer 'prose' needs you"}))[0] == "Bookforge: needs you"
+    assert api.notification_for(job("run", status="failed", error="e"))[0] == "Bookforge: run failed"
