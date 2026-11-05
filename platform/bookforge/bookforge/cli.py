@@ -133,6 +133,26 @@ def approve(path: Path = PathArg, checkpoint: str = typer.Argument(..., help=f"O
 
 
 @app.command()
+def rewrite(
+    path: Path = PathArg,
+    targets: list[str] = typer.Argument(..., help="Scenes or chapters to write again, like b1.ch01.s1 or b1.ch01"),
+    book: str = BookOpt,
+    force: bool = typer.Option(False, "--force", help="Also discard text you wrote yourself"),
+) -> None:
+    """Throw away scenes (or a chapter) so the next `run` writes them again. Deleting files alone does not do this."""
+    try:
+        project = Project.open(path, book)
+        result = ops.rewrite_scenes(project, list(targets), force)
+    except BookforgeError as e:
+        _fail(e)
+    typer.echo(f"reset {len(result['reset'])} scene(s): {', '.join(result['reset']) or 'none'}")
+    if result["kept"]:
+        typer.secho(f"kept (text you wrote; use --force to discard): {', '.join(result['kept'])}", fg=typer.colors.YELLOW)
+    if result["reset"]:
+        typer.echo(f"Next: python -m bookforge run {project.root} --book {project.book}")
+
+
+@app.command()
 def stale(
     path: Path = PathArg,
     book: str = BookOpt,
