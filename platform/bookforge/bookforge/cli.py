@@ -15,6 +15,7 @@ from .layers import HANDLERS
 from .layers.runner import run as run_layers
 from .llm import build_client
 from .project import Project
+from .research.search import build_web_client
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help="Bookforge: automated book-writing pipeline.")
 
@@ -58,11 +59,12 @@ def run(
     """Run the pipeline until a checkpoint, the --until layer, or the end."""
     try:
         project = Project.open(path, book)
-        summary = run_layers(project, llm=build_client(project), handlers=HANDLERS, until=until)
+        web = build_web_client(project) if project.config.research.enabled else None
+        summary = run_layers(project, llm=build_client(project), handlers=HANDLERS, until=until, web=web)
     except BookforgeError as e:
         _fail(e)
     for layer in summary.ran:
-        typer.echo(f"accepted: {layer}")
+        typer.echo(f"accepted: {layer}" + (f" ({summary.notes[layer]})" if layer in summary.notes else ""))
     if not summary.ran:
         typer.echo("nothing ran")
     if summary.detail:

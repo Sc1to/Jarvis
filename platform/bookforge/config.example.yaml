@@ -29,8 +29,15 @@ layers:                                # model used for the refine step; review 
   prose:             {model: writer, drafts: 2, words: [1500, 3000]}
 
 research:
+  enabled: true
+  required: false                      # true: a layer fails if none of its questions could be answered
   search: playwright_web_tool          # platform/tools/web_tool.py; no direct HTTP
-  results_per_question: 5
+  results_per_question: 5              # search results considered per question
+  max_questions: 6                     # questions asked per layer
+  pages_per_question: 2                # pages read per question
+  notes_model: writer                  # reads pages and extracts facts
+  notes_max_chars: 6000                # research notes included in a prompt
+  page_max_chars: 12000                # page text given to the model
 
 book:
   target_words: 90000

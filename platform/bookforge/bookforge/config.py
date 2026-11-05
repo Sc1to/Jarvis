@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from .constants import CHECKPOINTS, LAYER_ORDER
 from .errors import ConfigError
@@ -68,8 +68,15 @@ def _default_layers() -> dict[str, LayerSettings]:
 
 
 class Research(_Strict):
+    enabled: bool = True
+    required: bool = False  # True: a layer fails if none of its research questions could be answered
     search: Literal["playwright_web_tool"] = "playwright_web_tool"
-    results_per_question: int = 5
+    results_per_question: int = Field(5, gt=0)  # search results considered per question
+    max_questions: int = Field(6, gt=0)  # questions asked per layer
+    pages_per_question: int = Field(2, gt=0)  # pages read per question
+    notes_model: Literal["writer", "critic"] = "writer"  # reads pages and extracts facts
+    notes_max_chars: int = Field(6000, gt=0)  # research notes included in a prompt
+    page_max_chars: int = Field(12000, gt=0)  # page text given to the model
 
 
 class BookSettings(_Strict):

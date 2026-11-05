@@ -37,6 +37,7 @@ class WebResult:
     kind: str  # "search" | "fetch"
     target: str  # the query or the URL
     text: str
+    links: list[dict] = field(default_factory=list)  # [{"text", "href"}] found on the page
 
 
 class WebClient(Protocol):
@@ -48,21 +49,22 @@ class WebClient(Protocol):
 class FakeWebClient:
     """Scripted pages for tests. Records every call."""
 
-    searches: dict[str, str] = field(default_factory=dict)
-    pages: dict[str, str] = field(default_factory=dict)
+    searches: dict[str, str] = field(default_factory=dict)  # query -> results page text
+    pages: dict[str, str] = field(default_factory=dict)  # url -> page text
+    links: dict[str, list[dict]] = field(default_factory=dict)  # query or url -> links on that page
     calls: list[tuple[str, str]] = field(default_factory=list)
 
     def search(self, query: str) -> WebResult:
         self.calls.append(("search", query))
         if query not in self.searches:
             raise WebError(f"no scripted search result for {query!r}")
-        return WebResult("search", query, self.searches[query])
+        return WebResult("search", query, self.searches[query], list(self.links.get(query, [])))
 
     def fetch(self, url: str) -> WebResult:
         self.calls.append(("fetch", url))
         if url not in self.pages:
             raise WebError(f"no scripted page for {url!r}")
-        return WebResult("fetch", url, self.pages[url])
+        return WebResult("fetch", url, self.pages[url], list(self.links.get(url, [])))
 
 
 def load_web_tool_class():
@@ -159,7 +161,8 @@ class PlaywrightWebClient:
             result = tool.execute(params)
             if result.success:
                 self._record(kind, target, started, attempt, chars=len(result.output))
-                return WebResult(kind, target, result.output)
+                links = (result.metadata or {}).get("links")
+                return WebResult(kind, target, result.output, links if isinstance(links, list) else [])
             error = result.error or error
             if attempt < self._attempts:
                 log.warning("web %s failed (%s); retrying", kind, error)

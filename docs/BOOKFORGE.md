@@ -536,7 +536,15 @@ Bookforge is built inside the Jarvis repository by Claude Code, one milestone at
    - If an output file already exists, bookforge checks it and adopts it instead of calling the model, so you can write a north star yourself. An existing file that fails the check is never overwritten; fix it or delete it to have it regenerated.
    - `run` stops once all three are accepted and lists the files to review. Edit them freely. `approve direction` commits everything in the series, including your edits, and tags `b1-direction-approved`.
 
-4. The research step inside the runner: questions, web-tool search, fetch, notes, `sources.jsonl`.
+4. The research step inside the runner: questions, web-tool search, fetch, notes, `sources.jsonl` (done 2026-11-05). After a layer's document is written, the step (`bookforge/research/`) works like this:
+
+   - The planner model proposes at most `research.max_questions` factual questions the document depends on, each with a short search query and a `sensitive` flag (history, medicine, real places, real people). Questions already answered, in the series or the book, are skipped; unanswered ones are retried on the next run.
+   - Each query goes through the web tool. The result links are read from the tool's `links` metadata (DuckDuckGo's redirect links are unwrapped); a results page with no usable links is reported as blocked or empty. Up to `research.pages_per_question` pages are fetched, never the same page twice.
+   - The notes model (`research.notes_model`, default the fast writer) extracts up to 3 facts per page, each with a quote. **A fact is kept only if its quote appears verbatim in the page** (case, spacing and typographic quotes ignored), so the model cannot add facts the page does not contain. Page text is given to the models as data, never as instructions.
+   - Files, per scope (`research/` for the series, `books/<book>/research/` for a book): `sources.jsonl` (one fact per line: id, claim, url, title, date fetched, quote, layer, question, sensitive), `questions.jsonl` (every question, answered or not, with the reason), and a readable `<layer>.md`. Fact ids are `s-0001` for the series and `b1-0001` for book b1; scenes will cite them.
+   - Stored facts (newest first, within `research.notes_max_chars`) are shown to later layers as reference data in the `{research_notes}` slot.
+   - Research is best-effort: a blocked search or unreadable page costs that question, and the layer's note reports it (for example `research: 1/3 questions answered, 2 facts (search … blocked or empty)`). Set `research.required: true` to make a layer fail instead when none of its questions has an answer; the document is kept and the rerun retries the research. `research.enabled: false` turns it off.
+   - The shared web tool now returns the page's links in `ToolResult.metadata["links"]`, which is how result links are found. Without it, only the page text was available.
 
 5. Layers 4–6 and the bible: constants, state tracks, timeline, state-at-a-point lookups.
 
@@ -696,7 +704,7 @@ A typical run: start it in the evening with `python -m bookforge run /opt/platfo
 
 - Language of the books (affects model choice and the banned-phrase list)
 
-- Whether web search works from the mini PC. The platform web tool's search loads a DuckDuckGo results page; from the dev sandbox it returned a block page ("If this persists, please email us") that the tool still reported as success. Milestone 14.4 must detect empty or blocked results, and may need a different search page.
+- Whether web search works from the mini PC. The platform web tool's search loads a DuckDuckGo results page; from the dev sandbox it returned a block page ("If this persists, please email us") that the tool still reported as success. The research step now reports such a page as blocked or empty instead of using it, but it has only been run against scripted search results. That DuckDuckGo result links look like `duckduckgo.com/l/?uddg=<url>` is an assumption from memory; check it on the first real run, and if search stays blocked, a different search page (or SearXNG, as an explicit exception to the Playwright-only rule) is needed.
 
 - Whether colibri answers long requests without streaming. The client waits for the whole reply (`timeout_seconds`); if colibri supports streaming, switching to it would keep slow replies from hitting the timeout.
 

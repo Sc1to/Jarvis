@@ -249,6 +249,7 @@ def test_missing_model_client_is_a_clear_failure(project):
 def cli_runner(monkeypatch):
     llm = FakeLLMClient(good_script())
     monkeypatch.setattr(cli, "build_client", lambda project: llm)
+    monkeypatch.setattr(cli, "build_web_client", lambda project: None)  # no research in these tests
     return CliRunner(), llm
 
 
@@ -290,3 +291,152 @@ def test_approving_without_step_commits_still_snapshots_and_tags(project, cli_ru
     tracked = git(project, "ls-tree", "-r", "--name-only", "HEAD").split()
     assert {"north-star.md", "books/b1/north-star.md", "books/b1/synopsis.md"} <= set(tracked)
     assert git(project, "status", "--porcelain").strip() == ""
+
+
+# ── research inside the layers ──────────────────────────────────────────────
+
+class LayerLLM:
+    """Documents for the three layers plus research answers, chosen by what is asked."""
+
+    def __new__(cls):
+        from conftest import RuleLLM
+        return RuleLLM([
+            ("Write the SERIES NORTH STAR", north_star(marker="aaa")),
+            ("Write the NORTH STAR FOR BOOK", north_star(marker="bbb")),
+            ("Write the SYNOPSIS", synopsis()),
+            ("Decide what the author needs", question_for_layer),
+            ("Source page: https://a.example/p", RESEARCH_FACTS),
+            ("Source page: https://a.example/q", RESEARCH_FACTS_2),
+        ])
+
+
+PAGE = "Cities in the 1890s kept death records in handwritten ledgers by the parish clerk."
+PAGE_2 = "A parish clerk in the 1890s was paid by the entry and worked from a desk in the vestry."
+RESEARCH_QUESTIONS_2 = ('{"questions": [{"question": "What did a parish clerk do all day?", "query": "parish clerk duties", '
+                        '"sensitive": false}]}')
+RESEARCH_FACTS_2 = ('{"facts": [{"claim": "Clerks were paid per entry.", '
+                    '"quote": "was paid by the entry and worked from a desk in the vestry"}]}')
+
+
+def question_for_layer(messages):
+    """The series layer asks one question, the book north star another, the synopsis none."""
+    text = messages[-1]["content"]
+    if "Broad background" in text:
+        return RESEARCH_QUESTIONS
+    if "specific to this book" in text:
+        return RESEARCH_QUESTIONS_2
+    return '{"questions": []}'
+
+
+RESEARCH_QUESTIONS = ('{"questions": [{"question": "Who kept death records in the 1890s?", "query": "death records 1890s", '
+                      '"sensitive": true}]}')
+RESEARCH_FACTS = ('{"facts": [{"claim": "Parish clerks kept death records by hand.", '
+                  '"quote": "kept death records in handwritten ledgers by the parish clerk"}]}')
+
+
+def research_web():
+    from urllib.parse import quote
+    from bookforge.research.search import FakeWebClient
+    def result(url):
+        return [{"text": "p", "href": "https://duckduckgo.com/l/?uddg=" + quote(url, safe="")}]
+
+    return FakeWebClient(
+        searches={"death records 1890s": "results", "parish clerk duties": "results"},
+        links={"death records 1890s": result("https://a.example/p"), "parish clerk duties": result("https://a.example/q")},
+        pages={"https://a.example/p": PAGE, "https://a.example/q": PAGE_2},
+    )
+
+
+def test_each_layer_researches_and_the_notes_reach_the_next_layers_prompt(project):
+    llm, web = LayerLLM(), research_web()
+    summary = run(project, llm, HANDLERS, web=web)
+    assert summary.ran == ["series_north_star", "book_north_star", "synopsis"]
+    assert "research: 1/1 questions answered, 1 facts" in summary.notes["series_north_star"]
+    book_prompt = llm.calls_matching("Write the NORTH STAR FOR BOOK")[0]["messages"][-1]["content"]
+    assert "[s-0001] Parish clerks kept death records by hand." in book_prompt
+    series_prompt = llm.calls_matching("Write the SERIES NORTH STAR")[0]["messages"][-1]["content"]
+    assert "[s-" not in series_prompt  # nothing was known when the first layer was written
+
+
+def test_research_files_are_committed_with_their_layer(project):
+    run(project, LayerLLM(), HANDLERS, web=research_web(), until="series_north_star")
+    tracked = subprocess.run(["git", "-C", str(project.root), "ls-tree", "-r", "--name-only", "HEAD"],
+                             capture_output=True, text=True).stdout.split()
+    assert {"research/sources.jsonl", "research/questions.jsonl", "research/series_north_star.md", "north-star.md"} <= set(tracked)
+    assert subprocess.run(["git", "-C", str(project.root), "status", "--porcelain"], capture_output=True, text=True).stdout.strip() == ""
+
+
+def test_book_layers_keep_their_notes_in_the_book(project):
+    run(project, LayerLLM(), HANDLERS, web=research_web())
+    book_facts = (project.root / "books/b1/research/sources.jsonl").read_text()
+    assert '"id": "b1-0001"' in book_facts and "Clerks were paid per entry." in book_facts
+    assert "Parish clerks kept death records" not in book_facts  # that one belongs to the series
+    assert (project.root / "books/b1/research/book_north_star.md").exists()
+    assert "Parish clerks kept death records" in (project.root / "research/sources.jsonl").read_text()
+
+
+def test_research_can_be_switched_off(project):
+    (project.root / "config.yaml").write_text("research:\n  enabled: false\n")
+    web = research_web()
+    run(Project.open(project.root), LayerLLM(), HANDLERS, web=web, until="series_north_star")
+    assert web.calls == [] and not (project.root / "research/sources.jsonl").exists()
+
+
+def test_a_blocked_search_does_not_stop_the_pipeline(project):
+    from bookforge.research.search import FakeWebClient
+    summary = run(project, LayerLLM(), HANDLERS, web=FakeWebClient(searches={"death records 1890s": "blocked"}))
+    assert summary.ran == ["series_north_star", "book_north_star", "synopsis"]
+    assert "0/1 questions answered" in summary.notes["series_north_star"] and "blocked or empty" in summary.notes["series_north_star"]
+
+
+def test_required_research_fails_the_layer_but_keeps_the_document(project):
+    from bookforge.research.search import FakeWebClient
+    (project.root / "config.yaml").write_text("research:\n  required: true\n")
+    p = Project.open(project.root)
+    summary = run(p, LayerLLM(), HANDLERS, web=FakeWebClient(), until="series_north_star")
+    assert summary.stopped == "failed" and "research is required" in summary.detail
+    assert (project.root / "north-star.md").exists()  # the document is not thrown away
+
+    again = run(Project.open(project.root), LayerLLM(), HANDLERS, web=research_web(), until="series_north_star")
+    assert again.ran == ["series_north_star"] and again.notes["series_north_star"].startswith("adopted existing file")
+
+
+def test_an_adopted_document_is_researched_too(project):
+    (project.root / "north-star.md").write_text(north_star(marker="mine"))
+    llm = LayerLLM()
+    summary = run(project, llm, HANDLERS, web=research_web(), until="series_north_star")
+    assert "adopted existing file" in summary.notes["series_north_star"] and "1/1 questions answered" in summary.notes["series_north_star"]
+    assert llm.calls_matching("Write the SERIES NORTH STAR") == []
+
+
+def test_cli_run_reports_research(project, monkeypatch):
+    runner = CliRunner()
+    monkeypatch.setattr(cli, "build_client", lambda p: LayerLLM())
+    monkeypatch.setattr(cli, "build_web_client", lambda p: research_web())
+    result = runner.invoke(cli.app, ["run", str(project.root), "--until", "series_north_star"])
+    assert result.exit_code == 0, result.output
+    assert "accepted: series_north_star (" in result.output and "research: 1/1 questions answered, 1 facts" in result.output
+
+
+def test_a_question_answered_in_the_series_is_not_asked_again_for_the_book(project):
+    llm = LayerLLM()  # this one proposes the same question whatever the layer
+    llm.rules[3] = ("Decide what the author needs", RESEARCH_QUESTIONS)
+    web = research_web()
+    summary = run(project, llm, HANDLERS, web=web, until="book_north_star")
+    assert "1/1 questions answered" in summary.notes["series_north_star"]
+    assert "no new questions" in summary.notes["book_north_star"]
+    assert [c for c in web.calls if c[0] == "search"] == [("search", "death records 1890s")]
+
+
+def test_unanswered_questions_are_retried_and_listed_once(project):
+    from bookforge.research.search import FakeWebClient
+    run(project, LayerLLM(), HANDLERS, web=FakeWebClient(), until="series_north_star")  # search fails
+    notes = (project.root / "research/series_north_star.md").read_text()
+    assert notes.count("## Who kept death records") == 1 and "No answer found" in notes
+
+    (project.root / "north-star.md").unlink()  # regenerate the layer; the question is tried again
+    p = Project.open(project.root)
+    p.state.set_layer_status("series_north_star", "pending")
+    run(p, LayerLLM(), HANDLERS, web=research_web(), until="series_north_star")
+    notes = (project.root / "research/series_north_star.md").read_text()
+    assert notes.count("## Who kept death records") == 1 and "[s-0001]" in notes and "No answer found" not in notes

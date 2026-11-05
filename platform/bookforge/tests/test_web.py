@@ -176,3 +176,14 @@ def test_fake_web_client():
     assert f.calls == [("search", "q"), ("fetch", "https://a.example")]
     with pytest.raises(BookforgeError):
         f.fetch("https://unknown.example")
+
+
+def test_links_from_the_tool_are_passed_on(tmp_path):
+    tool = FakeTool(ToolResult(success=True, output="page", metadata={"links": [{"text": "a", "href": "https://x.example/"}]}))
+    assert make(tool, tmp_path).fetch("https://example.com").links == [{"text": "a", "href": "https://x.example/"}]
+
+
+def test_missing_or_malformed_links_become_an_empty_list(tmp_path):
+    tool = FakeTool(good("p"), ToolResult(success=True, output="p", metadata={"links": "oops"}))
+    c = make(tool, tmp_path)
+    assert c.fetch("https://example.com").links == [] and c.fetch("https://example.com").links == []

@@ -491,6 +491,8 @@ repo = g.get_repo("username/repo-name")
 
 ## PLAYWRIGHT
 
+**Platform web tool (`platform/tools/web_tool.py`):** `search` and `fetch_page` return the page text; since 2026-11-05 they also return the page's links as `ToolResult.metadata["links"]` (`[{text, href}]`, at most 300). `search` still returns the raw results page, not parsed results.
+
 **Version:** Latest stable
 **Purpose:** Sandboxed read-only web access for agents
 

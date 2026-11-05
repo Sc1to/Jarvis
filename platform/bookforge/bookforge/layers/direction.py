@@ -65,6 +65,7 @@ SERIES_NORTH_STAR = DocumentSpec(
     layer="series_north_star", prompt="series_north_star", out_path="north-star.md",
     validate=validate_north_star, max_tokens=1500, strip_preamble=True,
     slots=lambda ctx: {"premise": _read(ctx, "premise.md")},
+    research_scope="series", research_focus="Broad background for the whole series: the genre, the era, and the world it is set in.",
 )
 
 BOOK_NORTH_STAR = DocumentSpec(
@@ -75,6 +76,7 @@ BOOK_NORTH_STAR = DocumentSpec(
         "series_north_star": _read(ctx, "north-star.md"),
         "ledger": _ledger_text(ctx),
     },
+    research_scope="book", research_focus="What is specific to this book: its setting, events, professions, objects and customs.",
 )
 
 SYNOPSIS = DocumentSpec(
@@ -84,6 +86,7 @@ SYNOPSIS = DocumentSpec(
         "series_north_star": _read(ctx, "north-star.md"),
         "book_north_star": _read(ctx, f"books/{ctx.project.book}/north-star.md"),
     },
+    research_scope="book", research_focus="Gaps the synopsis reveals: real-world facts the plot depends on that the author has not yet checked.",
 )
 
 

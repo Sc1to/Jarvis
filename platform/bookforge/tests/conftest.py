@@ -47,3 +47,26 @@ def all_handlers() -> dict:
         "scenes": file_handler("books/b1/scenes.yaml"),
         "prose": file_handler("books/b1/scenes/ch01.md"),
     }
+
+
+class RuleLLM:
+    """A fake model that answers by what it is asked, for steps whose call order is awkward to script.
+
+    `rules` is a list of (marker, reply) pairs; the first rule whose marker appears in the last user
+    message wins. A reply may be a string or a function of the messages. Records every call.
+    """
+
+    def __init__(self, rules):
+        self.rules = list(rules)
+        self.calls = []
+
+    def complete(self, role, messages, **options):
+        self.calls.append({"role": role, "messages": [dict(m) for m in messages], "options": options})
+        last = messages[-1]["content"]
+        for marker, reply in self.rules:
+            if marker in last:
+                return reply(messages) if callable(reply) else reply
+        raise AssertionError(f"no rule matches this prompt: {last[:120]!r}")
+
+    def calls_matching(self, marker):
+        return [c for c in self.calls if marker in c["messages"][-1]["content"]]

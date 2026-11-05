@@ -14,6 +14,7 @@ from ..constants import CHECKPOINT_REVIEW_FILES, LAYER_ORDER
 from ..errors import BookforgeError
 from ..llm import LLMClient
 from ..project import Project
+from ..research.search import WebClient
 
 log = logging.getLogger("platform_bookforge.runner")
 
@@ -23,6 +24,7 @@ class StepContext:
     project: Project
     layer: str
     llm: LLMClient | None
+    web: WebClient | None = None  # None: research is skipped
 
 
 @dataclass
@@ -37,6 +39,7 @@ Handler = Callable[[StepContext], StepResult]
 @dataclass
 class RunSummary:
     ran: list[str] = field(default_factory=list)
+    notes: dict[str, str] = field(default_factory=dict)  # layer -> what the handler reported
     stopped: str = "complete"  # complete | until | checkpoint | not_implemented | failed
     detail: str = ""
 
@@ -64,7 +67,10 @@ def _update_checkpoints(project: Project) -> None:
             project.state.reach_checkpoint(cp)
 
 
-def run(project: Project, llm: LLMClient | None, handlers: dict[str, Handler], until: str | None = None) -> RunSummary:
+def run(
+    project: Project, llm: LLMClient | None, handlers: dict[str, Handler],
+    until: str | None = None, web: WebClient | None = None,
+) -> RunSummary:
     if until is not None and until not in LAYER_ORDER:
         raise BookforgeError(f"unknown layer '{until}' (expected one of: {', '.join(LAYER_ORDER)})")
     order = LAYER_ORDER if until is None else LAYER_ORDER[: LAYER_ORDER.index(until) + 1]
@@ -87,7 +93,7 @@ def run(project: Project, llm: LLMClient | None, handlers: dict[str, Handler], u
             return summary
 
         try:
-            result = handler(StepContext(project=project, layer=layer, llm=llm))
+            result = handler(StepContext(project=project, layer=layer, llm=llm, web=web))
             files = [str(project.resolve(f).relative_to(project.root.resolve())) for f in result.files]
         except Exception as e:  # a failed layer is flagged, never a crash mid-run
             log.exception("layer %s failed", layer)
@@ -101,6 +107,8 @@ def run(project: Project, llm: LLMClient | None, handlers: dict[str, Handler], u
         _update_checkpoints(project)
         project.save_state()
         summary.ran.append(layer)
+        if result.note:
+            summary.notes[layer] = result.note
 
         if project.config.git.commit_each_step:
             state_rel = str(project.state_path.relative_to(project.root))
