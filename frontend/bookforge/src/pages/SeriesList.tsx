@@ -1,13 +1,15 @@
 import { useState } from 'react'
-import { post } from '../lib/api'
+import { api, post } from '../lib/api'
 import { useAction, useApi } from '../lib/hooks'
 import { href } from '../lib/route'
-import type { SeriesInfo } from '../lib/types'
-import { Button, Card, Empty, ErrorBanner, Loading } from '../components/ui'
+import type { SeriesInfo, TrashItem } from '../lib/types'
+import { Button, Card, Empty, ErrorBanner, Loading, fmtTime } from '../components/ui'
 
 export default function SeriesList() {
   const list = useApi<SeriesInfo[]>('/series', 10000)
   const create = useAction()
+  const trash = useApi<TrashItem[]>('/trash')
+  const del = useAction()
   const [name, setName] = useState('')
   const [premise, setPremise] = useState('')
   const [open, setOpen] = useState(false)
@@ -17,8 +19,18 @@ export default function SeriesList() {
     if (ok) { window.location.hash = href({ series: name.trim(), book: 'b1' }); setOpen(false); setName(''); setPremise('') }
   }
 
+  const remove = async (name: string) => {
+    if (window.confirm(`Move the series "${name}" to the trash? You can restore it from the Trash list on this page.`)
+      && (await del.run(() => api(`/series/${encodeURIComponent(name)}`, { method: 'DELETE' })))) { list.reload(); trash.reload() }
+  }
+  const restore = async (name: string) => { if (await del.run(() => post(`/trash/${encodeURIComponent(name)}/restore`))) { list.reload(); trash.reload() } }
+  const emptyTrash = async () => {
+    if (window.confirm('Permanently delete everything in the trash? This cannot be undone.') && (await del.run(() => post('/trash/empty')))) trash.reload()
+  }
+
   return (
     <div className="space-y-3">
+      <ErrorBanner message={del.error} onClose={del.clear} />
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold">Series</h1>
         <Button onClick={() => setOpen(!open)}>{open ? 'Cancel' : 'New series'}</Button>
@@ -51,14 +63,31 @@ export default function SeriesList() {
               <span className="font-medium">{s.name}</span>
               {s.busy && <span className="rounded-full bg-sky-100 px-2 py-0.5 text-xs text-sky-800">{s.busy.kind} running</span>}
             </div>
-            <div className="mt-2 flex flex-wrap gap-2">
+            <div className="mt-2 flex flex-wrap items-center gap-2">
               {s.books.map((b) => (
-                <a key={b} href={href({ series: s.name, book: b })} className="rounded-md border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50">{b}</a>
+                <a key={b} href={href({ series: s.name, book: b })} className="inline-flex min-h-10 items-center rounded-md border border-slate-300 px-3 text-sm hover:bg-slate-50">{b}</a>
               ))}
+              {!s.books.length && <span className="text-xs text-slate-500">no books</span>}
+              <span className="ml-auto"><Button kind="danger" disabled={del.busy || !!s.busy} onClick={() => remove(s.name)} title={s.busy ? 'A job is running on this series' : 'Move to the trash'}>Delete</Button></span>
             </div>
           </li>
         ))}
       </ul>
+      {trash.data && trash.data.length > 0 && (
+        <Card title={`Trash (${trash.data.length})`} right={<Button kind="danger" disabled={del.busy} onClick={emptyTrash}>Empty trash</Button>}>
+          <ul className="divide-y divide-slate-100">
+            {trash.data.map((t) => (
+              <li key={t.name} className="flex items-center justify-between gap-2 py-2">
+                <span className="min-w-0 text-sm">
+                  <span className="block truncate font-medium">{t.series}</span>
+                  <span className="block text-xs text-slate-500">{t.books.length ? t.books.join(', ') : 'no books'} · deleted {fmtTime(t.deleted)}</span>
+                </span>
+                <Button disabled={del.busy} onClick={() => restore(t.name)}>Restore</Button>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
     </div>
   )
 }

@@ -6,6 +6,9 @@ Everything lives under /api (Caddy strips /bookforge). Responses use the platfor
     GET  /api/doctor                                  environment, model endpoints, web tool
     GET  /api/series                                  the series on disk
     POST /api/series                                  create one (name, premise, book)
+    DELETE /api/series/{s}                            move a series to the trash (restorable)
+    DELETE /api/series/{s}/books/{b}                  delete a book and its entries in the shared bible files
+    GET /api/trash, POST /api/trash/{name}/restore, POST /api/trash/empty
     GET  /api/series/{s}/books/{b}/status             layers, checkpoints, scene counts, the running job
     GET  /api/series/{s}/books/{b}/scenes[/{id}]      scene list; one scene with plan, text, review
     GET  /api/series/{s}/books/{b}/documents[/{key}]  the files you review (north stars, synopsis, plans, bible, style), read-only
@@ -42,7 +45,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from . import documents, push, assemble as assembly, export as exporting, bench as benchmarks, changes as change_requests, ops, report as morning_report, scenefiles, stale as staleness
+from . import deletion, documents, push, assemble as assembly, export as exporting, bench as benchmarks, changes as change_requests, ops, report as morning_report, scenefiles, stale as staleness
 from .bible import store
 from .constants import CHECKPOINTS, LAYER_ORDER
 from .doctor import run_doctor
@@ -216,7 +219,34 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
         project = Project.create(root, body.premise, body.book)
         return ok({"name": body.name, "book": project.book})
 
+    @router.delete("/series/{series}")
+    def delete_series(series: str):
+        series_root(series)
+        require_idle(series)
+        dest = deletion.trash_series(Path(get_data_dir()), series)
+        return ok({"series": series, "trash": dest.name})
+
+    @router.get("/trash")
+    def trash_list():
+        return ok(deletion.list_trash(Path(get_data_dir())))
+
+    @router.post("/trash/empty")
+    def trash_empty():
+        return ok({"removed": deletion.empty_trash(Path(get_data_dir()))})
+
+    @router.post("/trash/{name}/restore")
+    def trash_restore(name: str):
+        if not SAFE_NAME.match(name):
+            raise HTTPException(404, "nothing in the trash with that name")
+        return ok({"series": deletion.restore(Path(get_data_dir()), name)})
+
     # ── a book ───────────────────────────────────────────────────────────────
+
+    @router.delete("/series/{series}/books/{book}")
+    def delete_book(series: str, book: str):
+        open_project(series, book)
+        require_idle(series)
+        return ok(deletion.delete_book(series_root(series), book))
 
     @router.get("/series/{series}/books/{book}/status")
     def book_status(series: str, book: str):
