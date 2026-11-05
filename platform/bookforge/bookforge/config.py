@@ -30,6 +30,9 @@ class ModelEndpoint(_Strict):
     temperature: float | list[float] = 0.2
     manage_service: str | None = None
     timeout_seconds: float = 600  # max wait for one reply; the big model can be very slow
+    # Start every request with a unique first line. Ollama was seen to carry leftover state from the previous request
+    # into the next when both began with the same words (answers about the wrong task). Costs speed on long prompts.
+    isolate_requests: bool = True
 
 
 class DecideEndpoint(_Strict):

@@ -1,4 +1,5 @@
 import json
+import re
 
 import httpx
 import pytest
@@ -17,6 +18,13 @@ def config(**model_overrides) -> Config:
     for k, v in model_overrides.items():
         setattr(cfg.models.writer, k, v)
     return cfg
+
+
+def isolated(original, sent):
+    """What the server should receive: the original messages with 'Request <id>.' put before the system message."""
+    tag, _, rest = sent[0]["content"].partition("\n\n")
+    assert re.fullmatch(r"Request [0-9a-f]{12}\.", tag), tag
+    return [{**original[0], "content": f"{tag}\n\n{original[0]['content']}"}] + [dict(m) for m in original[1:]]
 
 
 def ok(text="A reply.", finish="stop", usage=None):
@@ -50,7 +58,7 @@ def test_request_shape_and_reply(tmp_path):
     assert c.complete("critic", MSGS) == "Hello."
     url, body = seen[0]
     assert url == "http://127.0.0.1:8041/v1/chat/completions"
-    assert body == {"model": "glm-test", "messages": MSGS, "stream": False, "temperature": 0.2}
+    assert body == {"model": "glm-test", "messages": isolated(MSGS, body["messages"]), "stream": False, "temperature": 0.2}
 
 
 def test_writer_goes_to_the_writer_port(tmp_path):
@@ -196,3 +204,64 @@ def test_a_broken_call_log_never_fails_the_call(tmp_path):
 def test_build_client_logs_inside_the_book(project):
     c = build_client(project)
     assert c._log.path == project.book_dir / "logs" / "calls.jsonl"
+
+
+# ── request isolation ───────────────────────────────────────────────────────
+
+def sent_bodies(tmp_path, endpoint_changes=None, calls=2, messages=MSGS, **kw):
+    bodies = []
+    cfg = config()
+    for k, v in (endpoint_changes or {}).items():
+        setattr(cfg.models.critic, k, v)
+    c = HttpLLMClient(cfg, CallLog(tmp_path / "calls.jsonl"), sleep=lambda s: None, **kw,
+                      transport=httpx.MockTransport(lambda req: (bodies.append(json.loads(req.content)), ok())[1]))
+    for _ in range(calls):
+        c.complete("critic", messages)
+    return bodies
+
+
+def test_every_request_starts_with_its_own_unique_line(tmp_path):
+    a, b = sent_bodies(tmp_path)
+    tag_a, tag_b = (x["messages"][0]["content"].split("\n\n")[0] for x in (a, b))
+    assert re.fullmatch(r"Request [0-9a-f]{12}\.", tag_a) and tag_a != tag_b
+    assert a["messages"][0]["content"].split("\n\n", 1)[1] == MSGS[0]["content"] == b["messages"][0]["content"].split("\n\n", 1)[1]
+    assert a["messages"][1:] == MSGS[1:]  # only the system message is touched
+
+
+def test_a_request_without_a_system_message_gets_one(tmp_path):
+    [body] = sent_bodies(tmp_path, calls=1, messages=[{"role": "user", "content": "Hello"}])
+    assert [m["role"] for m in body["messages"]] == ["system", "user"]
+    assert re.fullmatch(r"Request [0-9a-f]{12}\.", body["messages"][0]["content"]) and body["messages"][1]["content"] == "Hello"
+
+
+def test_isolation_can_be_switched_off(tmp_path):
+    bodies = sent_bodies(tmp_path, {"isolate_requests": False})
+    assert all(b["messages"] == MSGS for b in bodies)
+
+
+def test_the_caller_s_messages_are_not_changed(tmp_path):
+    original = [dict(m) for m in MSGS]
+    sent_bodies(tmp_path, calls=1, messages=original)
+    assert original == MSGS
+
+
+def test_the_call_log_keeps_the_original_messages_without_the_line(tmp_path):
+    sent_bodies(tmp_path, calls=1)
+    assert records(tmp_path)[0]["messages"] == MSGS
+
+
+def test_retries_of_one_call_send_the_same_line(tmp_path):
+    tags, answers = [], iter([httpx.Response(503), httpx.Response(503), ok("fine")])
+
+    def handler(req):
+        tags.append(json.loads(req.content)["messages"][0]["content"].split("\n\n")[0])
+        return next(answers)
+
+    c = HttpLLMClient(config(), CallLog(tmp_path / "calls.jsonl"), transport=httpx.MockTransport(handler), sleep=lambda s: None)
+    assert c.complete("critic", MSGS) == "fine"
+    assert len(tags) == 3 and len(set(tags)) == 1
+
+
+def test_isolation_is_on_by_default():
+    from bookforge.config import Config
+    assert Config().models.writer.isolate_requests and Config().models.critic.isolate_requests

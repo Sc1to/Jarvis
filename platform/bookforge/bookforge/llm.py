@@ -8,6 +8,7 @@ books/<book>/logs/calls.jsonl.
 
 import logging
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Callable, Protocol, Sequence
 
@@ -56,6 +57,22 @@ class FakeLLMClient:
         return reply(messages) if callable(reply) else reply
 
 
+def _isolated(messages: list[dict]) -> list[dict]:
+    """The messages with a unique first line in the system message.
+
+    Found on the first real run: with Ollama, a request that began with the same words as the previous one (the
+    shared system prompt) was answered as if it were that previous request: JSON about the wrong topic, in the
+    wrong format. A unique start means there is nothing for the server to reuse. The log keeps the original messages.
+    """
+    tag = f"Request {uuid.uuid4().hex[:12]}."
+    out = [dict(m) for m in messages]
+    if out[0]["role"] == "system":
+        out[0]["content"] = f"{tag}\n\n{out[0]['content']}"
+    else:
+        out.insert(0, {"role": "system", "content": tag})
+    return out
+
+
 class LLMError(BookforgeError):
     """A model call failed for good (after retries, or not worth retrying)."""
 
@@ -100,7 +117,7 @@ class HttpLLMClient:
         if not msgs or any("role" not in m or "content" not in m for m in msgs):
             raise LLMError("messages must be a non-empty list of {role, content}")
 
-        body = {"model": endpoint.model, "messages": msgs, "stream": False}
+        body = {"model": endpoint.model, "messages": _isolated(msgs) if endpoint.isolate_requests else msgs, "stream": False}
         body["temperature"] = self._temperature(endpoint, options)
         for key in ("max_tokens", "top_p", "stop", "seed"):
             if key in options:
