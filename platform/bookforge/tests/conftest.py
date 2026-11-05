@@ -22,7 +22,9 @@ def isolated_env(tmp_path, monkeypatch):
 
 @pytest.fixture
 def project(tmp_path) -> Project:
-    return Project.create(tmp_path / "series", "A clerk finds a ledger that predicts deaths.\n")
+    project = Project.create(tmp_path / "series", "A clerk finds a ledger that predicts deaths.\n")
+    project.config.research.model_pick = False  # tests that exercise the model's pick turn it on
+    return project
 
 
 def file_handler(rel_path: str, text: str = "content\n"):

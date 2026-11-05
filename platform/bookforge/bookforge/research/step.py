@@ -210,6 +210,35 @@ def rank_hits(hits: list[Hit], question: str, setting: str) -> list[tuple[Hit, i
     return [(h, score) for _, _, h, score in scored]
 
 
+def pick_hits(ctx, question: str, setting: str, hits: list[Hit], count: int) -> list[Hit] | None:
+    """The results a model would read, best first, judged from titles and excerpts. None if it cannot be asked or answers badly.
+
+    Counting words is a poor judge: the word "English" appears on pages about other countries, and a page about Ellis Island
+    outranked the one about an English customs house. A model sees at once that the result is about the wrong place.
+    """
+    cfg = ctx.project.config
+    listing = "\n".join(f"{n}. {h.title or '(no title)'} ({urlparse(h.url).hostname}) {h.snippet}".rstrip() for n, h in enumerate(hits, 1))
+    try:
+        reply = ctx.llm.complete(
+            cfg.research.notes_model,
+            [{"role": "system", "content": render("research_system", ctx.project.root)},
+             {"role": "user", "content": render("research_pick", ctx.project.root, question=question,
+                                                setting=setting or "not stated: use the story's own time and place",
+                                                results=listing, count=str(count))}],
+            max_tokens=200,
+        )
+    except BookforgeError as e:
+        log.warning("%s: could not ask which results to read (%s); using word matching", ctx.layer, e)
+        return None
+    data = parse_json_object(reply) or {}
+    wanted = data.get("read") if isinstance(data.get("read"), list) else []
+    chosen: list[Hit] = []
+    for n in wanted:
+        if isinstance(n, int) and not isinstance(n, bool) and 1 <= n <= len(hits) and hits[n - 1] not in chosen:
+            chosen.append(hits[n - 1])
+    return chosen or None
+
+
 def skipped(url: str, skip_domains: list[str]) -> bool:
     host = (urlparse(url).hostname or "").lower()
     return any(host == d or host.endswith("." + d) for d in skip_domains)
@@ -294,6 +323,7 @@ class Attempt:
     hits: list[Hit] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)  # results not read (skipped site, or already read)
     order: list[tuple[Hit, int]] = field(default_factory=list)  # the results in the order they are read, with their rank score
+    picked: int = 0  # how many of the first results in `order` a model chose (the rest are in word-match order)
     pages: list[PageTrace] = field(default_factory=list)
     facts: list[tuple[Hit, dict]] = field(default_factory=list)
     reason: str = ""
@@ -319,6 +349,11 @@ def answer_question(ctx, web, q: Question, document: str, seen_urls: set[str]) -
         ranked.sort(key=lambda x: _list_like(x[0]))  # list articles last: they are broad and rarely answer a question
         by_url = {h.url: score for h, score in ranked}
         usable = diversify([h for h, _ in ranked])
+        if cfg.model_pick and len(usable) > 1 and ctx.llm is not None:
+            picked = pick_hits(ctx, q.question, q.context, usable, cfg.pages_per_question + 2)
+            if picked:
+                attempt.picked = len(picked)
+                usable = picked + [h for h in usable if h not in picked]  # the rest stay as fallbacks, in word-match order
         attempt.order = [(h, by_url[h.url]) for h in usable]
         if not usable:
             attempt.reason = "every result was already read or from a skipped site"

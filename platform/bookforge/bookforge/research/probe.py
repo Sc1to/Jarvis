@@ -22,7 +22,8 @@ def describe(attempt: Attempt, q: Question, source: str) -> list[str]:
         lines.append(f"  (not read: {s})")
     if attempt.order:
         lines.append("")
-        lines.append("reading order (rank = question words and era words found in the title and excerpt):")
+        chosen = f"the first {attempt.picked} chosen by the model from titles and excerpts, the rest" if attempt.picked else "all"
+        lines.append(f"reading order ({chosen} by word match; rank = question, era and place words found in the title and excerpt):")
         for h, score in attempt.order:
             lines.append(f"  rank {score}  {h.title or h.url}")
     lines.append("")
