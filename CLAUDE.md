@@ -60,7 +60,8 @@ Last completed:    Phase 13.19 — Paper trading validation tooling; Phase DEV �
                    Phase 14.6 (2026-11-05) — bookforge briefing builder (token budget, trimming order), deps.yaml content fingerprints, prose layer (drafts, best-of by mechanical score, summaries, voice checkpoint after chapter 1), mechanical checker, `briefing` and `check` commands, starter banned list; 432 tests; no model critic yet (14.7), prompts not yet run against a real model
                    Phase 14.7 (2026-11-05) — bookforge quality control: pairwise judge, continuity questions (planner model stands in for System One), rubric critic, passage-level revision loop, extraction of observed states + gaps, critic review of layers 4-6 (unresolved notes in reports/review-notes.jsonl), `review` command; model-based layers each switchable under qc:; prompts not yet run against a real model
                    Phase 14 first mini-PC run (2026-11-05) — tests pass on the MS-S1 (Python 3.14); doctor, series north star and research questions ran against Ollama (llama3.3); search engines block the web tool, so research now defaults to Wikipedia's API (research.source), doctor probes search and accepts Ollama's implicit :latest; the rest of the first book not yet reviewed; Ollama answered some requests as if they were the previous one (same opening words) — every request now starts with a unique line (`isolate_requests`, default on); research facts must now fit the story's setting (per-question `setting`, relevance check `research.check_relevance`, list articles read last)
-Currently working: Phase 13.20 — Live trading activation (manual user decision); Phase 14 — Bookforge (14.0–14.7 done; 14.8 next)
+                   Phase 14.8 (2026-11-05) — bookforge staleness + change requests: `stale` scans deps.yaml fingerprints (and a plan snapshot taken at structure approval), `stale --fix` re-checks, patches or redrafts scene by scene (hand-written text never rewritten), `stale --accept`; extraction gaps filed as change requests (`changes` list/--approve/--reject; within-chapter ones auto-applied per qc.critic_may_accept); 594 tests; not yet run against a real model
+Currently working: Phase 13.20 — Live trading activation (manual user decision); Phase 14 — Bookforge (14.0–14.8 done; 14.9 next)
 Blocked on:        Infra phases (1, 2) are hardware setup; 3-6 months paper trading runtime
 Remaining:         Phase 13.20 (manual user decision)
 ```
@@ -80,7 +81,7 @@ Remaining:         Phase 13.20 (manual user decision)
 - [x] Phase 12 — Documentation
 - [x] Phase DEV — Dev tooling (Docker, deployment scripts, test suite)
 - [ ] Phase 13  — Trading system (13.1–13.19 complete; 13.20 is manual user decision)
-- [ ] Phase 14  — Bookforge (14.0-14.7 done: shell, skeleton, llm + doctor, layers 1-3, research, layers 4-6 + bible, briefing + prose + mechanical checks, critic/continuity/judge/revision/extraction; 14.8 staleness + change requests next)
+- [ ] Phase 14  — Bookforge (14.0-14.8 done: shell, skeleton, llm + doctor, layers 1-3, research, layers 4-6 + bible, briefing + prose + mechanical checks, critic/continuity/judge/revision/extraction, staleness + change requests; 14.9 morning report, assembly, benchmarks next)
 
 ---
 

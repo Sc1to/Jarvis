@@ -7,7 +7,7 @@ from typing import Optional
 
 import typer
 
-from . import vcs
+from . import changes as change_requests, stale as staleness, vcs
 from .constants import CHECKPOINTS, LAYER_ORDER
 from . import scenefiles
 from .bible import store as bible_store
@@ -18,7 +18,7 @@ from .doctor import run_doctor
 from .errors import BookforgeError
 from .layers import HANDLERS
 from .layers.prose import check_context
-from .layers.runner import run as run_layers
+from .layers.runner import StepContext, run as run_layers
 from .llm import build_client
 from .project import Project
 from .qc.mechanical import check_scene
@@ -121,6 +121,8 @@ def approve(path: Path = PathArg, checkpoint: str = typer.Argument(..., help=f"O
         project = Project.open(path, book)
         project.state.approve_checkpoint(checkpoint)
         project.save_state()
+        if checkpoint == "structure":
+            staleness.record_plan(project)  # from now on, a changed act or chapter makes what was planned from it stale
         message = f"{project.book}: {checkpoint} approved"
         # Commit everything: the approved version includes any edits you made while reviewing.
         if project.config.git.commit_each_step or project.config.git.tag_checkpoints:
@@ -130,6 +132,83 @@ def approve(path: Path = PathArg, checkpoint: str = typer.Argument(..., help=f"O
     except BookforgeError as e:
         _fail(e)
     typer.echo(f"Approved '{checkpoint}'.")
+
+
+@app.command()
+def stale(
+    path: Path = PathArg,
+    book: str = BookOpt,
+    fix: bool = typer.Option(False, "--fix", help="Bring stale scenes up to date: re-check, then patch, then redraft"),
+    accept: Optional[list[str]] = typer.Option(None, "--accept", help="Say a scene or planned chapter is fine as it is (repeatable)"),
+    only: Optional[list[str]] = typer.Option(None, "--only", help="With --fix: only this scene (repeatable)"),
+) -> None:
+    """List everything that is out of date and why; with --fix, bring written scenes up to date."""
+    try:
+        project = Project.open(path, book)
+        scene_ids = {s.id for s in bible_store.load_scenes(project)} if bible_store.scenes_path(project).exists() else set()
+        for target in accept or []:
+            if target in scene_ids:
+                staleness.accept_as_is(project, target)
+            elif target in {c.id for c in bible_store.load_chapters(project)} | scene_ids:
+                staleness.record_plan(project, {target})
+            else:
+                raise BookforgeError(f"'{target}' is not a scene or chapter of this book")
+        if fix:
+            llm = build_client(project)
+            for r in staleness.fix_all(StepContext(project=project, layer="prose", llm=llm), set(only) if only else None):
+                typer.echo(f"{r.scene}: {r.action}" + (f" ({r.note})" if r.note else ""))
+        report = staleness.scan(project)
+        staleness.sync_status(project, report)
+        if project.config.git.commit_each_step:
+            keep = [project.state_path, staleness.plan_deps_path(project)]
+            vcs.commit(project.root, f"{project.book}: stale scan", [str(f.relative_to(project.root)) for f in keep if f.exists()])
+    except BookforgeError as e:
+        _fail(e)
+    if report.empty and not report.problems:
+        typer.echo("nothing is out of date")
+        return
+    for st in report.scenes:
+        typer.echo(f"{st.scene}: stale, start with {st.level}")
+        for line in st.why():
+            typer.echo(f"    {line}")
+    for p in report.plan:
+        typer.echo(f"{p.id}: plan out of date ({p.reason}); review it, then `stale --accept {p.id}`")
+    for line in report.problems:
+        typer.echo(f"could not check {line}")
+    raise typer.Exit(1)
+
+
+@app.command("changes")
+def changes_cmd(
+    path: Path = PathArg,
+    book: str = BookOpt,
+    approve_id: Optional[str] = typer.Option(None, "--approve", help="Apply this change request to the plan"),
+    reject_id: Optional[str] = typer.Option(None, "--reject", help="Keep the plan: the scene's prose will be patched to agree with it"),
+) -> None:
+    """List change requests (the prose says something the plan does not); approve or reject one."""
+    try:
+        project = Project.open(path, book)
+        decided = None
+        if approve_id:
+            decided = change_requests.approve(project, approve_id)
+        elif reject_id:
+            decided = change_requests.reject(project, reject_id)
+        if decided and project.config.git.commit_each_step:
+            vcs.commit(project.root, f"{project.book}: change request {decided.id} {decided.status}")
+        requests = change_requests.list_requests(project)
+    except BookforgeError as e:
+        _fail(e)
+    if decided:
+        typer.echo(f"{decided.id}: {decided.status}")
+        if decided.status == "applied":
+            typer.echo(f"{len(decided.affects)} scene(s) depend on it; run `stale --fix` to bring them up to date")
+        else:
+            typer.echo(f"the plan stands; run `stale --fix` to patch {decided.proposed_by} to agree with it")
+    if not requests:
+        typer.echo("no change requests")
+    for c in requests:
+        typer.echo(f"{c.id} [{c.status}{', ' + c.decided_by if c.decided_by else ''}] {c.proposed_by}, {c.entity or c.track}: "
+                   f"plan '{c.planned}' -> prose '{c.observed}' ({len(c.affects)} scene(s), {c.scope})")
 
 
 @app.command("state-at")

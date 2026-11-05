@@ -105,7 +105,7 @@ class QC(_Strict):
     critic_min_score: int = 3
     max_revision_rounds: int = 2
     banned_phrases: str = "style/banned.txt"
-    critic_may_accept: str = "within_chapter"
+    critic_may_accept: Literal["within_chapter", "never"] = "within_chapter"  # change requests applied without you
     dialogue_ratio: tuple[float, float] = (0.05, 0.75)  # share of words inside quotes; outside it is a warning
     sentence_variation_min: float = 0.45  # stdev / mean of sentence length; below it the rhythm is flagged as monotone
     overused_word_percent: float = 1.0  # a content word above this share of the scene is flagged (names excluded)
