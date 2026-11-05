@@ -62,7 +62,8 @@ def test_status_on_a_folder_that_is_not_a_series(tmp_path):
     assert result.exit_code == 1 and "no book 'b1'" in result.output
 
 
-def test_run_with_nothing_implemented_exits_2(project):
+def test_run_with_nothing_implemented_exits_2(project, monkeypatch):
+    monkeypatch.setattr("bookforge.cli.HANDLERS", {})
     result = runner.invoke(app, ["run", str(project.root)])
     assert result.exit_code == 2
     assert "nothing ran" in result.output and "no implementation yet" in result.output

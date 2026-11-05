@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from .. import vcs
-from ..constants import LAYER_ORDER
+from ..constants import CHECKPOINT_REVIEW_FILES, LAYER_ORDER
 from ..errors import BookforgeError
 from ..llm import LLMClient
 from ..project import Project
@@ -113,7 +113,11 @@ def run(project: Project, llm: LLMClient | None, handlers: dict[str, Handler], u
         ]
         if reached:
             summary.stopped = "checkpoint"
+            review = [f.format(book=project.book) for f in CHECKPOINT_REVIEW_FILES.get(reached[0], ())]
+            review = [f for f in review if (project.root / f).exists()]
             summary.detail = f"reached the '{reached[0]}' checkpoint; review, then run `approve {reached[0]}`"
+            if review:
+                summary.detail += "\nReview (edit freely; your edits are kept): " + ", ".join(review)
             return summary
 
     return summary

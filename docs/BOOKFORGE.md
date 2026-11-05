@@ -478,6 +478,7 @@ book:
   target_words: 90000
   pov: third-limited
   tense: past
+  language: English                # language of the book; section headings stay in English
 
 briefing:
   max_tokens: 16000
@@ -495,7 +496,7 @@ git:
   tag_checkpoints: true
 ```
 
-Layers tagged with the same `checkpoint` form a group: the pipeline stops once every layer in the group is accepted, and later layers wait until you run `approve`. The checkpoint table says Structure comes "after layers 4–6", so `scenes` carries `structure` too (the original config tagged only acts and chapters). The `voice` and `final` checkpoints are not tied to a layer; they are reached by the prose and assembly steps.
+A layer may also set `temperature` to override its model's own (for example `synopsis: {model: critic, temperature: 0.7}`). Layers tagged with the same `checkpoint` form a group: the pipeline stops once every layer in the group is accepted, and later layers wait until you run `approve`. The checkpoint table says Structure comes "after layers 4–6", so `scenes` carries `structure` too (the original config tagged only acts and chapters). The `voice` and `final` checkpoints are not tied to a layer; they are reached by the prose and assembly steps.
 
 Config is merged in this order: built-in defaults, the host `config.yaml` (`BOOKFORGE_CONFIG`, or `platform/bookforge/config.yaml`), then `<series>/config.yaml`. Unknown keys are errors. `platform/bookforge/config.example.yaml` lists every default.
 
@@ -528,7 +529,12 @@ Bookforge is built inside the Jarvis repository by Claude Code, one milestone at
 
 2. `llm.py` and `doctor` (done 2026-11-05): real OpenAI-compatible client for both colibri endpoints (3 attempts with 2 s / 4 s backoff on connection errors, timeouts, 408/429/5xx; a reply cut off by the token limit is an error, never silent text), a web wrapper over the Playwright tool (`bookforge/research/search.py`: http/https only, no private or loopback hosts, query encoding, retries), and a call log at `books/<book>/logs/calls.jsonl` with full prompts and replies (gitignored). `doctor` now checks both endpoints, System One and the web tool, including one real page fetch; `doctor --offline` skips the network checks. The `manage_service` start/stop of the critic is not wired up yet.
 
-3. The layer runner with layers 1–3 (north stars, synopsis) and the direction checkpoint.
+3. The layer runner with layers 1–3 (north stars, synopsis) and the direction checkpoint (done 2026-11-05). Each layer asks the planner model for its document, checks the structure in code (the six north-star sections, one page = at most 600 words; synopsis 300–2500 words), and if the check fails asks for a correction, at most `qc.max_revision_rounds` times; unresolved layers are flagged. Review of these three layers is yours, at the direction checkpoint (as in the layer table); the model critic comes in milestone 14.7 and the research step in 14.4 (marked with a TODO in `layers/document.py`).
+
+   - Prompts live in `bookforge/prompts/*.md` (`system`, `series_north_star`, `book_north_star`, `synopsis`, `correct`). Inputs are named slots like `{premise}`. A series can override any prompt by placing a file of the same name in `<series>/workbench/prompts/`. They are first drafts: expect to edit them after reading the first outputs.
+   - Inputs: layer 1 reads `premise.md`; layer 2 reads the premise, the series north star and `ledger.yaml` ("none" for a first book); layer 3 reads both north stars. Outputs: `north-star.md`, `books/<book>/north-star.md`, `books/<book>/synopsis.md`.
+   - If an output file already exists, bookforge checks it and adopts it instead of calling the model, so you can write a north star yourself. An existing file that fails the check is never overwritten; fix it or delete it to have it regenerated.
+   - `run` stops once all three are accepted and lists the files to review. Edit them freely. `approve direction` commits everything in the series, including your edits, and tags `b1-direction-approved`.
 
 4. The research step inside the runner: questions, web-tool search, fetch, notes, `sources.jsonl`.
 

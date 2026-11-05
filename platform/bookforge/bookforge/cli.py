@@ -106,8 +106,9 @@ def approve(path: Path = PathArg, checkpoint: str = typer.Argument(..., help=f"O
         project.state.approve_checkpoint(checkpoint)
         project.save_state()
         message = f"{project.book}: {checkpoint} approved"
-        if project.config.git.commit_each_step:
-            vcs.commit(project.root, message, [project.state_path.relative_to(project.root)])
+        # Commit everything: the approved version includes any edits you made while reviewing.
+        if project.config.git.commit_each_step or project.config.git.tag_checkpoints:
+            vcs.commit(project.root, message)
         if project.config.git.tag_checkpoints:
             vcs.tag(project.root, f"{project.book}-{checkpoint}-approved", message)
     except BookforgeError as e:

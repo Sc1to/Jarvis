@@ -52,6 +52,7 @@ class LayerSettings(_Strict):
     per_chapter: tuple[int, int] | None = None
     drafts: int | None = None
     words: tuple[int, int] | None = None
+    temperature: float | None = None  # overrides the model's own temperature for this layer
 
 
 def _default_layers() -> dict[str, LayerSettings]:
@@ -75,6 +76,7 @@ class BookSettings(_Strict):
     target_words: int = 90000
     pov: str = "third-limited"
     tense: str = "past"
+    language: str = "English"  # language of the book; section headings stay in English
 
 
 class Briefing(_Strict):

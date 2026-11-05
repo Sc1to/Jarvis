@@ -36,6 +36,7 @@ book:
   target_words: 90000
   pov: third-limited
   tense: past
+  language: English                    # section headings stay in English
 
 briefing:
   max_tokens: 16000

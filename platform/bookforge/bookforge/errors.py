@@ -9,6 +9,14 @@ class ConfigError(BookforgeError):
     pass
 
 
+class PromptError(BookforgeError):
+    pass
+
+
+class LayerError(BookforgeError):
+    """A layer could not produce an acceptable result."""
+
+
 class StateError(BookforgeError):
     pass
 

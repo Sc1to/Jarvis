@@ -3,7 +3,7 @@
 Automated book-writing pipeline (Phase 14). Separate from the writer app: shares no database, files or settings with `platform/writer`.
 
 - Spec: `docs/BOOKFORGE.md`. Build plan: `docs/BUILD_SEQUENCE.md`, Phase 14.
-- Status: milestones 14.0 (service shell), 14.1 (CLI skeleton) and 14.2 (model client, web wrapper, doctor checks) done. No layer handlers exist yet, so `run` does nothing useful until 14.3.
+- Status: milestones 14.0–14.3 done: service shell, CLI skeleton, model client and doctor, and layers 1–3 (north stars and synopsis) up to the direction checkpoint. Layers 4–7 have no handlers yet, so `run` stops there (exit code 2). The prompts have not been run against a real model yet.
 - Port 8100; systemd unit `platform-bookforge`; route `/bookforge` (API under `/bookforge/api`).
 - Data: `$BOOKFORGE_DATA_DIR` (default `/opt/platform/data/bookforge`), one Git repo per series.
 
@@ -26,6 +26,8 @@ python -m bookforge doctor  [<series>] [--offline]   # --offline skips the endpo
 ```
 
 Exit codes: 0 ok (including stopping at a checkpoint), 1 error or failed layer, 2 `run` stopped because a layer has no implementation yet.
+
+Prompts are in `bookforge/prompts/*.md`; copy one into `<series>/workbench/prompts/` to override it for a series. To write a layer's output yourself, create the file before `run`; it is checked and kept instead of regenerated.
 
 Config: built-in defaults, then `config.yaml` here (copy `config.example.yaml`; gitignored) or the file named by `BOOKFORGE_CONFIG`, then `<series>/config.yaml`.
 
