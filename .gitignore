@@ -43,3 +43,6 @@ config.json
 
 # Bookforge host config
 platform/bookforge/config.yaml
+
+# TypeScript incremental build info
+*.tsbuildinfo
