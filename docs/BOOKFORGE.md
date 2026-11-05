@@ -419,7 +419,7 @@ If memory runs short with both servers up, enable only the writer and let `bookf
 
 **Step 6. Web research**
 
-Nothing to install. Research uses the Jarvis Playwright web tool (see STACK.md, Playwright). `bookforge doctor` checks that the tool is importable and can fetch a test page.
+Nothing extra to install beyond the platform's Playwright setup (STACK.md, Playwright: `playwright install chromium`, once per host). The `playwright` Python package comes with bookforge's `requirements.txt`. Research uses the Jarvis web tool only. `bookforge doctor` checks that the tool is importable and can fetch a test page.
 
 **Step 7. bookforge itself**
 
@@ -456,7 +456,8 @@ models:
     base_url: http://127.0.0.1:8041/v1
     model: <id from coli status>
     temperature: 0.2
-    manage_service: platform-colibri-critic  # optional: start/stop per step to save RAM
+    manage_service: platform-colibri-critic  # optional: start/stop per step to save RAM (not wired up yet)
+    timeout_seconds: 1800            # max wait for one reply; the writer defaults to 600
   decide:
     url: http://127.0.0.1:8041/v1/systemone
 
@@ -525,7 +526,7 @@ Bookforge is built inside the Jarvis repository by Claude Code, one milestone at
 
 1. Skeleton (done 2026-11-05): CLI (`new`, `run`, `status`, `approve`, `doctor`), config, `state.json`, fake LLM client for tests, Git commits through `vcs.py`. The layer runner is a thin loop with an empty handler registry, so `run` stops at the first layer (exit code 2) until milestone 14.3.
 
-2. `llm.py` and `doctor`: real calls to both endpoints and the web tool, retries, call logging.
+2. `llm.py` and `doctor` (done 2026-11-05): real OpenAI-compatible client for both colibri endpoints (3 attempts with 2 s / 4 s backoff on connection errors, timeouts, 408/429/5xx; a reply cut off by the token limit is an error, never silent text), a web wrapper over the Playwright tool (`bookforge/research/search.py`: http/https only, no private or loopback hosts, query encoding, retries), and a call log at `books/<book>/logs/calls.jsonl` with full prompts and replies (gitignored). `doctor` now checks both endpoints, System One and the web tool, including one real page fetch; `doctor --offline` skips the network checks. The `manage_service` start/stop of the critic is not wired up yet.
 
 3. The layer runner with layers 1–3 (north stars, synopsis) and the direction checkpoint.
 
@@ -688,4 +689,10 @@ A typical run: start it in the evening with `python -m bookforge run /opt/platfo
 - Rubric criteria and banned phrases for your genre
 
 - Language of the books (affects model choice and the banned-phrase list)
+
+- Whether web search works from the mini PC. The platform web tool's search loads a DuckDuckGo results page; from the dev sandbox it returned a block page ("If this persists, please email us") that the tool still reported as success. Milestone 14.4 must detect empty or blocked results, and may need a different search page.
+
+- Whether colibri answers long requests without streaming. The client waits for the whole reply (`timeout_seconds`); if colibri supports streaming, switching to it would keep slow replies from hitting the timeout.
+
+- Whether colibri's `/v1/systemone` exists and what its request shape is. `doctor` only checks that the URL answers.
 

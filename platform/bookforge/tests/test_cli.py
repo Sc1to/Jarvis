@@ -106,28 +106,28 @@ def test_approve_records_commit_and_tag_then_run_continues(project, with_handler
 
 
 def test_doctor_passes_with_warnings_on_a_fresh_series(project):
-    result = runner.invoke(app, ["doctor", str(project.root)])
+    result = runner.invoke(app, ["doctor", str(project.root), "--offline"])
     assert result.exit_code == 0, result.output
     assert "[PASS] git" in result.output and "[PASS] series_state" in result.output
-    assert "[WARN] endpoints" in result.output
+    assert "[WARN] network" in result.output and "--offline" in result.output
 
 
 def test_doctor_fails_on_corrupt_state_and_bad_config(project):
     project.state_path.write_text("{broken")
-    result = runner.invoke(app, ["doctor", str(project.root)])
+    result = runner.invoke(app, ["doctor", str(project.root), "--offline"])
     assert result.exit_code == 1 and "[FAIL] series_state" in result.output
 
     (project.root / "config.yaml").write_text("nope: 1\n")
-    result = runner.invoke(app, ["doctor", str(project.root)])
+    result = runner.invoke(app, ["doctor", str(project.root), "--offline"])
     assert result.exit_code == 1 and "[FAIL] config" in result.output
 
 
 def test_doctor_warns_about_uncommitted_changes(project):
     (project.root / "style/guide.md").write_text("changed\n")
-    result = runner.invoke(app, ["doctor", str(project.root)])
+    result = runner.invoke(app, ["doctor", str(project.root), "--offline"])
     assert result.exit_code == 0 and "[WARN] series_git" in result.output
 
 
 def test_doctor_without_a_series(tmp_path):
-    result = runner.invoke(app, ["doctor"])
+    result = runner.invoke(app, ["doctor", "--offline"])
     assert result.exit_code == 0 and "series_state" not in result.output

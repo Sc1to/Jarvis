@@ -13,6 +13,7 @@ from .doctor import run_doctor
 from .errors import BookforgeError
 from .layers import HANDLERS
 from .layers.runner import run as run_layers
+from .llm import build_client
 from .project import Project
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help="Bookforge: automated book-writing pipeline.")
@@ -57,8 +58,7 @@ def run(
     """Run the pipeline until a checkpoint, the --until layer, or the end."""
     try:
         project = Project.open(path, book)
-        # TODO: replace with real implementation: build the colibri client in milestone 14.2.
-        summary = run_layers(project, llm=None, handlers=HANDLERS, until=until)
+        summary = run_layers(project, llm=build_client(project), handlers=HANDLERS, until=until)
     except BookforgeError as e:
         _fail(e)
     for layer in summary.ran:
@@ -119,11 +119,12 @@ def approve(path: Path = PathArg, checkpoint: str = typer.Argument(..., help=f"O
 def doctor(
     path: Optional[Path] = typer.Argument(None, help="Series folder to check as well"),
     book: str = BookOpt,
+    offline: bool = typer.Option(False, "--offline", help="Skip the model endpoint checks and the web fetch"),
 ) -> None:
-    """Check the environment (and a series, if given)."""
+    """Check the environment, the colibri endpoints and the web tool (and a series, if given)."""
     marks = {"pass": ("PASS", typer.colors.GREEN), "warn": ("WARN", typer.colors.YELLOW), "fail": ("FAIL", typer.colors.RED)}
     failed = False
-    for c in run_doctor(path, book):
+    for c in run_doctor(path, book, online=not offline):
         label, colour = marks[c.level]
         typer.echo(typer.style(f"[{label}]", fg=colour) + f" {c.name}" + (f": {c.detail}" if c.detail else ""))
         failed = failed or c.level == "fail"

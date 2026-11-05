@@ -1,0 +1,179 @@
+"""Web access for research, always through the platform Playwright web tool.
+
+Bookforge never makes direct HTTP calls to the internet (CLAUDE.md, Security).
+This wrapper adds what the tool itself does not: URL checks (http/https only, no
+private or loopback hosts), query encoding, retries, and call logging.
+
+Note: `search` returns the raw text of a DuckDuckGo results page, not structured
+results. Parsing that into questions and notes is milestone 14.4.
+"""
+
+import ipaddress
+import logging
+import socket
+import sys
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Callable, Protocol
+from urllib.parse import quote_plus, urlparse
+
+from ..calllog import CallLog
+from ..errors import BookforgeError
+
+log = logging.getLogger("platform_bookforge.web")
+
+AGENT_NAME = "platform_bookforge_research"
+PLATFORM_DIR = Path(__file__).resolve().parents[3]  # platform/
+MAX_QUERY_CHARS = 300
+
+
+class WebError(BookforgeError):
+    pass
+
+
+@dataclass
+class WebResult:
+    kind: str  # "search" | "fetch"
+    target: str  # the query or the URL
+    text: str
+
+
+class WebClient(Protocol):
+    def search(self, query: str) -> WebResult: ...
+    def fetch(self, url: str) -> WebResult: ...
+
+
+@dataclass
+class FakeWebClient:
+    """Scripted pages for tests. Records every call."""
+
+    searches: dict[str, str] = field(default_factory=dict)
+    pages: dict[str, str] = field(default_factory=dict)
+    calls: list[tuple[str, str]] = field(default_factory=list)
+
+    def search(self, query: str) -> WebResult:
+        self.calls.append(("search", query))
+        if query not in self.searches:
+            raise WebError(f"no scripted search result for {query!r}")
+        return WebResult("search", query, self.searches[query])
+
+    def fetch(self, url: str) -> WebResult:
+        self.calls.append(("fetch", url))
+        if url not in self.pages:
+            raise WebError(f"no scripted page for {url!r}")
+        return WebResult("fetch", url, self.pages[url])
+
+
+def load_web_tool_class():
+    """Import tools.web_tool.WebTool, adding platform/ to the import path if needed."""
+    try:
+        from tools.web_tool import WebTool
+    except ImportError:
+        if str(PLATFORM_DIR) not in sys.path:
+            sys.path.append(str(PLATFORM_DIR))  # appended, so it can never shadow installed packages
+        try:
+            from tools.web_tool import WebTool
+        except ImportError as e:
+            raise WebError(f"platform web tool not importable (looked in {PLATFORM_DIR}): {e}") from e
+    return WebTool
+
+
+def playwright_installed() -> bool:
+    try:
+        import playwright.async_api  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def check_url(url: str, resolver: Callable = socket.getaddrinfo) -> str:
+    """Allow only public http(s) URLs. Raises WebError otherwise.
+
+    Pages found during research are untrusted; without this a crafted link could
+    make the browser read local files or the platform's own services (admin panel,
+    Ollama, colibri). Resolution happens here and again in the browser, so a
+    hostile DNS server could still answer differently the second time.
+    """
+    parsed = urlparse(url.strip())
+    if parsed.scheme not in ("http", "https"):
+        raise WebError(f"only http and https URLs are allowed: {url!r}")
+    host = parsed.hostname
+    if not host:
+        raise WebError(f"URL has no host: {url!r}")
+    try:
+        infos = resolver(host, None)
+    except OSError as e:
+        raise WebError(f"cannot resolve {host}: {e}") from e
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0].split("%")[0])
+        if not ip.is_global:
+            raise WebError(f"refusing to fetch non-public address {ip} ({host})")
+    return url.strip()
+
+
+class PlaywrightWebClient:
+    def __init__(
+        self,
+        call_log: CallLog | None = None,
+        session_id: str | None = None,
+        tool=None,
+        attempts: int = 2,
+        backoff_seconds: float = 2.0,
+        sleep: Callable[[float], None] = time.sleep,
+        resolver: Callable = socket.getaddrinfo,
+    ):
+        self._log = call_log or CallLog(None)
+        self._session_id = session_id
+        self._tool = tool
+        self._attempts = max(1, attempts)
+        self._backoff = backoff_seconds
+        self._sleep = sleep
+        self._resolver = resolver
+
+    def search(self, query: str) -> WebResult:
+        query = " ".join(query.split())
+        if not query:
+            raise WebError("empty search query")
+        if len(query) > MAX_QUERY_CHARS:
+            raise WebError(f"search query too long ({len(query)} > {MAX_QUERY_CHARS} chars)")
+        # The tool inserts the query into a URL without encoding it.
+        return self._call("search", query, {"op": "search", "query": quote_plus(query)})
+
+    def fetch(self, url: str) -> WebResult:
+        url = check_url(url, self._resolver)
+        return self._call("fetch", url, {"op": "fetch_page", "url": url})
+
+    def _tool_instance(self):
+        if self._tool is None:
+            if not playwright_installed():
+                raise WebError("playwright is not installed in this environment (pip install playwright; playwright install chromium)")
+            self._tool = load_web_tool_class()(session_id=self._session_id, agent_name=AGENT_NAME)
+        return self._tool
+
+    def _call(self, kind: str, target: str, params: dict) -> WebResult:
+        tool = self._tool_instance()
+        started = time.monotonic()
+        error = "unknown error"
+        for attempt in range(1, self._attempts + 1):
+            result = tool.execute(params)
+            if result.success:
+                self._record(kind, target, started, attempt, chars=len(result.output))
+                return WebResult(kind, target, result.output)
+            error = result.error or error
+            if attempt < self._attempts:
+                log.warning("web %s failed (%s); retrying", kind, error)
+                self._sleep(self._backoff * 2 ** (attempt - 1))
+        self._record(kind, target, started, self._attempts, error=error)
+        raise WebError(f"web {kind} failed after {self._attempts} attempts: {error}")
+
+    def _record(self, kind: str, target: str, started: float, attempts: int, **extra) -> None:
+        self._log.write({"kind": "web", "op": kind, "target": target, "attempts": attempts,
+                         "duration_seconds": round(time.monotonic() - started, 3), "ok": "error" not in extra, **extra})
+
+
+def build_web_client(project) -> PlaywrightWebClient:
+    return PlaywrightWebClient(
+        call_log=CallLog(project.book_dir / "logs" / "calls.jsonl"),
+        session_id=f"bookforge:{project.root.name}:{project.book}",
+    )

@@ -53,7 +53,8 @@ Last completed:    Phase 13.19 — Paper trading validation tooling; Phase DEV �
                    Phase 14 planning (2026-11-05) — bookforge spec adopted as docs/BOOKFORGE.md; ports, colibri backend, systemd names and BUILD_SEQUENCE entry documented (docs only, no code)
                    Phase 14.0 (2026-11-05) — bookforge service shell: platform/bookforge (health + error envelope, 5 tests), systemd unit, frontend/bookforge placeholder, deploy.sh / build-frontends.sh wiring; not yet deployed
                    Phase 14.1 (2026-11-05) — bookforge skeleton: CLI (new/run/status/approve/doctor), layered config, state.json, vcs.py (git per series), fake LLM client; 75 tests; layer handlers still empty
-Currently working: Phase 13.20 — Live trading activation (manual user decision); Phase 14 — Bookforge (14.0, 14.1 done; 14.2 next)
+                   Phase 14.2 (2026-11-05) — bookforge llm.py (retrying OpenAI-compatible client, call log), research/search.py (Playwright web tool wrapper with URL safety checks), doctor endpoint + web checks; 142 tests
+Currently working: Phase 13.20 — Live trading activation (manual user decision); Phase 14 — Bookforge (14.0–14.2 done; 14.3 next)
 Blocked on:        Infra phases (1, 2) are hardware setup; 3-6 months paper trading runtime
 Remaining:         Phase 13.20 (manual user decision)
 ```
@@ -73,7 +74,7 @@ Remaining:         Phase 13.20 (manual user decision)
 - [x] Phase 12 — Documentation
 - [x] Phase DEV — Dev tooling (Docker, deployment scripts, test suite)
 - [ ] Phase 13  — Trading system (13.1–13.19 complete; 13.20 is manual user decision)
-- [ ] Phase 14  — Bookforge (14.0 service shell, 14.1 skeleton done; 14.2 llm.py + doctor next)
+- [ ] Phase 14  — Bookforge (14.0 shell, 14.1 skeleton, 14.2 llm + doctor done; 14.3 layers 1-3 next)
 
 ---
 

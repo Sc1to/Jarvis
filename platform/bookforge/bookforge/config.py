@@ -29,6 +29,7 @@ class ModelEndpoint(_Strict):
     model: str = ""  # id from `c/coli status`; doctor warns while empty
     temperature: float | list[float] = 0.2
     manage_service: str | None = None
+    timeout_seconds: float = 600  # max wait for one reply; the big model can be very slow
 
 
 class DecideEndpoint(_Strict):
@@ -38,7 +39,8 @@ class DecideEndpoint(_Strict):
 class Models(_Strict):
     writer: ModelEndpoint = ModelEndpoint(base_url="http://127.0.0.1:8040/v1", temperature=[0.7, 0.85, 1.0])
     critic: ModelEndpoint = ModelEndpoint(
-        base_url="http://127.0.0.1:8041/v1", temperature=0.2, manage_service="platform-colibri-critic"
+        base_url="http://127.0.0.1:8041/v1", temperature=0.2, manage_service="platform-colibri-critic",
+        timeout_seconds=1800,
     )
     decide: DecideEndpoint = DecideEndpoint()
 
