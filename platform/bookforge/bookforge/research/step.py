@@ -135,6 +135,17 @@ def check_facts(ctx, question: str, context: str, story: str, facts: list[dict])
     return [f for n, f in enumerate(facts, 1) if n in wanted]
 
 
+def drop_overlapping(facts: list[dict]) -> list[dict]:
+    """Drop a fact whose quote lies inside another fact's quote (or repeats an earlier one): same evidence twice."""
+    norms = [_norm_text(f["quote"]) for f in facts]
+    kept = []
+    for i, fact in enumerate(facts):
+        inside_other = any(j != i and norms[i] in norms[j] and (norms[i] != norms[j] or j < i) for j in range(len(facts)))
+        if not inside_other:
+            kept.append(fact)
+    return kept
+
+
 def extract_facts(ctx, question: str, url: str, page_text: str, context: str = "", story: str = "") -> tuple[list[dict], int]:
     """Facts a page states in answer to the question, each with a verbatim quote that is really in the page.
 
@@ -163,6 +174,7 @@ def extract_facts(ctx, question: str, url: str, page_text: str, context: str = "
             log.info("dropped a fact whose quote is not in %s", url)
             continue
         facts.append({"claim": claim, "quote": quote})
+    facts = drop_overlapping(facts)
     if not cfg.research.check_relevance:
         return facts, 0
     kept = check_facts(ctx, question, context, story, facts)

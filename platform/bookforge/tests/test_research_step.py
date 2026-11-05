@@ -6,7 +6,7 @@ from bookforge.llm import LLMError
 from bookforge.layers.runner import StepContext
 from bookforge.research.notes import stores_for
 from bookforge.research.search import FakeWebClient
-from bookforge.research.step import parse_json_object, quote_in_page, run_research
+from bookforge.research.step import drop_overlapping, parse_json_object, quote_in_page, run_research
 
 from conftest import RuleLLM
 
@@ -319,3 +319,49 @@ def test_list_articles_are_read_last(project):
     from bookforge.project import Project
     run(Project.open(project.root), llm, w)
     assert [f.url for f in stores_for(project)["series"].facts()] == [page_real]
+
+
+# ── overlapping evidence ─────────────────────────────────────────────────────
+
+def fact(claim, quote):
+    return {"claim": claim, "quote": quote}
+
+
+def test_a_quote_inside_another_quote_is_dropped():
+    long_ = fact("Clerks issue licenses and keep financial records.", "issuing licenses, overseeing local elections, maintaining financial records,")
+    short = fact("Clerks keep financial records.", "maintaining financial records,")
+    assert drop_overlapping([long_, short]) == [long_]
+    assert drop_overlapping([short, long_]) == [long_]  # order does not matter
+
+
+def test_a_repeated_quote_is_kept_once_ignoring_case_and_spacing():
+    a = fact("A.", "Most clavicle fractures heal in six weeks")
+    b = fact("B.", "most  clavicle fractures  heal in six weeks")
+    assert drop_overlapping([a, b]) == [a]
+
+
+def test_different_quotes_are_all_kept():
+    a, b = fact("A.", "Most clavicle fractures heal in six weeks"), fact("B.", "adults may need longer than that")
+    assert drop_overlapping([a, b]) == [a, b] and drop_overlapping([]) == []
+
+
+def test_overlapping_facts_from_a_page_are_stored_once(project):
+    rules = [GOOD_RULES[0],
+             (f"Source page: {URL_A}", facts(("Clavicle fractures heal in about six weeks.", "Most clavicle fractures heal in six weeks"),
+                                             ("Fractures heal.", "clavicle fractures heal in six weeks"))),
+             GOOD_RULES[2], CHECK_ALL]
+    run(project, RuleLLM(rules), web())
+    quotes = [f.quote for f in stores_for(project)["series"].facts() if f.url == URL_A]
+    assert quotes == ["Most clavicle fractures heal in six weeks"]
+
+
+def test_the_check_sees_only_the_facts_that_were_not_duplicates(project):
+    rules = [GOOD_RULES[0],
+             (f"Source page: {URL_A}", facts(("Heals in six weeks.", "Most clavicle fractures heal in six weeks"),
+                                             ("Fractures heal.", "clavicle fractures heal in six weeks"))),
+             GOOD_RULES[2], CHECK_ALL]
+    llm = RuleLLM(rules)
+    run(project, llm, web())
+    prompt = next(c for c in llm.calls_matching("Which of these facts") if "clavicle" in c["messages"][-1]["content"])
+    listing = prompt["messages"][-1]["content"].split("Facts found")[1]
+    assert "1. " in listing and "2. " not in listing.split("Which of these facts")[0]
