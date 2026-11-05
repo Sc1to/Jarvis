@@ -533,8 +533,10 @@ book:
   language: English                # language of the book; section headings stay in English
 
 briefing:
-  max_tokens: 16000
+  max_tokens: 16000                # estimated at about 3.5 characters per token
   previous_scene_words: 1500
+  sample_passages: 2               # style/samples/*.md files included
+  recent_chapters_full: 2          # chapters before this one summarised scene by scene; older ones in a line each
 
 qc:
   continuity_flag_threshold: 0.3
@@ -542,6 +544,12 @@ qc:
   max_revision_rounds: 2
   banned_phrases: style/banned.txt
   critic_may_accept: within_chapter  # larger change requests wait for you
+  dialogue_ratio: [0.05, 0.75]     # share of words inside quotes; outside it is a warning
+  sentence_variation_min: 0.45     # stdev / mean of sentence length; below it the rhythm is flagged
+  overused_word_percent: 1.0       # a content word above this share of the scene is flagged (names excluded)
+  overused_word_min_count: 8
+  repeat_ngram_size: 5             # words in a phrase checked for repetition across scenes
+  repeat_ngram_scenes: 2           # earlier scenes that must contain a phrase before it is flagged
 
 git:
   commit_each_step: true
@@ -600,7 +608,15 @@ Bookforge is built inside the Jarvis repository by Claude Code, one milestone at
 
 5. Layers 4–6 and the bible: constants, state tracks, timeline, state-at-a-point lookups (done 2026-11-05; formats under *Story bible*). The checks are structural only (ids, counts, references to the cast, track guards, timeline order); the critic review of these layers is milestone 14.7. Two choices the spec left open: the cast and world are created by the chapters layer, and the scenes layer researches `research.scene_questions` (default 2) questions per chapter before planning its scenes, so scenes can cite fact ids.
 
-6. Briefing builder with `deps.yaml`, the prose layer, and the mechanical checker.
+6. Briefing builder with `deps.yaml`, the prose layer, and the mechanical checker (done 2026-11-05). The model critic, continuity checks, judge and revision loop are milestone 14.7, so for now a scene's best draft is accepted if it has no *blocking* mechanical problem and flagged otherwise.
+
+   - **Briefing** (`bookforge/briefing.py`): the six parts of the briefing pack, within `briefing.max_tokens` (an estimate, about 3.5 characters per token). Over budget, it is cut in a fixed order: older chapter summaries, research notes, the previous scene's tail, sample passages, the style guide. The north stars, beats and story state are never cut; if they alone do not fit, the build fails with the largest parts named. `python -m bookforge briefing <series> b1.ch04.s3 [--full] [--tokens N]` shows the size of each part, or the whole text.
+   - **deps.yaml** (per scene, written whenever a scene is drafted) records what the scene was built from as `id@fingerprint`. A fingerprint is the first 8 hex digits of the SHA-256 of the record's content, not a counter, so a hand edit counts as a change (this replaces the `@v3` style above). Tracks are fingerprinted by their state *at that scene*, so editing a later chapter's entry does not mark earlier scenes stale. Keys: `scene`, `parent`, `north_stars`, `style`, `bible`, `research`, `timeline`, `previous`, `summaries`. Staleness handling is milestone 14.8.
+   - **Prose layer** (`bookforge/layers/prose.py`), per scene: write `layers.prose.drafts` drafts (the fast model; draft *i* uses the *i*-th temperature), run the mechanical checks on each, keep the one with the lowest score (a blocking problem costs 100, a warning 1; a tie goes to the first draft) as `final.md`, then write a 3-5 sentence `summary.md` with the fast model (if that fails, the plan's purpose stands in; `review.json` records which). Files per scene in `books/<book>/scenes/chNN/sN/`: `draft-N.md`, `final.md`, `summary.md`, `review.json` (chosen draft, all mechanical reports, briefing size), `deps.yaml`. Each scene is committed as `b1.ch05.s2: drafted, checked, accepted` (or `drafted, flagged`).
+   - **Voice checkpoint.** Chapter 1 is written first and the run stops (exit code 0) with the files to review. Read it, edit `style/guide.md` and `style/banned.txt`, put sample passages in `style/samples/`, delete a scene's files to have it rewritten, then `approve voice`. Only then is the rest of the book written. `run` while the checkpoint waits does nothing.
+   - **Flagged scenes** do not hold up the other scenes. When the book is finished the layer is `flagged` (exit code 1) and lists the scenes that need you; the next `run` rewrites only those. A `final.md` you write yourself is checked and adopted, never overwritten. Drafts left on disk by a stopped run are reused.
+   - **Mechanical checks** (`bookforge/qc/mechanical.py`, no model): *blocking*: banned phrases, assistant chatter or formatting (headings, lists, "Scene 3:" labels, code fences), a cut-off ending, a length under half the minimum or over twice the maximum; *warnings*: phrases repeated from earlier scenes or inside the scene, overused words (names excluded), monotone sentence rhythm, over-long sentences, repeated sentence openings, dialogue share outside the range, a scene that opens by repeating the end of the previous one, tense and point-of-view slips and head-hopping. The last three use English-only heuristics and are skipped for other `book.language` values. Every finding carries the character span, for passage-level revision in 14.7. `python -m bookforge check <series> b1.ch01.s1 [--file x.md]` runs them on a scene or a file.
+   - **`style/banned.txt`** is created with a starter list of common model clichés (English). It is yours: edit it, and add to it at the voice checkpoint. A line is a phrase (matched ignoring case and line breaks) or `re:` plus a regular expression; `#` starts a comment. The list is also given to the writer model.
 
 7. Continuity (System One), critic, pairwise judge, revision loop, extraction into `observed`.
 

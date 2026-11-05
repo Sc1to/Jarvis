@@ -31,6 +31,10 @@ class StepContext:
 class StepResult:
     files: list[str]  # paths the handler wrote, relative to the series root
     note: str = ""
+    # accepted: the layer is done. partial: made progress and stopped (at `checkpoint`, if given), to be run again.
+    # flagged: finished what it could, but some items need the author. Files are committed in every case.
+    outcome: str = "accepted"
+    checkpoint: str | None = None
 
 
 Handler = Callable[[StepContext], StepResult]
@@ -46,6 +50,21 @@ class RunSummary:
     @property
     def exit_code(self) -> int:
         return {"complete": 0, "until": 0, "checkpoint": 0, "not_implemented": 2, "failed": 1}[self.stopped]
+
+
+def review_files(project: Project, checkpoint: str) -> list[str]:
+    """The files to review at a checkpoint that exist now, as paths relative to the series."""
+    found: list[str] = []
+    for pattern in CHECKPOINT_REVIEW_FILES.get(checkpoint, ()):
+        pattern = pattern.format(book=project.book)
+        found += sorted(str(p.relative_to(project.root)) for p in project.root.glob(pattern) if p.is_file())
+    return found
+
+
+def _commit_step(project: Project, layer: str, files: list[str], label: str) -> None:
+    if project.config.git.commit_each_step:
+        state_rel = str(project.state_path.relative_to(project.root))
+        vcs.commit(project.root, f"{project.book}.{layer}: {label}", files + [state_rel])
 
 
 def _blocking_checkpoint(project: Project, layer: str) -> str | None:
@@ -103,16 +122,36 @@ def run(
             summary.detail = f"layer '{layer}' failed: {e}"
             return summary
 
+        if result.note:
+            summary.notes[layer] = result.note
+
+        if result.outcome == "partial":
+            project.state.set_layer_status(layer, "drafted", note=result.note or None)
+            if result.checkpoint:
+                project.state.reach_checkpoint(result.checkpoint)
+            project.save_state()
+            _commit_step(project, layer, files, "drafted")
+            summary.stopped = "checkpoint"
+            summary.detail = result.note
+            if result.checkpoint:
+                summary.detail = f"reached the '{result.checkpoint}' checkpoint; review, then run `approve {result.checkpoint}`"
+                review = review_files(project, result.checkpoint)
+                if review:
+                    summary.detail += "\nReview (edit freely; your edits are kept): " + ", ".join(review)
+            return summary
+        if result.outcome == "flagged":
+            project.state.set_layer_status(layer, "flagged", note=result.note or None)
+            project.save_state()
+            _commit_step(project, layer, files, "flagged")
+            summary.stopped = "failed"
+            summary.detail = f"layer '{layer}' needs you: {result.note}"
+            return summary
+
         project.state.set_layer_status(layer, "accepted", note=result.note or None)
         _update_checkpoints(project)
         project.save_state()
         summary.ran.append(layer)
-        if result.note:
-            summary.notes[layer] = result.note
-
-        if project.config.git.commit_each_step:
-            state_rel = str(project.state_path.relative_to(project.root))
-            vcs.commit(project.root, f"{project.book}.{layer}: accepted", files + [state_rel])
+        _commit_step(project, layer, files, "accepted")
 
         reached = [
             cp for cp in ("direction", "structure")
@@ -121,8 +160,7 @@ def run(
         ]
         if reached:
             summary.stopped = "checkpoint"
-            review = [f.format(book=project.book) for f in CHECKPOINT_REVIEW_FILES.get(reached[0], ())]
-            review = [f for f in review if (project.root / f).exists()]
+            review = review_files(project, reached[0])
             summary.detail = f"reached the '{reached[0]}' checkpoint; review, then run `approve {reached[0]}`"
             if review:
                 summary.detail += "\nReview (edit freely; your edits are kept): " + ", ".join(review)

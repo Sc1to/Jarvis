@@ -384,6 +384,7 @@ def test_full_cli_flow_to_the_structure_checkpoint_and_state_lookups(tmp_path, m
         assert line in second.output
     assert runner.invoke(cli.app, ["approve", str(series), "structure"]).exit_code == 0
 
+    monkeypatch.setattr(cli, "HANDLERS", {k: v for k, v in HANDLERS.items() if k != "prose"})  # prose has its own tests
     last = runner.invoke(cli.app, ["run", str(series)])
     assert last.exit_code == 2 and "layer 'prose' has no implementation yet" in last.output
 

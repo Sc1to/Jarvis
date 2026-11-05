@@ -3,7 +3,7 @@
 Automated book-writing pipeline (Phase 14). Separate from the writer app: shares no database, files or settings with `platform/writer`.
 
 - Spec: `docs/BOOKFORGE.md`. Build plan: `docs/BUILD_SEQUENCE.md`, Phase 14.
-- Status: milestones 14.0–14.5 done: service shell, CLI skeleton, model client and doctor, layers 1–3 (north stars and synopsis) up to the direction checkpoint, the research step, and layers 4–6 (acts, chapters, scenes) with the story bible up to the structure checkpoint. The prose layer has no handler yet, so `run` stops there (exit code 2). The prompts have not been run against a real model yet.
+- Status: milestones 14.0–14.6 done: service shell, CLI skeleton, model client and doctor, layers 1–3 (north stars and synopsis) up to the direction checkpoint, the research step, layers 4–6 (acts, chapters, scenes) with the story bible up to the structure checkpoint, and the prose layer (drafts, mechanical checks, summaries) with the voice checkpoint after chapter 1. There is no model critic, continuity check or revision loop yet (14.7): a scene is accepted if its best draft has no blocking mechanical problem, and flagged otherwise. The prompts have not been run against a real model yet.
 - Port 8100; systemd unit `platform-bookforge`; route `/bookforge` (API under `/bookforge/api`).
 - Data: `$BOOKFORGE_DATA_DIR` (default `/opt/platform/data/bookforge`), one Git repo per series.
 
@@ -23,10 +23,12 @@ python -m bookforge status  <series> [--book b1] [--json]
 python -m bookforge run     <series> [--book b1] [--until synopsis]
 python -m bookforge approve <series> direction
 python -m bookforge state-at <series> b1.ch04.s3 [-e anna]   # what the bible says is true at that point
+python -m bookforge briefing <series> b1.ch04.s3 [--full]    # what the model is given for a scene, and how big each part is
+python -m bookforge check <series> b1.ch04.s3 [--file x.md]  # mechanical checks on a scene's text
 python -m bookforge doctor  [<series>] [--offline]   # --offline skips the endpoint checks and the web fetch
 ```
 
-Exit codes: 0 ok (including stopping at a checkpoint), 1 error or failed layer, 2 `run` stopped because a layer has no implementation yet.
+Exit codes: 0 ok (including stopping at a checkpoint), 1 error, failed layer, or a finished layer with scenes that need you, 2 `run` stopped because a layer has no implementation yet.
 
 Prompts are in `bookforge/prompts/*.md`; copy one into `<series>/workbench/prompts/` to override it for a series. To write a layer's output yourself, create the file before `run`; it is checked and kept instead of regenerated.
 

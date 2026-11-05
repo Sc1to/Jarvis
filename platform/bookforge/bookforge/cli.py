@@ -9,15 +9,19 @@ import typer
 
 from . import vcs
 from .constants import CHECKPOINTS, LAYER_ORDER
+from . import scenefiles
 from .bible import store as bible_store
 from .bible.lookup import day_of, scene_entities, state_at
 from .bible.positions import parse_position
+from .briefing import build_briefing
 from .doctor import run_doctor
 from .errors import BookforgeError
 from .layers import HANDLERS
+from .layers.prose import check_context
 from .layers.runner import run as run_layers
 from .llm import build_client
 from .project import Project
+from .qc.mechanical import check_scene
 from .research.search import build_web_client
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help="Bookforge: automated book-writing pipeline.")
@@ -98,6 +102,13 @@ def status(
         item = state.layers[name]
         cp = project.config.layers[name].checkpoint
         typer.echo(f"  {name:<18} {item.status:<9} v{item.version}" + (f"   [{cp}]" if cp else ""))
+    scenes = bible_store.load_scenes(project) if bible_store.scenes_path(project).exists() else []
+    if scenes:
+        counts: dict[str, int] = {}
+        for s in scenes:
+            item = state.items.get(s.id)
+            counts[item.status if item else "pending"] = counts.get(item.status if item else "pending", 0) + 1
+        typer.echo(f"\nProse: {len(scenes)} scenes: " + ", ".join(f"{n} {k}" for k, n in sorted(counts.items())))
     typer.echo("\nCheckpoints")
     for name in CHECKPOINTS:
         typer.echo(f"  {name:<18} {state.checkpoints[name].status}")
@@ -151,6 +162,60 @@ def state_at_cmd(
         typer.echo(f"- {s.track_id} ({s.entity}, {s.kind}) since {s.since}: {s.value}{flags}")
         if s.begins_here and s.previous:
             typer.echo(f"    before: {s.previous}")
+
+
+@app.command()
+def briefing(
+    path: Path = PathArg,
+    scene: str = typer.Argument(..., help="A scene, like b1.ch04.s3"),
+    book: str = BookOpt,
+    tokens: Optional[int] = typer.Option(None, "--tokens", help="Token budget (default: briefing.max_tokens)"),
+    full: bool = typer.Option(False, "--full", help="Print the whole briefing, not only the size of each part"),
+) -> None:
+    """Show what the model is given to write a scene: the size of each part and, with --full, the text."""
+    try:
+        project = Project.open(path, book)
+        b = build_briefing(project, scene, tokens)
+    except BookforgeError as e:
+        _fail(e)
+    typer.echo(f"{scene}: about {b.tokens} of {b.budget} tokens")
+    for heading, n in b.breakdown():
+        typer.echo(f"  {n:>6}  {heading}")
+    for note in b.trimmed:
+        typer.echo(f"  cut to fit: {note}")
+    if full:
+        typer.echo("\n" + b.text())
+
+
+@app.command()
+def check(
+    path: Path = PathArg,
+    scene: str = typer.Argument(..., help="A scene, like b1.ch04.s3"),
+    book: str = BookOpt,
+    file: Optional[Path] = typer.Option(None, "--file", help="Check this file instead of the scene's own text"),
+) -> None:
+    """Run the mechanical checks on a scene's text (banned phrases, repetition, rhythm, length, ...)."""
+    try:
+        project = Project.open(path, book)
+        scenes = bible_store.load_scenes(project)
+        target = next((s for s in scenes if s.id == scene), None)
+        if target is None:
+            raise BookforgeError(f"no scene {scene} in scenes.yaml")
+        text = file.read_text(encoding="utf-8") if file else scenefiles.best_text(project, scene)
+        if not text:
+            raise BookforgeError(f"{scene} has no text yet (write it first, or pass --file)")
+        report = check_scene(text, check_context(project, target, scenes))
+    except (BookforgeError, OSError) as e:
+        _fail(e)
+    s = report.stats
+    typer.echo(f"{scene}: {s['words']} words, {s['sentences']} sentences, dialogue {s['dialogue_ratio']:.0%}, sentence variation {s['sentence_variation']}")
+    for issue in report.issues:
+        typer.echo(f"  [{issue.severity}] {issue.code}: {issue.message}" + (f"  ...{issue.excerpt}..." if issue.excerpt else ""))
+    for note in report.skipped:
+        typer.echo(f"  [skipped] {note}")
+    if not report.issues:
+        typer.echo("  no problems found")
+    raise typer.Exit(1 if report.blocking else 0)
 
 
 @app.command()

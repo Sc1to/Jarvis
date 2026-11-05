@@ -88,8 +88,10 @@ class BookSettings(_Strict):
 
 
 class Briefing(_Strict):
-    max_tokens: int = 16000
-    previous_scene_words: int = 1500
+    max_tokens: int = Field(16000, gt=0)  # estimated (about 3.5 characters per token); see briefing.py
+    previous_scene_words: int = Field(1500, gt=0)  # tail of the previous scene given verbatim
+    sample_passages: int = Field(2, ge=0)  # style/samples/*.md files included
+    recent_chapters_full: int = Field(2, ge=0)  # chapters before this one summarised scene by scene; older ones in a line each
 
 
 class QC(_Strict):
@@ -98,6 +100,12 @@ class QC(_Strict):
     max_revision_rounds: int = 2
     banned_phrases: str = "style/banned.txt"
     critic_may_accept: str = "within_chapter"
+    dialogue_ratio: tuple[float, float] = (0.05, 0.75)  # share of words inside quotes; outside it is a warning
+    sentence_variation_min: float = 0.45  # stdev / mean of sentence length; below it the rhythm is flagged as monotone
+    overused_word_percent: float = 1.0  # a content word above this share of the scene is flagged (names excluded)
+    overused_word_min_count: int = 8
+    repeat_ngram_size: int = 5  # words in a phrase checked for repetition across scenes
+    repeat_ngram_scenes: int = 2  # earlier scenes that must contain a phrase before it is flagged
 
 
 class GitSettings(_Strict):

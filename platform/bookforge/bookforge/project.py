@@ -20,7 +20,7 @@ _GITIGNORE = "books/*/logs/\nbooks/*/work/\n"
 _SERIES_FILES = {
     "ledger.yaml": "open_threads: []\nend_of_book_states: {}\n",
     "style/guide.md": "# Style guide\n\n",
-    "style/banned.txt": "",
+    "style/banned.txt": (Path(__file__).resolve().parent / "data" / "banned_starter.txt").read_text(encoding="utf-8"),
     "style/samples/.gitkeep": "",
     "bible/constants.yaml": "{}\n",
     "bible/tracks.yaml": "tracks: []\n",
