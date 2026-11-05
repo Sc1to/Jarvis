@@ -81,11 +81,13 @@ TS_HOSTNAME=$(tailscale status --json 2>/dev/null \
     2>/dev/null || echo "")
 # Use IP as fallback if hostname not set yet
 CADDY_HOST="${TS_HOSTNAME:-${TS_IP:-localhost}}"
+# A MagicDNS name gets automatic HTTPS (Tailscale certificate); an IP/localhost stays plain HTTP.
+if [ -n "$TS_HOSTNAME" ]; then CADDY_ADDR="$CADDY_HOST"; else CADDY_ADDR="http://${CADDY_HOST}"; fi
 
 sudo tee /etc/caddy/Caddyfile > /dev/null <<EOF
 # Managed by admin panel — do not edit manually
 
-http://${CADDY_HOST} {
+${CADDY_ADDR} {
     handle /admin* {
         reverse_proxy localhost:8000
     }

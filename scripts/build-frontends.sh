@@ -96,11 +96,23 @@ done
 if [ $PASSED -gt 0 ]; then
     info "Updating Caddyfile..."
     TAILSCALE_IP=$(tailscale ip -4 2>/dev/null || echo "100.105.155.91")
+    # MagicDNS name (e.g. ms-s.tailXXXX.ts.net). Used as the HTTPS site address so Caddy
+    # fetches a Tailscale certificate for it (needs HTTPS Certificates enabled in the
+    # tailnet and TS_PERMIT_CERT_UID=caddy in /etc/default/tailscaled — see docs/SETUP.md).
+    TS_HOST=$(tailscale status --json 2>/dev/null \
+        | python3 -c "import sys,json; print(json.load(sys.stdin)['Self']['DNSName'].rstrip('.'))" \
+        2>/dev/null || echo "")
+    if [ -n "$TS_HOST" ]; then
+        SITE_ADDRS="${TS_HOST}, http://${TAILSCALE_IP}"
+    else
+        warn "No MagicDNS name found — serving plain HTTP on the Tailscale IP only"
+        SITE_ADDRS="http://${TAILSCALE_IP}"
+    fi
 
     sudo tee /etc/caddy/Caddyfile > /dev/null << CADDYEOF
 # Managed by admin panel — do not edit manually
 
-http://${TAILSCALE_IP} {
+${SITE_ADDRS} {
     handle /admin/api* {
         uri strip_prefix /admin/api
         reverse_proxy localhost:8000

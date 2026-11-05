@@ -676,3 +676,19 @@ From here, everything happens through the web interface — the admin panel, the
 The terminal stays in the background as a safety net you will rarely need.
 
 Welcome to your personal AI platform.
+
+
+---
+
+## Enable HTTPS (Tailscale certificates)
+
+Browsers only allow service workers / Web Push on https (or localhost). One-time setup:
+
+1. Tailscale admin console > DNS > enable **HTTPS Certificates** (needs MagicDNS on).
+2. Let Caddy request certificates from tailscaled:
+   ```bash
+   echo 'TS_PERMIT_CERT_UID=caddy' | sudo tee -a /etc/default/tailscaled
+   sudo systemctl restart tailscaled
+   ```
+3. Regenerate the Caddyfile and reload: `bash scripts/build-frontends.sh bookforge`
+4. Open `https://<host>.<tailnet>.ts.net/bookforge/` (the old `http://<tailscale-ip>` URL keeps working).
