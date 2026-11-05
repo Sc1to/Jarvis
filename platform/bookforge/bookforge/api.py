@@ -8,6 +8,7 @@ Everything lives under /api (Caddy strips /bookforge). Responses use the platfor
     POST /api/series                                  create one (name, premise, book)
     GET  /api/series/{s}/books/{b}/status             layers, checkpoints, scene counts, the running job
     GET  /api/series/{s}/books/{b}/scenes[/{id}]      scene list; one scene with plan, text, review
+    GET  /api/series/{s}/books/{b}/documents[/{key}]  the files you review (north stars, synopsis, plans, bible, style), read-only
     GET  /api/series/{s}/books/{b}/report[s]          the morning report now / the saved ones
     GET  /api/series/{s}/books/{b}/manuscript         the assembled manuscript
     GET  /api/series/{s}/books/{b}/stale              what is out of date and why (changes nothing)
@@ -41,7 +42,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from . import push, assemble as assembly, export as exporting, bench as benchmarks, changes as change_requests, ops, report as morning_report, scenefiles, stale as staleness
+from . import documents, push, assemble as assembly, export as exporting, bench as benchmarks, changes as change_requests, ops, report as morning_report, scenefiles, stale as staleness
 from .bible import store
 from .constants import CHECKPOINTS, LAYER_ORDER
 from .doctor import run_doctor
@@ -268,6 +269,24 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
             "drafts": {p.stem: p.read_text(encoding="utf-8") for p in sorted(scenefiles.scene_dir(project, scene_id).glob("draft-*.md"))},
             "change_requests": [c.model_dump() for c in change_requests.list_requests(project) if c.proposed_by == scene_id],
         })
+
+    @router.get("/series/{series}/books/{book}/documents")
+    def document_list(series: str, book: str):
+        project = open_project(series, book)
+        out = []
+        for d in documents.catalog(project):
+            text, _ = documents.read(d) if d.exists else ("", False)
+            out.append({"key": d.key, "title": d.title, "group": d.group, "kind": d.kind, "exists": d.exists, "words": len(text.split())})
+        return ok(out)
+
+    @router.get("/series/{series}/books/{book}/documents/{key}")
+    def document_get(series: str, book: str, key: str):
+        project = open_project(series, book)
+        doc = documents.find(project, key)
+        if doc is None:
+            raise HTTPException(404, f"no document '{key}'")
+        text, truncated = documents.read(doc)
+        return ok({"key": doc.key, "title": doc.title, "group": doc.group, "kind": doc.kind, "exists": doc.exists, "text": text, "truncated": truncated})
 
     @router.get("/series/{series}/books/{book}/report")
     def report_now(series: str, book: str):

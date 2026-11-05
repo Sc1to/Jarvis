@@ -509,3 +509,42 @@ def test_workbench_writes_wait_for_an_idle_series_but_reads_do_not(book, monkeyp
     finally:
         gate.set()
     finish(job)
+
+
+# ── documents ───────────────────────────────────────────────────────────────
+
+def test_the_documents_you_review_are_listed_and_readable(full):
+    listing = {d["key"]: d for d in data(client.get(f"{B}/documents"))}
+    assert {"premise", "series_north_star", "book_north_star", "synopsis", "acts", "chapters", "scenes", "constants", "tracks", "timeline", "style_guide", "banned"} <= set(listing)
+    assert listing["synopsis"]["exists"] and listing["synopsis"]["words"] > 100 and listing["synopsis"]["group"] == "Direction"
+    assert listing["style_guide"]["exists"] is False  # only the placeholder heading: not written yet
+    doc = data(client.get(f"{B}/documents/book_north_star"))
+    assert doc["kind"] == "markdown" and "## Premise" in doc["text"] and doc["truncated"] is False
+    assert "b1.act1" in data(client.get(f"{B}/documents/acts"))["text"]
+
+
+def test_a_document_that_is_not_written_yet_is_empty_not_an_error(book):
+    (book.root / "books" / "b1" / "synopsis.md").unlink()
+    doc = data(client.get(f"{B}/documents/synopsis"))
+    assert doc["exists"] is False and doc["text"] == ""
+
+
+def test_research_notes_appear_as_documents(full):
+    d = full.root / "research"
+    d.mkdir(exist_ok=True)
+    (d / "series_north_star.md").write_text("# Research\n\n- a fact\n")
+    keys = [x["key"] for x in data(client.get(f"{B}/documents"))]
+    assert "research-series-series_north_star" in keys
+    assert "a fact" in data(client.get(f"{B}/documents/research-series-series_north_star"))["text"]
+
+
+def test_only_listed_documents_can_be_read(full):
+    (full.root.parent / "secret.md").write_text("outside the series")
+    for key in ("..%2f..%2fsecret.md", "../secret", "premise.md", "research-series-..%2f..%2fsecret", "state"):
+        error(client.get(f"{B}/documents/{key}"), 404)
+
+
+def test_a_very_large_document_is_cut_and_says_so(full):
+    (full.root / "style" / "guide.md").write_text("word " * 200_000)
+    doc = data(client.get(f"{B}/documents/style_guide"))
+    assert doc["truncated"] is True and len(doc["text"]) <= 400_000

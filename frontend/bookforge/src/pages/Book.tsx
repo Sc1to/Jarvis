@@ -4,6 +4,7 @@ import { useApi } from '../lib/hooks'
 import { href, type Route } from '../lib/route'
 import type { BookStatus } from '../lib/types'
 import { ErrorBanner, Loading } from '../components/ui'
+import Documents from './Documents'
 import Inbox from './Inbox'
 import Jobs from './Jobs'
 import Overview from './Overview'
@@ -14,7 +15,7 @@ import Tracks from './Tracks'
 import Tree from './Tree'
 import Workbench from './Workbench'
 
-const TABS: [string, string][] = [['overview', 'Overview'], ['tree', 'Progress'], ['inbox', 'Inbox'], ['tracks', 'Tracks'], ['research', 'Research'], ['read', 'Read'], ['jobs', 'Jobs'], ['workbench', 'Workbench']]
+const TABS: [string, string][] = [['overview', 'Overview'], ['documents', 'Documents'], ['tree', 'Progress'], ['inbox', 'Inbox'], ['tracks', 'Tracks'], ['research', 'Research'], ['read', 'Read'], ['jobs', 'Jobs'], ['workbench', 'Workbench']]
 
 export default function Book({ route }: { route: Route }) {
   const { series, book } = route as Required<Pick<Route, 'series' | 'book'>>
@@ -47,6 +48,7 @@ export default function Book({ route }: { route: Route }) {
       </nav>
       {status.error && <ErrorBanner message={status.error} />}
       {tab === 'overview' && <Overview series={series} book={book} status={s} reload={status.reload} />}
+      {tab === 'documents' && <Documents series={series} book={book} docKey={route.id} />}
       {tab === 'tree' && <Tree series={series} book={book} />}
       {tab === 'inbox' && <Inbox series={series} book={book} status={s} reload={status.reload} />}
       {tab === 'scene' && route.id && <SceneView series={series} book={book} id={route.id} status={s} reload={status.reload} />}
