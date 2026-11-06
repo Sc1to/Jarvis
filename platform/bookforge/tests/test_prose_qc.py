@@ -222,13 +222,13 @@ def test_an_inserted_passage_that_shows_the_change_makes_the_scene_pass(book):
 
 def test_low_scores_revise_the_weakest_lines_and_the_critic_runs_again(book):
     log = []
-    llm = RuleLLM(qc_rules(critic=(CRITIC, critic([{"pacing": 2}, {"pacing": 4}])), revise=(REVISE, reviser({" the ": " THE "}, log))))
+    llm = RuleLLM(qc_rules(critic=(CRITIC, critic([{"show_dont_tell": 2}, {"show_dont_tell": 4}])), revise=(REVISE, reviser({" the ": " THE "}, log))))
     go(book, llm)
     r = review(book)
     assert [x["critic_lowest"] for x in r["rounds"]] == [2, 4] and r["unresolved"] == []
     assert first_scene(llm).count("critic") == 2 and first_scene(llm).count("revise") >= 1
     assert log and all("criterion" in l["prompt"] for l in log)
-    assert "whether the scene moves at the right speed" in " ".join(l["prompt"] for l in log)  # the rubric line travels with the flag
+    assert "whether feelings and facts are conveyed through action" in " ".join(l["prompt"] for l in log)  # the rubric line travels with the flag
     assert load_state(book.state_path).items[SID].status == "accepted"
 
 

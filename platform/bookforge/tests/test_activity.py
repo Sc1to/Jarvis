@@ -110,3 +110,51 @@ def test_the_prose_layer_reports_the_scene_the_step_and_the_scenes_done(book):
     go(book, RuleLLM(qc_rules()))
     assert state["layer"] == "prose" and state["scenes_done"] >= 1
     assert state["scene"].startswith("b1.ch0") and state["step"] == "recording what the scene shows"
+
+
+# ── tokens spent by a run ───────────────────────────────────────────────────
+
+def test_the_tokens_a_reply_reports_are_added_up():
+    state: dict = {}
+    activity.bind(state)
+    activity.usage({"prompt_tokens": 1200, "completion_tokens": 300, "total_tokens": 1500})
+    activity.usage({"prompt_tokens": 800, "completion_tokens": 100})
+    assert state["prompt_tokens"] == 2000 and state["completion_tokens"] == 400
+
+
+def test_a_reply_without_usage_adds_nothing_and_odd_values_are_ignored():
+    state: dict = {}
+    activity.bind(state)
+    for odd in (None, {}, "x", {"prompt_tokens": "12"}, {"prompt_tokens": True}, {"prompt_tokens": -5}, [1]):
+        activity.usage(odd)
+    assert state == {}
+    activity.bind(None)
+    activity.usage({"prompt_tokens": 5})  # unbound: nothing happens
+
+
+def test_a_request_adds_its_tokens_to_the_job_and_a_cut_off_reply_counts_too(tmp_path):
+    state: dict = {}
+    activity.bind(state)
+    replies = iter([
+        httpx.Response(200, json={"choices": [{"message": {"content": "partial text"}, "finish_reason": "length"}],
+                                  "usage": {"prompt_tokens": 1000, "completion_tokens": 500}}),
+        httpx.Response(200, json={"choices": [{"message": {"content": "whole reply"}, "finish_reason": "stop"}],
+                                  "usage": {"prompt_tokens": 1000, "completion_tokens": 900}}),
+    ])
+    c = HttpLLMClient(config(), CallLog(tmp_path / "calls.jsonl"), transport=httpx.MockTransport(lambda req: next(replies)), sleep=lambda s: None)
+    assert c.complete("critic", MSGS, max_tokens=500) == "whole reply"  # cut off once, asked again with a larger limit
+    assert state["prompt_tokens"] == 2000 and state["completion_tokens"] == 1400 and state["calls"] == 2
+
+
+def test_a_cut_off_call_keeps_its_usage_in_the_call_log_so_the_morning_report_counts_it(tmp_path):
+    import json
+    from bookforge.llm import LLMError
+    c = HttpLLMClient(config(), CallLog(tmp_path / "calls.jsonl"), sleep=lambda s: None, transport=httpx.MockTransport(
+        lambda req: httpx.Response(200, json={"choices": [{"message": {"content": "partial"}, "finish_reason": "length"}],
+                                              "usage": {"prompt_tokens": 700, "completion_tokens": 300}})))
+    try:
+        c.complete("critic", MSGS, max_tokens=500, grow=False)
+    except LLMError:
+        pass
+    rec = json.loads((tmp_path / "calls.jsonl").read_text().splitlines()[0])
+    assert rec["ok"] is False and rec["usage"] == {"prompt_tokens": 700, "completion_tokens": 300}

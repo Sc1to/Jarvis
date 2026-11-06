@@ -20,7 +20,7 @@ from ..bible.models import Scene
 from ..errors import LayerError
 from . import scene_notes
 from .continuity import ContinuityReport, check_continuity
-from .critic import CriticReport, critic_flags, run_critic
+from .critic import WHOLE_SCENE, CriticReport, critic_flags, run_critic
 from .judge import choose_draft
 from .mechanical import CheckContext, MechanicalReport, all_banned, check_scene
 from .revise import Flag, revise_text
@@ -59,7 +59,7 @@ def _mechanical_flags(report: MechanicalReport) -> tuple[list[Flag], list[str]]:
     return fixable, unfixed
 
 
-def settle_scene(ctx, scene: Scene, scenes: list[Scene], drafts: dict[str, str], mech: CheckContext) -> SceneQC:
+def settle_scene(ctx, scene: Scene, scenes: list[Scene], drafts: dict[str, str], mech: CheckContext, can_rewrite: bool = False) -> SceneQC:
     cfg = ctx.project.config.qc
     drafts_reports = {n: check_scene(t, mech) for n, t in drafts.items()}
     chosen, judge = _choose(ctx, scene, drafts, drafts_reports)
@@ -69,6 +69,7 @@ def settle_scene(ctx, scene: Scene, scenes: list[Scene], drafts: dict[str, str],
 
     critic: CriticReport | None = None
     critic_given_up = False
+    advised: list[str] = []  # whole-scene criteria that call for writing the scene again (see WHOLE_SCENE)
     continuity: ContinuityReport | None = None
     report = drafts_reports[chosen]
     unfixable: list[str] = []
@@ -87,13 +88,19 @@ def settle_scene(ctx, scene: Scene, scenes: list[Scene], drafts: dict[str, str],
                 else:
                     unfixable.append(f.message())
         cheap_ok = not report.blocking and not (continuity and continuity.flags)
-        if cheap_ok and cfg.critic_check and not critic_given_up and (critic is None or critic.needs_work(cfg.critic_min_score)):
+        if cheap_ok and cfg.critic_check and not critic_given_up and not advised and (critic is None or critic.needs_work(cfg.critic_min_score)):
             activity.set(step="the critic is reading it")
             critic = run_critic(ctx, scene, text)
             if critic.error:
                 critic_given_up = True
             elif critic.needs_work(cfg.critic_min_score):
-                flags += critic_flags(ctx.project, critic)
+                whole = [c for c in WHOLE_SCENE if critic.scores.get(c, 5) < cfg.critic_min_score]
+                if whole and can_rewrite and cfg.critic_rewrite:
+                    # A missing beat or uneven pacing is not a problem of three lines. The caller writes the scene again with these
+                    # notes, so patching its lines now would only spend time: record the advice and leave the critic's lines alone.
+                    advised = whole
+                else:
+                    flags += critic_flags(ctx.project, critic)
         record = {"round": r, "mechanical_blocking": [i.message for i in report.blocking],
                   "continuity_flags": [f.message() for f in continuity.flags] if continuity else [],
                   "critic_lowest": critic.lowest if critic and critic.scores else None, "revisions": []}
@@ -121,4 +128,6 @@ def settle_scene(ctx, scene: Scene, scenes: list[Scene], drafts: dict[str, str],
     reasons = list(dict.fromkeys(reasons))
     review.update({"final_mechanical": report.to_dict(), "continuity": continuity.to_dict() if continuity else None,
                    "critic": critic.to_dict() if critic else None, "revised": text != drafts[chosen], "unresolved": reasons})
+    if advised:
+        review["rewrite_advised"] = advised
     return SceneQC(text=text, chosen=chosen, review=review, reasons=reasons)

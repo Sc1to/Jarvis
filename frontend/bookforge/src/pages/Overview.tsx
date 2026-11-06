@@ -49,6 +49,8 @@ function RedoPanel({ base, layer, onDone, onClose, locked }: { base: string; lay
 
 const seconds = (ms: number) => Math.max(0, Math.round(ms / 1000))
 const label = (s?: string | null) => (s ?? '').replace(/_/g, ' ')
+const tokenLine = (a: JobActivity) => (a.prompt_tokens || a.completion_tokens)
+  ? `${((a.prompt_tokens ?? 0) + (a.completion_tokens ?? 0)).toLocaleString()} tokens (${(a.prompt_tokens ?? 0).toLocaleString()} in · ${(a.completion_tokens ?? 0).toLocaleString()} out)` : null
 
 /** Write scenes again: all of them or one chapter. Shows what would be reset before anything happens; nothing is lost from the Git history. */
 function RewritePanel({ base, onDone, onClose, locked }: { base: string; onDone: () => void; onClose: () => void; locked: boolean }) {
@@ -112,6 +114,7 @@ function ActivityPanel({ activity, serverTime }: { activity?: JobActivity; serve
     <div className="mt-2 space-y-1 text-sm text-slate-700" aria-live="polite">
       <p><span className="text-slate-500">Working on:</span> {[label(a.layer), a.scene, a.step].filter(Boolean).join(' · ') || '…'}</p>
       <p className="text-xs text-slate-600">Model calls this run: {a.calls ?? 0}{a.scenes_done !== undefined ? ` · scenes finished this run: ${a.scenes_done}` : ''}</p>
+      {tokenLine(a) && <p className="text-xs text-slate-600">Tokens spent this run: {tokenLine(a)}</p>}
       {waiting !== null && (
         <p className="break-words text-xs text-slate-600">Waiting for the model for {waiting} s{a.call_label ? `: “${a.call_label}”` : ''}</p>
       )}
