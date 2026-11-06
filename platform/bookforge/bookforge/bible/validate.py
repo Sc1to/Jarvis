@@ -182,6 +182,14 @@ def merge_constants(existing: Constants, new: Constants) -> Constants:
 
 # ── tracks (shared by layers 5 and 6) ───────────────────────────────────────
 
+def _owner_from_id(track_id: str, entities: dict[str, Entity]) -> str | None:
+    """The cast id a track id starts with (anna-trust -> anna), the longest match if several; None if there is no single answer."""
+    matches = sorted((eid for eid in entities if track_id.startswith(eid + "-")), key=len, reverse=True)
+    if not matches or (len(matches) > 1 and len(matches[0]) == len(matches[1])):
+        return None
+    return matches[0]
+
+
 def _parse_tracks(
     raw_tracks: list, *, entities: dict[str, Entity], existing: dict[str, Track], allowed_from: set[str],
     prefix: str, problems: list[str],
@@ -190,8 +198,16 @@ def _parse_tracks(
     seen_ids: set[str] = set()
     for i, raw in enumerate(raw_tracks):
         label = f"{prefix}[{i}]"
-        if isinstance(raw, dict) and raw.get("id") in existing and not raw.get("entity"):
-            raw = {**raw, "entity": existing[raw["id"]].entity}  # extending an existing track: the entity is known
+        if isinstance(raw, dict) and not raw.get("entity"):
+            if raw.get("id") in existing:
+                raw = {**raw, "entity": existing[raw["id"]].entity}  # extending an existing track: the entity is known
+            elif (owner := _owner_from_id(str(raw.get("id", "")), entities)):
+                raw = {**raw, "entity": owner}  # a new track named after its owner, like anna-trust-in-jonas
+            elif raw.get("id"):
+                problems.append(f"{label}: track '{raw['id']}' is not an existing track and has no entity. To extend an existing track repeat "
+                                f"one of its ids ({', '.join(sorted(existing)) or 'none yet'}); for a new track give 'entity:' (one of: "
+                                f"{', '.join(sorted(entities))}) and 'kind:'")
+                continue
         track = _validate(Track, raw, label, problems)
         if track is None:
             continue
