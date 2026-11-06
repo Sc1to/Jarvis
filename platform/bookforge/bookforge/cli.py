@@ -318,19 +318,22 @@ def trash_cmd(
 @app.command()
 def rewrite(
     path: Path = PathArg,
-    targets: list[str] = typer.Argument(..., help="Scenes or chapters to write again, like b1.ch01.s1 or b1.ch01"),
+    targets: list[str] = typer.Argument(..., help="Scenes or chapters to write again, like b1.ch01.s1 or b1.ch01, or `all`"),
     book: str = BookOpt,
     force: bool = typer.Option(False, "--force", help="Also discard text you wrote yourself"),
+    reset_voice: bool = typer.Option(False, "--reset-voice", help="Ask for the voice checkpoint again: the next run writes chapter 1 only (when chapter 1 is rewritten)"),
 ) -> None:
     """Throw away scenes (or a chapter) so the next `run` writes them again. Deleting files alone does not do this."""
     try:
         project = Project.open(path, book)
-        result = ops.rewrite_scenes(project, list(targets), force)
+        result = ops.rewrite_scenes(project, list(targets), force, reset_voice)
     except BookforgeError as e:
         _fail(e)
     typer.echo(f"reset {len(result['reset'])} scene(s): {', '.join(result['reset']) or 'none'}")
     if result["kept"]:
         typer.secho(f"kept (text you wrote; use --force to discard): {', '.join(result['kept'])}", fg=typer.colors.YELLOW)
+    if result["voice_reset"]:
+        typer.echo("The voice checkpoint is pending again: the next run writes chapter 1 and waits for you.")
     if result["reset"]:
         typer.echo(f"Next: python -m bookforge run {project.root} --book {project.book}")
 

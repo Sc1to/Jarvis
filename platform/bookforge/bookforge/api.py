@@ -43,7 +43,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Callable
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -176,8 +176,9 @@ class DocBody(BaseModel):
 
 
 class RewriteBody(BaseModel):
-    targets: list[str]
+    targets: list[str]  # scene ids, chapter ids, or "all"
     force: bool = False
+    reset_voice: bool = False  # ask for the voice checkpoint again (when chapter 1 is rewritten)
 
 
 class AssembleBody(BaseModel):
@@ -485,7 +486,11 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
     def rewrite(series: str, book: str, body: RewriteBody):
         project = open_project(series, book)
         require_idle(series)
-        return ok(ops.rewrite_scenes(project, body.targets, body.force))
+        return ok(ops.rewrite_scenes(project, body.targets, body.force, body.reset_voice))
+
+    @router.get("/series/{series}/books/{book}/rewrite-plan")
+    def rewrite_preview(series: str, book: str, targets: list[str] = Query(...), force: bool = False):
+        return ok(ops.rewrite_plan(open_project(series, book), targets, force))
 
     @router.post("/series/{series}/books/{book}/assemble")
     def assemble(series: str, book: str, body: AssembleBody | None = None):
