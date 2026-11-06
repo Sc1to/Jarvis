@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
+from . import cancel
 from .errors import BookforgeError
 
 log = logging.getLogger("platform_bookforge.jobs")
@@ -33,7 +34,8 @@ class Job:
     series: str
     book: str
     kind: str  # run | stale-fix | bench
-    status: str = "running"  # running | done | failed | interrupted
+    status: str = "running"  # running | done | failed | interrupted | cancelled
+    cancel_requested: bool = False  # the author asked it to stop; it stops at its next model call
     started: str = field(default_factory=_now)
     finished: str | None = None
     params: dict = field(default_factory=dict)
@@ -51,6 +53,7 @@ class JobManager:
         self._jobs: dict[str, Job] = {}
         self._active: dict[str, str] = {}  # series -> job id
         self._threads: dict[str, threading.Thread] = {}
+        self._stops: dict[str, threading.Event] = {}
 
     def busy(self, series: str) -> Job | None:
         with self._lock:
@@ -67,20 +70,38 @@ class JobManager:
                       series=series, book=book, kind=kind, params=params)
             self._jobs[job.id] = job
             self._active[series] = job.id
+            self._stops[job.id] = threading.Event()
         self._save(root, job)
         thread = threading.Thread(target=self._run, args=(root, job, fn), name=f"bookforge-{job.id}", daemon=True)
         self._threads[job.id] = thread
         thread.start()
         return job
 
+    def cancel(self, root: Path, series: str, job_id: str | None = None) -> Job:
+        """Ask the running job of a series to stop. It does so at its next model call."""
+        with self._lock:
+            jid = self._active.get(series)
+            job = self._jobs.get(jid) if jid else None
+            if job is None or (job_id is not None and job.id != job_id):
+                raise BookforgeError(f"no running job to stop in series '{series}'")
+            job.cancel_requested = True
+            self._stops[job.id].set()
+        self._save(root, job)
+        return job
+
     def _run(self, root: Path, job: Job, fn: Callable[[], dict]) -> None:
+        stop = self._stops.get(job.id)
+        cancel.bind(stop)
         try:
             result = fn()
-            job.result, job.status = result, "done"
+            job.result, job.status = result, ("cancelled" if stop is not None and stop.is_set() else "done")
+        except cancel.Cancelled:
+            job.status = "cancelled"
         except Exception as e:  # a failed job is recorded, never a dead thread with no trace
             log.exception("job %s failed", job.id)
             job.error, job.status = str(e) or e.__class__.__name__, "failed"
         finally:
+            cancel.bind(None)
             job.finished = _now()
             self._save(root, job)
             with self._lock:

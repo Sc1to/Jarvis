@@ -8,6 +8,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import vcs
+from .errors import BookforgeError
 from .project import Project
 
 MAX_BYTES = 400_000
@@ -41,6 +43,7 @@ def catalog(project: Project) -> list[Doc]:
     root, book = project.root, project.book_dir
     docs = [
         Doc("premise", "Premise", "Direction", "markdown", root / "premise.md"),
+        Doc("book_brief", "Book brief", "Direction", "markdown", book / "premise.md"),
         Doc("series_north_star", "Series north star", "Direction", "markdown", root / "north-star.md"),
         Doc("book_north_star", "Book north star", "Direction", "markdown", book / "north-star.md"),
         Doc("synopsis", "Synopsis", "Direction", "markdown", book / "synopsis.md"),
@@ -72,3 +75,69 @@ def read(doc: Doc) -> tuple[str, bool]:
     except OSError:
         return "", False
     return raw[:MAX_BYTES].decode("utf-8", errors="replace"), len(raw) > MAX_BYTES
+
+
+# ── editing ───────────────────────────────────────────────────────────────────
+
+class EditRefused(BookforgeError):
+    """The new text would introduce problems; nothing was saved. `problems` says what."""
+
+    def __init__(self, problems: list[str]):
+        super().__init__("; ".join(problems[:5]))
+        self.problems = problems
+
+
+def editable(doc: Doc) -> bool:
+    return doc.group != "Research"  # research notes are written by the research step, and read-only
+
+
+def _problems(project: Project, doc: Doc) -> list[str]:
+    """Structural problems of the document as it is on disk now ([] for the free-text ones)."""
+    from .layers import direction, structure
+    try:
+        text = doc.path.read_text(encoding="utf-8") if doc.path.is_file() else ""
+    except OSError:
+        text = ""
+    match doc.key:
+        case "series_north_star" | "book_north_star":
+            return direction.validate_north_star(text)
+        case "synopsis":
+            return direction.validate_synopsis(text)
+        case "acts":
+            return structure.parse_acts(text, project)[1] if text.strip() else []
+        case "chapters":
+            return structure.validate_chapters_file(project) if text.strip() else []
+        case "scenes":
+            return structure.validate_scenes_file(project) if text.strip() else []
+        case "constants" | "tracks" | "timeline":
+            from .bible.validate import validate_bible
+            return validate_bible(project, False)
+    return []
+
+
+def save(project: Project, doc: Doc, text: str) -> None:
+    """Write a document you edited. Refused (and the old text put back) if it adds problems the old text did not have.
+
+    Only new problems count: a plan with an old unrelated problem can still be edited, and an older north star without
+    a section added since can be edited without adding it.
+    """
+    if not editable(doc):
+        raise BookforgeError(f"'{doc.title}' cannot be edited here")
+    if doc.key not in ("banned", "style_guide") and not text.strip():
+        raise BookforgeError("the text is empty")
+    if len(text.encode("utf-8")) > MAX_BYTES:
+        raise BookforgeError(f"the text is too long (at most {MAX_BYTES // 1000} KB)")
+    text = text.rstrip() + "\n" if text.strip() else ""
+    before = _problems(project, doc)
+    old = doc.path.read_text(encoding="utf-8") if doc.path.is_file() else None
+    doc.path.parent.mkdir(parents=True, exist_ok=True)
+    doc.path.write_text(text, encoding="utf-8")
+    new = [p for p in _problems(project, doc) if p not in before]
+    if new:
+        if old is None:
+            doc.path.unlink(missing_ok=True)
+        else:
+            doc.path.write_text(old, encoding="utf-8")
+        raise EditRefused(new)
+    if project.config.git.commit_each_step:
+        vcs.commit(project.root, f"{project.book}: you edited {doc.title}", [doc.path])

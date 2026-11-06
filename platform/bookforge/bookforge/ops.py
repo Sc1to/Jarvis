@@ -9,13 +9,15 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from . import assemble as assembly, bench as benchmarks, changes as change_requests, report as morning_report, stale as staleness, vcs
+from . import steering, assemble as assembly, bench as benchmarks, changes as change_requests, report as morning_report, stale as staleness, vcs
 from .bible import store as bible_store
+from .constants import LAYER_ORDER, REDO_NOTE
 from .errors import BookforgeError
 from .layers import HANDLERS
 from .layers.runner import RunSummary, StepContext, run as run_layers
 from .llm import LLMClient
 from .project import Project
+from .state import Checkpoint
 from .research.search import WebClient
 
 log = logging.getLogger("platform_bookforge.ops")
@@ -165,6 +167,57 @@ def decide_need(project: Project, need_id: str, approve: bool | None = None, sta
     if project.config.git.commit_each_step:
         vcs.commit(project.root, f"{project.book}: need {need.id} {need.status} ({need.stance})")
     return need
+
+
+# ── writing a planning layer again ────────────────────────────────────────────
+
+REDOABLE = LAYER_ORDER[:-1]  # everything before the prose; written scenes are redone with `rewrite`
+
+
+def _prose_exists(project: Project) -> bool:
+    return any(project.book_dir.glob("scenes/*/*/final.md")) or any(project.book_dir.glob("scenes/*/*/revised.md"))
+
+
+def redo_plan(project: Project, layer: str) -> list[str]:
+    """The layers `redo` would reset along with this one: those after it that are not still pending."""
+    if layer not in REDOABLE:
+        raise BookforgeError(f"only planning layers can be redone ({', '.join(REDOABLE)}); written scenes are redone with `rewrite`")
+    return [l for l in LAYER_ORDER[LAYER_ORDER.index(layer) + 1:] if l != "prose" and project.state.layers[l].status != "pending"]
+
+
+def redo_layer(project: Project, layer: str, note: str = "", cascade: bool = False) -> dict:
+    """Have a planning layer written again, optionally steered by a note, and everything built on it.
+
+    The layers after it that already ran were built on the old version; they are reset too, but only if `cascade` says
+    so. Nothing is deleted: what is on disk now is committed first (so hand edits survive in Git history) and is
+    overwritten when the layer runs again; a layer that is one document shows its previous version to the model with
+    your note. Refused once scenes have been written (use `rewrite`), because re-planning would orphan them.
+    The checkpoints these layers belong to go back to pending, so you review the new version.
+    """
+    from .layers.structure import _clean_work
+    downstream = redo_plan(project, layer)
+    if _prose_exists(project) or project.state.layers["prose"].status != "pending":
+        raise BookforgeError("scenes have already been written; redoing the plan would orphan them. Rewrite or delete those scenes first (`rewrite`)")
+    if downstream and not cascade:
+        raise BookforgeError(f"redoing '{layer}' also resets {', '.join(downstream)}, which were built on it. Confirm that (--cascade) or redo a later layer instead")
+    reset = [layer] + downstream
+    if project.config.git.commit_each_step:
+        vcs.commit(project.root, f"{project.book}: before redoing {layer} (everything as it was)")
+    for l in reset:
+        project.state.set_layer_status(l, "pending", REDO_NOTE)
+        _clean_work(project, l)
+    project.state.items = {}
+    for cp in ("direction", "structure"):
+        if any(project.config.layers[l].checkpoint == cp for l in reset):
+            project.state.checkpoints[cp] = Checkpoint()
+    for l in reset:
+        steering.clear(project, l)
+    if note.strip():
+        steering.write(project, layer, note)
+    project.save_state()
+    if project.config.git.commit_each_step:
+        vcs.commit(project.root, f"{project.book}: redo {layer}" + (" with a note" if note.strip() else ""))
+    return {"layer": layer, "reset": reset, "note": bool(note.strip())}
 
 
 def decide_change(project: Project, cr_id: str, approve: bool) -> change_requests.ChangeRequest:

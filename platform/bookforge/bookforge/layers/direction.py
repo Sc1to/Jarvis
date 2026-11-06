@@ -4,6 +4,8 @@ import re
 
 import yaml
 
+from ..books import book_brief
+
 from .document import DocumentSpec, generate_document, word_count
 from .runner import StepContext, StepResult
 
@@ -72,7 +74,7 @@ BOOK_NORTH_STAR = DocumentSpec(
     layer="book_north_star", prompt="book_north_star", out_path="books/{book}/north-star.md",
     validate=validate_north_star, max_tokens=1500, strip_preamble=True,
     slots=lambda ctx: {
-        "premise": _read(ctx, "premise.md"),
+        "premise": book_brief(ctx.project),  # this book's own brief; the series premise if it has none
         "series_north_star": _read(ctx, "north-star.md"),
         "ledger": _ledger_text(ctx),
     },

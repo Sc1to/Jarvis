@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { bookPath } from '../lib/api'
+import { api, bookPath } from '../lib/api'
 import { useApi } from '../lib/hooks'
 import { href, type Route } from '../lib/route'
 import type { BookStatus } from '../lib/types'
@@ -33,7 +33,13 @@ export default function Book({ route }: { route: Route }) {
     <div className="space-y-3">
       <div>
         <a href="#/" className="text-sm text-slate-600 underline">← All series</a>
-        <h1 className="mt-1 text-lg font-semibold">{series} <span className="font-normal text-slate-500">/ {book}</span></h1>
+        <div className="mt-1 flex flex-wrap items-center gap-2">
+          <h1 className="text-lg font-semibold">{s.title || book} <span className="font-normal text-slate-500">· {series}{s.title ? ` / ${book}` : ''}</span></h1>
+          <button type="button" className="min-h-10 rounded-md px-2 text-sm text-slate-600 underline" onClick={async () => {
+            const next = window.prompt('Title of this book (its id, ' + book + ', stays the same):', s.title || '')
+            if (next && next.trim() && next.trim() !== s.title) { try { await api(`${bookPath(series, book)}/title`, { method: 'PUT', body: { title: next.trim() } }); status.reload() } catch (e) { window.alert(String((e as Error).message)) } }
+          }}>{s.title ? 'Rename' : 'Give it a title'}</button>
+        </div>
       </div>
       <nav role="tablist" aria-label="Sections" className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1">
         {TABS.map(([k, label]) => {

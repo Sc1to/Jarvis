@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { api, bookPath, post } from '../lib/api'
-import { useAction } from '../lib/hooks'
+import { useAction, useApi } from '../lib/hooks'
 import type { BookStatus } from '../lib/types'
 import { href } from '../lib/route'
 import { Button, Card, Dot, ErrorBanner, StatusBadge, fmtTime } from '../components/ui'
@@ -14,9 +14,42 @@ const REVIEW: Record<string, [string, string][]> = {
 
 const LAYERS = ['series_north_star', 'book_north_star', 'synopsis', 'acts', 'chapters', 'scenes', 'prose']
 
+/** Write a planning layer again, optionally with a note on what to change. Nothing is deleted: the current files are committed first. */
+function RedoPanel({ base, layer, onDone, onClose, locked }: { base: string; layer: string; onDone: () => void; onClose: () => void; locked: boolean }) {
+  const plan = useApi<{ also_resets: string[] }>(`${base}/redo/${layer}`)
+  const act = useAction()
+  const [note, setNote] = useState('')
+  const [cascade, setCascade] = useState(false)
+  const also = plan.data?.also_resets ?? []
+  const label = (l: string) => l.replace(/_/g, ' ')
+  return (
+    <div className="mt-2 space-y-2 rounded-md border border-slate-200 bg-slate-50 p-3">
+      <p className="text-sm text-slate-700">Write <strong>{label(layer)}</strong> again. What is there now is committed first, so it stays in the series history.</p>
+      {plan.error && <ErrorBanner message={plan.error} />}
+      {also.length > 0 && (
+        <label className="flex items-start gap-2 text-sm text-slate-800">
+          <input type="checkbox" checked={cascade} onChange={(e) => setCascade(e.target.checked)} className="mt-0.5 h-4 w-4" />
+          <span>Also write again what was built on it: <strong>{also.map(label).join(', ')}</strong>.</span>
+        </label>
+      )}
+      <label className="block text-sm text-slate-700">What should change? (optional)
+        <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3} placeholder="For example: darker, and keep Anna's job as a customs clerk."
+          className="mt-1 w-full rounded-md border border-slate-300 bg-white p-2 text-sm" />
+      </label>
+      <ErrorBanner message={act.error} onClose={act.clear} />
+      <div className="flex flex-wrap gap-2">
+        <Button kind="primary" disabled={act.busy || locked || !plan.data || (also.length > 0 && !cascade)}
+          onClick={async () => { if (await act.run(() => post(`${base}/redo`, { layer, note, cascade }))) { onDone(); onClose() } }}>Reset it, then press Run</Button>
+        <Button disabled={act.busy} onClick={onClose}>Cancel</Button>
+      </div>
+    </div>
+  )
+}
+
 export default function Overview({ series, book, status, reload }: { series: string; book: string; status: BookStatus; reload: () => void }) {
   const act = useAction()
   const [until, setUntil] = useState('')
+  const [redoing, setRedoing] = useState<string | null>(null)
   const base = bookPath(series, book)
   const busy = status.job?.status === 'running'
   const waiting = Object.entries(status.checkpoints).filter(([, v]) => v === 'waiting').map(([k]) => k)
@@ -32,6 +65,15 @@ export default function Overview({ series, book, status, reload }: { series: str
       {status.job && (
         <Card title={`${status.job.kind} ${status.job.status}`} tone={busy ? undefined : 'warn'}>
           <p className="text-sm text-slate-700">Started {fmtTime(status.job.started)}. {busy && 'Updating every few seconds; the page can be closed, the run continues.'}</p>
+          {busy && (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <Button kind="danger" disabled={act.busy || status.job.cancel_requested}
+                onClick={() => window.confirm('Stop this job? It stops at the next model call; what is finished is kept and the rest is done on the next run.') && go(() => post(`${base}/jobs/${status.job!.id}/cancel`))}>
+                {status.job.cancel_requested ? 'Stopping…' : 'Stop'}
+              </Button>
+              {status.job.cancel_requested && <span className="text-xs text-slate-600">It stops after the model call that is running now, which can take a minute.</span>}
+            </div>
+          )}
         </Card>
       )}
 
@@ -87,7 +129,11 @@ export default function Overview({ series, book, status, reload }: { series: str
                   {l.checkpoint && <span className="text-xs text-slate-500">[{l.checkpoint}]</span>}
                 </div>
                 {l.note && <p className="mt-0.5 break-words text-xs text-slate-500">{l.note}</p>}
+                {redoing === l.name && <RedoPanel base={base} layer={l.name} locked={busy} onClose={() => setRedoing(null)} onDone={reload} />}
               </div>
+              {l.name !== 'prose' && l.status !== 'pending' && redoing !== l.name && (
+                <Button disabled={busy} onClick={() => setRedoing(l.name)} title="Write this layer again, with a note on what to change">Redo…</Button>
+              )}
             </li>
           ))}
         </ul>

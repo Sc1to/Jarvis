@@ -46,21 +46,21 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from . import deletion, documents, push, assemble as assembly, export as exporting, bench as benchmarks, changes as change_requests, ops, report as morning_report, scenefiles, stale as staleness
+from . import books as book_mgmt, deletion, documents, push, assemble as assembly, export as exporting, bench as benchmarks, changes as change_requests, ops, report as morning_report, scenefiles, stale as staleness
 from .bible import store
 from .constants import CHECKPOINTS, LAYER_ORDER
 from .doctor import run_doctor
 from .errors import BookforgeError
 from .jobs import BusyError, JobManager
 from .llm import build_client
-from .project import BOOK_ID_RE, Project
+from .project import BOOK_ID_RE, SERIES_NAME_RE, Project
 from .research.search import build_web_client
 from .research.notes import stores_for, waiting_decisions
 from .state import Item
 
 log = logging.getLogger("platform_bookforge.api")
 
-SERIES_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+SERIES_RE = SERIES_NAME_RE
 REPORT_RE = re.compile(r"^[0-9A-Za-z_-]+\.md$")
 SAFE_NAME = re.compile(r"^[0-9A-Za-z][0-9A-Za-z_.-]*$")  # an export folder or file name: no slash, no leading dot
 
@@ -75,6 +75,8 @@ push_sender: Callable | None = None  # replaced in tests; None sends for real wi
 def notification_for(job) -> tuple[str, str] | None:
     """(title, body) for a job that ends in a way you should hear about, else None."""
     where = f"{job.series}/{job.book}"
+    if job.status == "cancelled":
+        return None  # you asked for it: no need to tell you
     if job.status != "done":
         return f"Bookforge: {job.kind} failed", f"{where}: {job.error or job.status}"
     r = job.result or {}
@@ -140,6 +142,29 @@ class NeedBody(BaseModel):
     stance: str | None = None
     rule: str | None = None
     applies_to: list[str] | None = None  # chapter or scene ids; [] = the whole book
+
+
+class AddBook(BaseModel):
+    title: str
+    brief: str
+
+
+class RenameBody(BaseModel):
+    name: str
+
+
+class TitleBody(BaseModel):
+    title: str
+
+
+class RedoBody(BaseModel):
+    layer: str
+    note: str = ""
+    cascade: bool = False
+
+
+class DocBody(BaseModel):
+    text: str
 
 
 class RewriteBody(BaseModel):
@@ -214,7 +239,7 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
             if d.is_dir() and SERIES_RE.match(d.name) and (d / "premise.md").is_file():
                 books = sorted(p.name for p in (d / "books").iterdir() if (p / "state.json").is_file()) if (d / "books").is_dir() else []
                 busy = jobs.busy(d.name)
-                out.append({"name": d.name, "books": books, "busy": busy.to_dict() if busy else None})
+                out.append({"name": d.name, "books": books, "titles": book_mgmt.titles(d), "busy": busy.to_dict() if busy else None})
         return ok(out)
 
     @router.post("/series", status_code=201)
@@ -226,6 +251,20 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
             raise HTTPException(409, f"series '{body.name}' already exists")
         project = Project.create(root, body.premise, body.book)
         return ok({"name": body.name, "book": project.book})
+
+    @router.post("/series/{series}/rename")
+    def rename_series(series: str, body: RenameBody):
+        series_root(series)
+        require_idle(series)
+        dest = book_mgmt.rename_series(Path(get_data_dir()), series, body.name)
+        return ok({"name": dest.name})
+
+    @router.post("/series/{series}/books", status_code=201)
+    def add_book(series: str, body: AddBook):
+        root = series_root(series)
+        require_idle(series)
+        project = book_mgmt.add_book(root, body.title, body.brief)
+        return ok({"book": project.book, "title": project.state.title})
 
     @router.delete("/series/{series}")
     def delete_series(series: str):
@@ -256,6 +295,23 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
         require_idle(series)
         return ok(deletion.delete_book(series_root(series), book))
 
+    @router.put("/series/{series}/books/{book}/title")
+    def set_title(series: str, book: str, body: TitleBody):
+        project = open_project(series, book)
+        require_idle(series)
+        return ok({"title": book_mgmt.set_title(project, body.title)})
+
+    @router.get("/series/{series}/books/{book}/redo/{layer}")
+    def redo_plan(series: str, book: str, layer: str):
+        project = open_project(series, book)
+        return ok({"layer": layer, "also_resets": ops.redo_plan(project, layer)})
+
+    @router.post("/series/{series}/books/{book}/redo")
+    def redo(series: str, book: str, body: RedoBody):
+        project = open_project(series, book)
+        require_idle(series)
+        return ok(ops.redo_layer(project, body.layer, body.note, body.cascade))
+
     @router.get("/series/{series}/books/{book}/status")
     def book_status(series: str, book: str):
         project = open_project(series, book)
@@ -272,6 +328,7 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
                         "checkpoint": project.config.layers[n].checkpoint} for n in LAYER_ORDER],
             "checkpoints": {n: state.checkpoints[n].status for n in CHECKPOINTS},
             "scenes": {"total": len(ids), **counts},
+            "title": project.state.title,
             "pending_changes": sum(c.status == "pending" for c in change_requests.list_requests(project)),
             "pending_needs": len(waiting_decisions(project)),
             "manuscript": assembly.manuscript_path(project).exists(),
@@ -315,7 +372,8 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
         out = []
         for d in documents.catalog(project):
             text, _ = documents.read(d) if d.exists else ("", False)
-            out.append({"key": d.key, "title": d.title, "group": d.group, "kind": d.kind, "exists": d.exists, "words": len(text.split())})
+            out.append({"key": d.key, "title": d.title, "group": d.group, "kind": d.kind, "exists": d.exists, "words": len(text.split()),
+                        "editable": documents.editable(d)})
         return ok(out)
 
     @router.get("/series/{series}/books/{book}/documents/{key}")
@@ -325,7 +383,18 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
         if doc is None:
             raise HTTPException(404, f"no document '{key}'")
         text, truncated = documents.read(doc)
-        return ok({"key": doc.key, "title": doc.title, "group": doc.group, "kind": doc.kind, "exists": doc.exists, "text": text, "truncated": truncated})
+        return ok({"key": doc.key, "title": doc.title, "group": doc.group, "kind": doc.kind, "exists": doc.exists, "text": text, "truncated": truncated,
+                    "editable": documents.editable(doc)})
+
+    @router.put("/series/{series}/books/{book}/documents/{key}")
+    def document_save(series: str, book: str, key: str, body: DocBody):
+        project = open_project(series, book)
+        doc = documents.find(project, key)
+        if doc is None:
+            raise HTTPException(404, f"no document '{key}'")
+        require_idle(series)
+        documents.save(project, doc, body.text)
+        return ok({"key": doc.key, "saved": True})
 
     @router.get("/series/{series}/books/{book}/report")
     def report_now(series: str, book: str):
@@ -553,6 +622,11 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
     def job_list(series: str, book: str):
         open_project(series, book)
         return ok(jobs.list(series_root(series), series, book))
+
+    @router.post("/series/{series}/books/{book}/jobs/{job_id}/cancel")
+    def job_cancel(series: str, book: str, job_id: str):
+        open_project(series, book)
+        return ok(jobs.cancel(series_root(series), series, job_id).to_dict())
 
     @router.get("/series/{series}/books/{book}/jobs/{job_id}")
     def job_get(series: str, book: str, job_id: str):

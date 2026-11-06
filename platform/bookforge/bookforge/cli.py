@@ -7,7 +7,7 @@ from typing import Optional
 
 import typer
 
-from . import assemble as assembly, changes as change_requests, deletion, export as exporting, ops, report as morning_report, stale as staleness, vcs
+from . import books as book_mgmt, assemble as assembly, changes as change_requests, deletion, export as exporting, ops, report as morning_report, stale as staleness, vcs
 from .constants import CHECKPOINTS, LAYER_ORDER
 from . import scenefiles
 from .bible import store as bible_store
@@ -130,6 +130,60 @@ def approve(path: Path = PathArg, checkpoint: str = typer.Argument(..., help=f"O
     except BookforgeError as e:
         _fail(e)
     typer.echo(f"Approved '{checkpoint}'.")
+
+
+@app.command("add-book")
+def add_book_cmd(
+    path: Path = PathArg,
+    title: str = typer.Option(..., "--title", help="What the book is called"),
+    brief: Optional[str] = typer.Option(None, "--brief", help="What this book is about, in a few sentences"),
+    brief_file: Optional[Path] = typer.Option(None, "--brief-file", help="Read the brief from this file"),
+) -> None:
+    """Add a book to a series. It gets its own brief and north star and inherits the series north star."""
+    try:
+        text = brief_file.read_text(encoding="utf-8") if brief_file else (brief or "")
+        project = book_mgmt.add_book(path, title, text)
+    except (BookforgeError, OSError) as e:
+        _fail(e)
+    typer.echo(f"added book {project.book} '{project.state.title}'; run it with `run {path} --book {project.book}`")
+
+
+@app.command("title")
+def title_cmd(path: Path = PathArg, title: str = typer.Argument(..., help="The new title"), book: str = BookOpt) -> None:
+    """Give a book a title (its id, like b1, never changes)."""
+    try:
+        project = Project.open(path, book)
+        typer.echo(f"{project.book}: '{book_mgmt.set_title(project, title)}'")
+    except BookforgeError as e:
+        _fail(e)
+
+
+@app.command("rename-series")
+def rename_series_cmd(path: Path = PathArg, new_name: str = typer.Argument(..., help="The new name (lowercase letters, digits, - and _)")) -> None:
+    """Rename a series: its folder is moved to the new name, in the same place."""
+    try:
+        dest = book_mgmt.rename_series(Path(path).resolve().parent, Path(path).resolve().name, new_name)
+    except BookforgeError as e:
+        _fail(e)
+    typer.echo(f"renamed to {dest}")
+
+
+@app.command("redo")
+def redo_cmd(
+    path: Path = PathArg,
+    layer: str = typer.Argument(..., help=f"The planning layer to write again, one of: {', '.join(ops.REDOABLE)}"),
+    note: str = typer.Option("", "--note", help="What to change, in your words; the model sees it with the previous version"),
+    cascade: bool = typer.Option(False, "--cascade", help="Also reset the later layers that were built on it"),
+    book: str = BookOpt,
+) -> None:
+    """Have a planning layer written again (then `run`). Nothing is deleted: the current files are committed first."""
+    try:
+        project = Project.open(path, book)
+        out = ops.redo_layer(project, layer, note, cascade)
+    except BookforgeError as e:
+        _fail(e)
+    typer.echo(f"reset: {', '.join(out['reset'])}" + ("; your note will be used" if out["note"] else "")
+               + f"\nthe checkpoints they belong to are pending again; run `run {path}` to write them")
 
 
 @app.command("research-test")

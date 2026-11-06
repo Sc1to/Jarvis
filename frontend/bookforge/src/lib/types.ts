@@ -4,13 +4,14 @@ export interface Layer { name: string; status: Status; version: number; note: st
 
 export interface Job {
   id: string; series: string; book: string; kind: string
-  status: 'running' | 'done' | 'failed' | 'interrupted'
+  status: 'running' | 'done' | 'failed' | 'interrupted' | 'cancelled'
+  cancel_requested: boolean
   started: string; finished: string | null
   params: Record<string, unknown>; result: Record<string, any> | null; error: string | null
 }
 
 export interface BookStatus {
-  series: string; book: string
+  series: string; book: string; title: string
   layers: Layer[]
   checkpoints: Record<string, 'pending' | 'waiting' | 'approved'>
   scenes: Record<string, number> & { total: number }
@@ -20,7 +21,7 @@ export interface BookStatus {
   job: Job | null
 }
 
-export interface SeriesInfo { name: string; books: string[]; busy: Job | null }
+export interface SeriesInfo { name: string; books: string[]; titles: Record<string, string>; busy: Job | null }
 
 export interface SceneRow { id: string; chapter: string; purpose: string; status: Status; version: number; note: string | null; words: number }
 
@@ -122,7 +123,7 @@ export interface ArcView {
 }
 export interface TensionPreview { chapter: string; from: number; to: number; consequence: string; applied: boolean }
 
-export interface DocumentInfo { key: string; title: string; group: string; kind: 'markdown' | 'yaml' | 'text'; exists: boolean; words: number }
-export interface DocumentFull { key: string; title: string; group: string; kind: 'markdown' | 'yaml' | 'text'; exists: boolean; text: string; truncated: boolean }
+export interface DocumentInfo { key: string; title: string; group: string; kind: 'markdown' | 'yaml' | 'text'; exists: boolean; words: number; editable: boolean }
+export interface DocumentFull { key: string; title: string; group: string; kind: 'markdown' | 'yaml' | 'text'; exists: boolean; text: string; truncated: boolean; editable: boolean }
 
 export interface TrashItem { name: string; series: string; deleted: string | null; books: string[] }

@@ -16,6 +16,8 @@ from .. import review_notes
 from ..prompts import render
 from ..research.notes import notes_for_prompt, stores_for
 from ..research.step import run_research
+from .. import steering
+from ..constants import REDO_NOTE
 from .runner import StepContext, StepResult
 
 log = logging.getLogger("platform_bookforge.layers")
@@ -44,8 +46,10 @@ def generate_document(ctx: StepContext, spec: DocumentSpec) -> StepResult:
     out_rel = spec.out_path.format(book=project.book)
     out = project.resolve(out_rel)
 
-    # An existing file is the author's (or an interrupted run's): check it and keep it.
-    if out.exists() and out.read_text(encoding="utf-8").strip():
+    # An existing file is the author's (or an interrupted run's): check it and keep it. Unless the author asked for the
+    # layer to be written again (`redo`): then the file is the previous version, shown to the model with the author's note.
+    redoing = project.state.layers[spec.layer].note == REDO_NOTE
+    if not redoing and out.exists() and out.read_text(encoding="utf-8").strip():
         text = out.read_text(encoding="utf-8")
         problems = spec.validate(text)
         if problems:
@@ -55,7 +59,8 @@ def generate_document(ctx: StepContext, spec: DocumentSpec) -> StepResult:
         note = "adopted existing file"
     else:
         sink: list = []
-        text = _draft(ctx, spec, sink)
+        previous = out.read_text(encoding="utf-8") if redoing and out.exists() else ""
+        text = _draft(ctx, spec, sink, previous)
         for label, problems in sink:
             review_notes.add(project, spec.layer, label, problems)
             files_extra.append(str(review_notes.path(project).relative_to(project.root)))
@@ -102,7 +107,7 @@ def research_layer(ctx: StepContext, scope: str, focus: str, document: str):
     return outcome
 
 
-def _draft(ctx: StepContext, spec: DocumentSpec, soft_sink: list | None = None) -> str:
+def _draft(ctx: StepContext, spec: DocumentSpec, soft_sink: list | None = None, previous: str = "") -> str:
     """Refine: ask for the document, check it, and ask for corrections until it passes."""
     project = ctx.project
     if ctx.llm is None:
@@ -117,7 +122,7 @@ def _draft(ctx: StepContext, spec: DocumentSpec, soft_sink: list | None = None) 
     values = {**prompt_values(project), **spec.slots(ctx)}
     messages = [
         {"role": "system", "content": render("system", project.root, **values)},
-        {"role": "user", "content": render(spec.prompt, project.root, **values)},
+        {"role": "user", "content": render(spec.prompt, project.root, **values) + steering.addendum(project, spec.layer, previous)},
     ]
 
     return ask_until_valid(ctx, spec.layer, layer_cfg.model, messages, spec.validate, options, spec.strip_preamble,

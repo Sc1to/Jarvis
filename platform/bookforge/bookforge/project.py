@@ -13,6 +13,7 @@ from .state import BookState, load_state, new_state, save_state
 log = logging.getLogger("platform_bookforge.project")
 
 BOOK_ID_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+SERIES_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")  # a series is a folder: lowercase letters, digits, - and _
 
 _GITIGNORE = "books/*/logs/\nbooks/*/work/\n"
 
