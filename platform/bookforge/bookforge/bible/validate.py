@@ -90,12 +90,20 @@ def entity_map(constants: Constants) -> dict[str, Entity]:
     return {e.id: e for e in constants.entities}
 
 
-def _check_entity(entities: dict[str, Entity], eid: str, kind: str | None, label: str, problems: list[str]) -> None:
+def _check_entity(entities: dict[str, Entity], eid: str, kind: str | None, label: str, problems: list[str],
+                  also: tuple[str, ...] = ()) -> None:
+    """The entity must exist and be of `kind` (or one of the `also` kinds). A wrong kind lists the ids that would do."""
     e = entities.get(eid)
     if e is None:
         problems.append(f"{label}: '{eid}' is not in the cast (known ids: {', '.join(sorted(entities)) or 'none'})")
-    elif kind and e.kind != kind:
-        problems.append(f"{label}: '{eid}' is a {e.kind}, expected a {kind}")
+    elif kind and e.kind != kind and e.kind not in also:
+        fitting = sorted(i for i, x in entities.items() if x.kind == kind or x.kind in also)
+        problems.append(f"{label}: '{eid}' is a {e.kind}, expected a {kind}"
+                        + (f" (use one of: {', '.join(fitting[:15])})" if fitting else f" (the cast has no {kind} yet)"))
+
+
+# A setting is where a scene happens: a place, or a thing people are inside (a ship, a carriage) that the cast lists as an object.
+SETTING_ALSO = ("object",)
 
 
 # ── layer 4: acts ───────────────────────────────────────────────────────────
@@ -262,7 +270,7 @@ def parse_chapters(
             problems.append(f"{label}.id is '{ch.id}', expected '{expected}'")
         ch.id, ch.act = expected, act.id
         _check_entity(entities, ch.pov, "character", f"{label}.pov", problems)
-        _check_entity(entities, ch.setting, "place", f"{label}.setting", problems)
+        _check_entity(entities, ch.setting, "place", f"{label}.setting", problems, SETTING_ALSO)
         _check_research_ids(ch.research, fact_ids, label, problems)
         chapters.append(ch)
     allowed = {chapter_id(project.book, first_number + i) for i in range(act.chapter_count)}
@@ -322,7 +330,7 @@ def parse_scenes(
         scene.id = when.id = expected
         scene.chapter = chapter.id
         _check_entity(entities, scene.pov, "character", f"{label}.pov", problems)
-        _check_entity(entities, scene.setting, "place", f"{label}.setting", problems)
+        _check_entity(entities, scene.setting, "place", f"{label}.setting", problems, SETTING_ALSO)
         for c in scene.characters:
             _check_entity(entities, c, "character", f"{label}.characters", problems)
         if scene.pov not in scene.characters:
@@ -407,7 +415,7 @@ def validate_bible(project: Project, require_scenes: bool = False) -> list[str]:
         if acts and ch.act not in act_ids:
             problems.append(f"{ch.id}: act '{ch.act}' is not in acts.yaml")
         _check_entity(entities, ch.pov, "character", f"{ch.id}.pov", problems)
-        _check_entity(entities, ch.setting, "place", f"{ch.id}.setting", problems)
+        _check_entity(entities, ch.setting, "place", f"{ch.id}.setting", problems, SETTING_ALSO)
     chapter_ids = {c.id for c in chapters}
 
     scene_ids = {s.id for s in scenes}
@@ -420,7 +428,7 @@ def validate_bible(project: Project, require_scenes: bool = False) -> list[str]:
         if s.chapter not in chapter_ids:
             problems.append(f"{s.id}: chapter '{s.chapter}' is not in chapters.yaml")
         _check_entity(entities, s.pov, "character", f"{s.id}.pov", problems)
-        _check_entity(entities, s.setting, "place", f"{s.id}.setting", problems)
+        _check_entity(entities, s.setting, "place", f"{s.id}.setting", problems, SETTING_ALSO)
         for c in s.characters:
             _check_entity(entities, c, "character", f"{s.id}.characters", problems)
     if scenes:

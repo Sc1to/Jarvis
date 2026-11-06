@@ -28,7 +28,7 @@ List the CAST AND WORLD of the book: the characters, places, objects and groups 
 
 List every NEW entity the story needs:
 - every character with a part in the plot (give each a short list of fixed facts: appearance that does not change, birthplace, background, voice);
-- every place the story returns to or that matters to the plot;
+- every place the story returns to or that matters to the plot (a ship, train, carriage, house or room that people are inside is a place, even if it also moves; only things people hold or use are objects);
 - key objects and groups (families, institutions, factions) that characters act on or against.
 
 Aim for what the plot needs, not completeness: usually 10 to 30 entities. Add rules of the world only if the story depends on them (how magic works, laws, technology limits).
