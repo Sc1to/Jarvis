@@ -13,7 +13,7 @@ def source_of(web) -> str:
     return getattr(web, "source_name", type(web).__name__)
 
 
-def describe(attempt: Attempt, q: Question, source: str) -> list[str]:
+def describe(attempt: Attempt, q: Question, source: str, show_pages: bool = False) -> list[str]:
     lines = [f"source: {source}", f"question: {q.question}", f"searched for: {q.query}", f"setting: {q.context or '(none)'}", ""]
     lines.append(f"{len(attempt.hits)} result(s):")
     for h in attempt.hits:
@@ -41,6 +41,12 @@ def describe(attempt: Attempt, q: Question, source: str) -> list[str]:
             lines.append(f"    + {f['claim']}\n      quote: \"{f['quote']}\"")
         for f in p.dropped:
             lines.append(f"    - dropped: {f['claim']}\n      why: {f['why']}\n      quote: \"{f['quote']}\"")
+        if show_pages:
+            lines.append("  ---- text shown to the model ----")
+            lines.extend("  | " + ln for ln in (p.shown or "(nothing)").splitlines())
+            lines.append("  ---- the model's raw reply ----")
+            lines.extend("  | " + ln for ln in (p.reply or "(nothing)").splitlines())
+            lines.append("  ----")
     lines.append("")
     lines.append(f"RESULT: {len(attempt.facts)} fact(s) kept" if attempt.facts else f"RESULT: no facts. {attempt.reason}")
     return lines

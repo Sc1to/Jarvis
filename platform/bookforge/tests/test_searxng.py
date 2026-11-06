@@ -455,3 +455,21 @@ def test_the_pick_can_be_switched_off(project):
     q = Question("What did customs clerks do?", "customs clerk 1880s", False, "England, 1880s")
     attempt = answer_question(make_ctx(project, llm, web), web, q, "story", set())
     assert not llm.calls_matching(PICK) and attempt.picked == 0
+
+
+def test_show_pages_prints_what_the_model_saw_and_said(project):
+    web = scripted_web()
+    q = Question("What did customs clerks do?", "customs clerk 1880s", False, "England, 1880s")
+    attempt = answer_question(make_ctx(project, reader(project), web), web, q, "story", set())
+    plain = "\n".join(probe_mod.describe(attempt, q, "searxng"))
+    full = "\n".join(probe_mod.describe(attempt, q, "searxng", show_pages=True))
+    assert "text shown to the model" not in plain
+    assert "text shown to the model" in full and "| " + PAGE_A in full and "raw reply" in full and '"facts"' in full
+
+
+def test_the_research_test_command_shows_pages_on_request(project, monkeypatch):
+    (project.root / "config.yaml").write_text("research:\n  model_pick: false\n")
+    monkeypatch.setattr(cli, "build_client", lambda p: reader(p))
+    monkeypatch.setattr(cli, "build_web_client", lambda p: scripted_web())
+    out = CliRunner().invoke(cli.app, ["research-test", str(project.root), "What did customs clerks do?", "--query", "customs clerk 1880s", "--show-pages"])
+    assert out.exit_code == 0 and "text shown to the model" in out.output and PAGE_A in out.output
