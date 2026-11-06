@@ -15,6 +15,7 @@ export interface BookStatus {
   checkpoints: Record<string, 'pending' | 'waiting' | 'approved'>
   scenes: Record<string, number> & { total: number }
   pending_changes: number
+  pending_needs: number
   manuscript: boolean
   job: Job | null
 }
@@ -31,6 +32,15 @@ export interface ChangeRequest {
   id: string; status: 'pending' | 'applied' | 'rejected'; proposed_by: string; track: string; entity: string
   reason: string; planned: string; observed: string; evidence: string; affects: string[]
   scope: 'within_chapter' | 'later_chapters'; decided_by: string | null; fixed: boolean
+}
+
+export type Stance = 'ground' | 'extrapolate' | 'bend' | 'invent'
+
+/** Something the story needs to know or decide. A rule, assumption or deviation waits for the author while 'proposed'. */
+export interface Need {
+  id: string; scope: 'series' | 'book'; layer: string; question: string; stance: Stance
+  reason: string; rule: string; query: string; context: string; sensitive: boolean
+  status: 'proposed' | 'approved' | 'rejected'; fact_ids: string[]; decided_by: string
 }
 
 export interface SceneDetail {

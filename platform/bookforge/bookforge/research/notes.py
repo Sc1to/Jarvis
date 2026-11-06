@@ -263,3 +263,9 @@ def approved_decisions(project: Project) -> list[Need]:
     for store in stores_for(project).values():
         out += [n for n in store.needs() if n.status == "approved" and n.stance in ("invent", "extrapolate", "bend") and n.rule]
     return out
+
+
+def waiting_decisions(project: Project) -> list[Need]:
+    """Proposed rules, assumptions and deviations that wait for the author (a lookup needs no decision)."""
+    return [n for store in stores_for(project).values() for n in store.needs()
+            if n.status == "proposed" and (n.rule or n.stance == "invent")]

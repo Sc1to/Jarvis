@@ -555,7 +555,9 @@ def test_needs_are_listed_and_decided(book):
     stores_for(book)["book"].add_need(layer="synopsis", question="How does the rifle behave?", stance="invent", rule="Silent.", status="proposed")
     [n] = data(client.get(f"{B}/needs"))
     assert (n["id"], n["scope"], n["status"]) == ("b1-n001", "book", "proposed")
+    assert data(client.get(f"{B}/status"))["pending_needs"] == 1
     assert data(client.post(f"{B}/needs/b1-n001", json={"action": "approve"}))["status"] == "approved"
+    assert data(client.get(f"{B}/status"))["pending_needs"] == 0
     assert data(client.post(f"{B}/needs/b1-n001", json={"rule": "Silent and cold."}))["status"] == "proposed"
     error(client.post(f"{B}/needs/b1-n001", json={"action": "maybe"}), 422)
     error(client.post(f"{B}/needs/b1-n099", json={"action": "approve"}), 400)
