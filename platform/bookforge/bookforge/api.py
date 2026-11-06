@@ -55,6 +55,7 @@ from .jobs import BusyError, JobManager
 from .llm import build_client
 from .project import BOOK_ID_RE, SERIES_NAME_RE, Project
 from .research.search import build_web_client
+from .qc import scene_notes
 from .research.notes import stores_for, waiting_decisions
 from .state import Item
 
@@ -161,6 +162,12 @@ class RedoBody(BaseModel):
     layer: str
     note: str = ""
     cascade: bool = False
+
+
+class FindingBody(BaseModel):
+    question: str
+    action: str  # dismiss | instruct | clear
+    text: str = ""
 
 
 class DocBody(BaseModel):
@@ -362,9 +369,16 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
             "plan": found.model_dump(), "status": item.status, "version": item.version, "note": item.note,
             "text": scenefiles.best_text(project, scene_id), "summary": scenefiles.read(scenefiles.summary_path(project, scene_id)),
             "review": review,
+            "findings": scene_notes.read(project, scene_id),
             "drafts": {p.stem: p.read_text(encoding="utf-8") for p in sorted(scenefiles.scene_dir(project, scene_id).glob("draft-*.md"))},
             "change_requests": [c.model_dump() for c in change_requests.list_requests(project) if c.proposed_by == scene_id],
         })
+
+    @router.post("/series/{series}/books/{book}/scenes/{scene_id}/findings")
+    def scene_finding(series: str, book: str, scene_id: str, body: FindingBody):
+        project = open_project(series, book)
+        require_idle(series)
+        return ok(ops.decide_finding(project, scene_id, body.question, body.action, body.text))
 
     @router.get("/series/{series}/books/{book}/documents")
     def document_list(series: str, book: str):

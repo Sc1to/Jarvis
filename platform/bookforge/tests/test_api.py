@@ -619,3 +619,20 @@ def test_a_running_job_can_be_stopped_through_the_api(book):
     api.jobs.wait(job.id, 5)
     assert data(client.get(f"{B}/jobs/{job.id}"))["status"] == "cancelled"
     error(client.post(f"{B}/jobs/{job.id}/cancel"), 400)  # nothing running any more
+
+
+def test_a_finding_of_a_flagged_scene_can_be_dismissed_instructed_and_cleared_through_the_api(book):
+    from test_flagged_scenes import FACT, flag_the_scene
+    from test_prose_qc import SID
+    flag_the_scene(book)
+    base = f"{B}/scenes/{SID}"
+    detail = data(client.get(base))
+    assert detail["status"] == "flagged" and detail["findings"] == {"dismissed": [], "instructions": {}}
+    assert FACT in [f["question"] for f in detail["review"]["continuity"]["flags"]]
+    notes = data(client.post(f"{base}/findings", json={"question": FACT, "action": "instruct", "text": "she dyes them"}))
+    assert notes["instructions"] == {FACT: "she dyes them"}
+    assert data(client.post(f"{base}/findings", json={"question": FACT, "action": "dismiss"}))["dismissed"] == [FACT]
+    assert data(client.get(base))["findings"]["dismissed"] == [FACT]
+    assert data(client.post(f"{base}/findings", json={"question": FACT, "action": "clear"})) == {"dismissed": [], "instructions": {}}
+    error(client.post(f"{base}/findings", json={"question": "Nope", "action": "dismiss"}), 400)
+    error(client.post(f"{base}/findings", json={"question": FACT, "action": "instruct", "text": ""}), 400)

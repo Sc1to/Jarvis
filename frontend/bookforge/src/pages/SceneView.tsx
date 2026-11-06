@@ -1,8 +1,8 @@
 import { Fragment, useState, type ReactNode } from 'react'
-import { bookPath } from '../lib/api'
-import { useApi } from '../lib/hooks'
+import { bookPath, post } from '../lib/api'
+import { useAction, useApi } from '../lib/hooks'
 import { href } from '../lib/route'
-import type { BookStatus, Review, SceneDetail } from '../lib/types'
+import type { BookStatus, Review, SceneDetail, SceneFindings } from '../lib/types'
 import { Button, Card, Empty, ErrorBanner, Loading, StatusBadge } from '../components/ui'
 import { ChangeDiff } from './Inbox'
 
@@ -96,7 +96,45 @@ function Compare({ detail }: { detail: SceneDetail }) {
   )
 }
 
-function ReviewPanel({ review }: { review: Review | null }) {
+/** One finding of the continuity check, with what you can do about it. Applied the next time the scene is run. */
+function FindingRow({ question, evidence, tone, notes, scenePath, locked, onDone }: {
+  question: string; evidence?: string; tone: 'flag' | 'unsure'; notes: SceneFindings; scenePath: string; locked: boolean; onDone: () => void
+}) {
+  const act = useAction()
+  const [text, setText] = useState(notes.instructions[question] ?? '')
+  const dismissed = notes.dismissed.includes(question)
+  const instruction = notes.instructions[question]
+  const send = async (action: 'dismiss' | 'instruct' | 'clear') => {
+    if (await act.run(() => post(`${scenePath}/findings`, { question, action, text: action === 'instruct' ? text : '' }))) onDone()
+  }
+  return (
+    <li className="space-y-2 rounded-md border border-slate-200 p-2">
+      <p className={tone === 'flag' ? 'text-red-800' : 'text-slate-600'}>{tone === 'flag' ? 'Flag' : 'Unsure'}: {question}</p>
+      {evidence && <blockquote className="border-l-4 border-slate-300 pl-2 text-xs italic text-slate-600">“{evidence}”</blockquote>}
+      {dismissed ? (
+        <p className="flex flex-wrap items-center gap-2 text-xs text-slate-600">Dismissed as a false alarm: not asked about again for this scene.
+          <Button disabled={act.busy || locked} onClick={() => send('clear')}>Undo</Button></p>
+      ) : (
+        <>
+          {instruction && <p className="text-xs text-emerald-800">Instruction saved: {instruction}</p>}
+          <label className="block text-xs font-medium text-slate-700">What should the writer do about it?
+            <textarea value={text} onChange={(e) => setText(e.target.value)} rows={2} disabled={act.busy || locked}
+              placeholder="For example: keep the grey eyes, and say in the first line that she dyes them."
+              className="mt-1 block w-full rounded-md border border-slate-300 p-2 text-sm font-normal" />
+          </label>
+          <ErrorBanner message={act.error} onClose={act.clear} />
+          <div className="flex flex-wrap gap-2">
+            <Button kind="primary" disabled={act.busy || locked || !text.trim() || text.trim() === instruction} onClick={() => send('instruct')}>Save instruction</Button>
+            <Button disabled={act.busy || locked} onClick={() => send('dismiss')} title="The check is wrong here: do not ask about this again for this scene">False alarm</Button>
+            {instruction && <Button disabled={act.busy || locked} onClick={() => { setText(''); void send('clear') }}>Remove instruction</Button>}
+          </div>
+        </>
+      )}
+    </li>
+  )
+}
+
+function ReviewPanel({ review, findings, scenePath, locked, onDone }: { review: Review | null; findings: SceneFindings; scenePath: string; locked: boolean; onDone: () => void }) {
   if (!review) return <Empty>No review yet: this scene has not been written.</Empty>
   return (
     <div className="space-y-3">
@@ -124,9 +162,12 @@ function ReviewPanel({ review }: { review: Review | null }) {
       {review.continuity && (
         <Card title={`Continuity (${review.continuity.questions} questions)`}>
           {!review.continuity.flags.length && !review.continuity.unsure.length && <p className="text-sm text-slate-500">All answers were clear.</p>}
-          <ul className="space-y-1 text-sm">
-            {review.continuity.flags.map((f) => <li key={f.question} className="text-red-800">Flag: {f.question}</li>)}
-            {review.continuity.unsure.map((u) => <li key={u.question} className="text-slate-600">Unsure ({u.answer}, {u.confidence}): {u.question}</li>)}
+          {(review.continuity.flags.length > 0 || review.continuity.unsure.length > 0) && (
+            <p className="mb-2 text-xs text-slate-600">What you say here is used the next time you press Run: the flagged scene is first revised with it, and a finding you call a false alarm is not asked about again for this scene.</p>
+          )}
+          <ul className="space-y-2 text-sm">
+            {review.continuity.flags.map((f) => <FindingRow key={f.question} question={f.question} evidence={f.evidence} tone="flag" notes={findings} scenePath={scenePath} locked={locked} onDone={onDone} />)}
+            {review.continuity.unsure.map((u) => <FindingRow key={u.question} question={`${u.question}`} evidence={u.evidence} tone="unsure" notes={findings} scenePath={scenePath} locked={locked} onDone={onDone} />)}
           </ul>
         </Card>
       )}
@@ -173,7 +214,7 @@ export default function SceneView({ series, book, id, status, reload }: { series
         </div>
       )}
       {view === 'compare' && <Compare detail={x} />}
-      {view === 'review' && <ReviewPanel review={x.review} />}
+      {view === 'review' && <ReviewPanel review={x.review} findings={x.findings ?? { dismissed: [], instructions: {} }} scenePath={`${base}/scenes/${encodeURIComponent(id)}`} locked={status.job?.status === 'running'} onDone={d.reload} />}
       {view === 'plan' && (
         <div className="space-y-3">
           <Card title="Plan">

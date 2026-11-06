@@ -27,6 +27,7 @@ from ..errors import BookforgeError, LayerError
 from ..prompts import render
 from ..qc.extract import extract_observed, record_observed
 from ..qc.mechanical import CheckContext, check_scene, load_banned
+from ..qc import scene_notes
 from ..qc.scene import settle_scene
 from ..state import Item, now
 from .document import ask_until_valid, prompt_values, word_count
@@ -144,6 +145,32 @@ def record_extraction(ctx: StepContext, scene: Scene, scenes: list[Scene], text:
     return len(extraction.gaps), filed
 
 
+def _previous_problems(project, sid: str) -> str:
+    """What was wrong the last time this scene was flagged, and what the author said about it, for the writer. "" if nothing."""
+    raw = scenefiles.read(scenefiles.review_path(project, sid))
+    try:
+        review = json.loads(raw) if raw else {}
+    except ValueError:
+        review = {}
+    notes = scene_notes.read(project, sid)
+    lines: list[str] = []
+    for f in (review.get("continuity") or {}).get("flags") or []:
+        q = f.get("question", "")
+        if not q or q in notes["dismissed"]:
+            continue
+        line = f"- It contradicted this fixed fact: {q}." + (f" (It said: \"{f['evidence']}\")" if f.get("evidence") else "")
+        if notes["instructions"].get(q):
+            line += f" The author says: {notes['instructions'][q]}"
+        lines.append(line)
+    flagged_text = {f.get("question") for f in (review.get("continuity") or {}).get("flags") or []}
+    for b in review.get("blocking") or []:
+        if not any(q and q in b for q in flagged_text):
+            lines.append(f"- {b}")
+    if not lines:
+        return ""
+    return ("\n\n## Problems found in the previous attempt at this scene (do not repeat them)\n\n" + "\n".join(lines)[:1800])
+
+
 def write_scene(ctx: StepContext, scene: Scene, scenes: list[Scene], drafts: int, words: tuple[int, int]) -> tuple[bool, list[str]]:
     """Write, check and settle one scene. Returns (accepted, files)."""
     project = ctx.project
@@ -166,13 +193,26 @@ def write_scene(ctx: StepContext, scene: Scene, scenes: list[Scene], drafts: int
         review.update(source=source, chosen="final", mechanical={"final": report.to_dict()})
         reasons = [i.message for i in report.blocking]
     else:
-        if _item(project, sid).status == "flagged":
-            for old in list(d.glob("draft-*.md")) + [scenefiles.revised_path(project, sid)]:
-                old.unlink(missing_ok=True)
-        texts = _write_drafts(ctx, scene, briefing.text(), drafts, words)
-        _set_status(project, sid, "drafted")
-        paths += [scenefiles.draft_path(project, sid, i) for i in range(1, len(texts) + 1)]
-        result = settle_scene(ctx, scene, scenes, {f"draft-{i}": t for i, t in enumerate(texts, 1)}, check_ctx)
+        flagged_before = _item(project, sid).status == "flagged"
+        problems_section = _previous_problems(project, sid) if flagged_before else ""
+        result = None
+        if flagged_before and project.config.qc.revise_flagged:
+            # Revise what was written, with what was found, before throwing it away and starting again.
+            saved = scenefiles.best_text(project, sid)
+            if saved and saved.strip():
+                _set_status(project, sid, "drafted")
+                attempt = settle_scene(ctx, scene, scenes, {"saved": saved}, check_ctx)
+                if attempt.accepted:
+                    result = attempt
+                    review["revised_after_flag"] = True
+        if result is None:
+            if flagged_before:
+                for old in list(d.glob("draft-*.md")) + [scenefiles.revised_path(project, sid)]:
+                    old.unlink(missing_ok=True)
+            texts = _write_drafts(ctx, scene, briefing.text() + problems_section, drafts, words)
+            _set_status(project, sid, "drafted")
+            paths += [scenefiles.draft_path(project, sid, i) for i in range(1, len(texts) + 1)]
+            result = settle_scene(ctx, scene, scenes, {f"draft-{i}": t for i, t in enumerate(texts, 1)}, check_ctx)
         text, source, reasons = result.text, "written", [] if result.accepted else result.reasons
         review.update(source=source, **result.review)
         report = check_scene(text, check_ctx)

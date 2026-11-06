@@ -239,7 +239,7 @@ def _problems(ctx: StepContext, scene: Scene, scenes: list[Scene], text: str, st
         error = cont.error
         for f in cont.flags:
             if f.fixable:
-                flags.append(Flag("continuity", "contradiction", f.message(), quote=f.evidence))
+                flags.append(Flag("continuity", f.kind, f.message(), quote=f.evidence, fact=f.question))
             else:
                 unfixable.append(f.message())
     for cr in (st.rejected if st else []):

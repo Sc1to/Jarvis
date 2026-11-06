@@ -169,6 +169,48 @@ def decide_need(project: Project, need_id: str, approve: bool | None = None, sta
     return need
 
 
+# ── what the author says about a scene's findings ────────────────────────────
+
+FINDING_ACTIONS = ("dismiss", "instruct", "clear")
+
+
+def decide_finding(project: Project, scene_id: str, question: str, action: str, text: str = "") -> dict:
+    """Dismiss a finding of the continuity check as a false alarm, give the writer an instruction about it, or take either back.
+
+    Applied the next time the scene is run: a dismissed finding is not asked about again for this scene, and an instruction is
+    added to the problem when that finding is revised. Returns the author's notes for the scene.
+    """
+    from . import scenefiles
+    from .qc import scene_notes
+    if action not in FINDING_ACTIONS:
+        raise BookforgeError(f"action must be one of: {', '.join(FINDING_ACTIONS)}")
+    scenes = bible_store.load_scenes(project) if bible_store.scenes_path(project).exists() else []
+    if not any(s.id == scene_id for s in scenes):
+        raise BookforgeError(f"'{scene_id}' is not a scene of this book")
+    raw = scenefiles.read(scenefiles.review_path(project, scene_id))
+    try:
+        review = json.loads(raw) if raw else {}
+    except ValueError:
+        review = {}
+    cont = review.get("continuity") or {}
+    known = {f.get("question") for f in cont.get("flags") or []} | {u.get("question") for u in cont.get("unsure") or []}
+    notes = scene_notes.read(project, scene_id)
+    known |= set(notes["dismissed"]) | set(notes["instructions"])
+    if question not in known:
+        raise BookforgeError("that is not one of this scene's findings (see its review)")
+    if action == "dismiss":
+        scene_notes.dismiss(project, scene_id, question)
+    elif action == "instruct":
+        if not text.strip():
+            raise BookforgeError("write what the writer should do about it")
+        scene_notes.instruct(project, scene_id, question, text)
+    else:
+        scene_notes.clear(project, scene_id, question)
+    if project.config.git.commit_each_step:
+        vcs.commit(project.root, f"{scene_id}: you {'cleared a note on' if action == 'clear' else action + 'ed'} a finding", [scenefiles.scene_dir(project, scene_id)])
+    return scene_notes.read(project, scene_id)
+
+
 # ── writing a planning layer again ────────────────────────────────────────────
 
 REDOABLE = LAYER_ORDER[:-1]  # everything before the prose; written scenes are redone with `rewrite`

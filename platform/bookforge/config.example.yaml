@@ -80,6 +80,7 @@ qc:
   repeat_ngram_scenes: 2               # earlier scenes that must contain a phrase before it is flagged
   judge_drafts: true                   # choose between drafts with the pairwise judge (otherwise by mechanical score)
   continuity_check: true               # yes/no questions about the story state, the cast and the world
+  revise_flagged: true                # a flagged scene is first revised from its saved text with what was found, then written again
   critic_check: true                   # the rubric critique
   extract_observed: true               # record what each accepted scene says about the tracked states
   review_structure: true               # critic review of acts, chapters and scene plans against their parents

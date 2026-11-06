@@ -148,6 +148,7 @@ class QC(_Strict):
     # the model-based layers; switch any off to make a run cheaper
     judge_drafts: bool = True  # choose between drafts with the pairwise judge (otherwise by mechanical score)
     continuity_check: bool = True  # yes/no questions about the story state, the cast and the world
+    revise_flagged: bool = True  # a flagged scene is first revised from its saved text with what was found; only then written again
     critic_check: bool = True  # the rubric critique
     extract_observed: bool = True  # record what each accepted scene says about the tracked states
     review_structure: bool = True  # critic review of acts, chapters and scene plans against their parents
