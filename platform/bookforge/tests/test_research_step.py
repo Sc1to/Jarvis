@@ -91,7 +91,7 @@ def test_questions_are_researched_and_facts_stored_with_sources(project):
     assert first.url == URL_A and first.quote == "Most clavicle fractures heal in six weeks"
     assert first.sensitive is True and stored[1].sensitive is False
     assert first.layer == "series_north_star" and len(first.fetched) == 10
-    assert set(outcome.files) == {"research/sources.jsonl", "research/questions.jsonl", "research/series_north_star.md"}
+    assert set(outcome.files) == {"research/sources.jsonl", "research/questions.jsonl", "research/series_north_star.md", "research/needs.jsonl", "research/needs.md"}
     assert all((project.root / f).exists() for f in outcome.files)
     assert "research: 2/2 questions answered, 2 facts" == outcome.summary()
 

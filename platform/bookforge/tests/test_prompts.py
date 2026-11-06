@@ -13,7 +13,7 @@ def test_every_template_exists_and_has_only_known_slots(name):
     template = (prompts.PROMPT_DIR / f"{name}.md").read_text()
     known = {"language", "pov", "tense", "target_words", "book_id", "premise", "series_north_star",
              "book_north_star", "ledger", "problems", "research_notes", "layer_focus", "document",
-             "max_questions", "question", "url", "page_text", "setting", "story", "facts"}
+             "max_questions", "question", "url", "page_text", "setting", "story", "facts", "realism"}
     assert prompts.slots_in(template) <= known
 
 

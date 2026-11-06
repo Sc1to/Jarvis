@@ -54,8 +54,9 @@ def catalog(project: Project) -> list[Doc]:
         Doc("banned", "Banned phrases", "Voice", "text", root / project.config.qc.banned_phrases),
     ]
     for scope, directory in (("series", root / "research"), ("book", book / "research")):
+        docs.append(Doc(f"needs-{scope}", f"Needs and decisions ({scope})", "Research", "markdown", directory / "needs.md"))
         for p in sorted(directory.glob("*.md")) if directory.is_dir() else []:
-            if _STEM.match(p.stem):
+            if _STEM.match(p.stem) and p.name != "needs.md":
                 docs.append(Doc(f"research-{scope}-{p.stem}", f"Research: {p.stem.replace('_', ' ')} ({scope})", "Research", "markdown", p))
     return docs
 
