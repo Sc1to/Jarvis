@@ -6,6 +6,7 @@ export interface Layer { name: string; status: Status; version: number; note: st
 export interface JobActivity {
   layer?: string | null; scene?: string | null; step?: string | null
   calls?: number; scenes_done?: number
+  prompt_tokens?: number; completion_tokens?: number  // reported by the model server; absent when it reports none
   call_started?: string; call_label?: string; call_role?: string; last_call_finished?: string
 }
 

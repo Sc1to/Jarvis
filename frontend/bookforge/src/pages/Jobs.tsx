@@ -19,6 +19,13 @@ export default function Jobs({ series, book }: { series: string; book: string })
             <span className={`rounded-full px-2 py-0.5 text-xs ${TONE[j.status]}`}>{j.status}</span>
           </div>
           <p className="text-xs text-slate-500">{fmtTime(j.started)}{j.finished ? ` → ${fmtTime(j.finished)}` : ''}</p>
+          {j.activity && (j.activity.calls ?? 0) > 0 && (
+            <p className="mt-1 text-xs text-slate-600">
+              {j.activity.calls} model calls{j.activity.scenes_done ? `, ${j.activity.scenes_done} scene(s) finished` : ''}
+              {(j.activity.prompt_tokens || j.activity.completion_tokens)
+                ? `, ${((j.activity.prompt_tokens ?? 0) + (j.activity.completion_tokens ?? 0)).toLocaleString()} tokens (${(j.activity.prompt_tokens ?? 0).toLocaleString()} in, ${(j.activity.completion_tokens ?? 0).toLocaleString()} out)` : ''}
+            </p>
+          )}
           {j.error && <p className="mt-1 break-words text-xs text-red-700">{j.error}</p>}
           {j.result?.detail && <p className="mt-1 whitespace-pre-line break-words text-xs text-slate-700">{String(j.result.detail)}</p>}
           {(j.result?.ran?.length ?? 0) > 0 && <p className="mt-1 text-xs text-slate-600">Layers accepted: {(j.result?.ran as string[]).join(', ')}</p>}

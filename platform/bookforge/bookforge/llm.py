@@ -97,9 +97,9 @@ def repeated_share(text: str) -> float:
 class TruncatedReply(LLMError):
     """The model stopped because it ran out of tokens (finish_reason=length), so the reply is incomplete."""
 
-    def __init__(self, message: str, tail: str = "", chars: int = 0, repeated: float = 0.0):
+    def __init__(self, message: str, tail: str = "", chars: int = 0, repeated: float = 0.0, usage: dict | None = None):
         super().__init__(message)
-        self.tail, self.chars, self.repeated = tail, chars, repeated
+        self.tail, self.chars, self.repeated, self.usage = tail, chars, repeated, usage
 
     @property
     def repeating(self) -> bool:
@@ -107,7 +107,10 @@ class TruncatedReply(LLMError):
 
     def extras(self) -> dict:
         """What the call log keeps about the cut-off reply, so a repeating model can be told from a merely long reply."""
-        return {"response_chars": self.chars, "response_tail": self.tail, "repeated_share": round(self.repeated, 3)}
+        out = {"response_chars": self.chars, "response_tail": self.tail, "repeated_share": round(self.repeated, 3)}
+        if self.usage:
+            out["usage"] = self.usage  # the tokens were spent although the reply was unusable: the morning report counts them
+        return out
 
 
 class _Retryable(Exception):
@@ -203,6 +206,7 @@ class HttpLLMClient:
                     data = self._post(url, body, endpoint)
                 finally:
                     activity.call_finished()
+                activity.usage(data.get("usage") if isinstance(data, dict) else None)
                 text, finish, usage = self._parse(data, role)
             except _Retryable as e:
                 last = e
@@ -272,7 +276,7 @@ class HttpLLMClient:
         finish = choice.get("finish_reason")
         if finish == "length":
             raise TruncatedReply(f"{role} model reply was cut off (finish_reason=length); raise max_tokens or shorten the task",
-                                 tail=text.strip()[-300:], chars=len(text), repeated=repeated_share(text))
+                                 tail=text.strip()[-300:], chars=len(text), repeated=repeated_share(text), usage=data.get("usage"))
         return text, finish, data.get("usage")
 
     def _record(self, record: dict, started: float, attempts: int, **extra) -> None:

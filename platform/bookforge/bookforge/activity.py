@@ -52,3 +52,14 @@ def call_finished() -> None:
         s.pop("call_role", None)
         s.pop("call_label", None)
         s["last_call_finished"] = _now()
+
+
+def usage(reported: object) -> None:
+    """Add the tokens a model reply reports (`usage` of an OpenAI-compatible response) to this job's totals, cut-off replies included."""
+    s = _state()
+    if s is None or not isinstance(reported, dict):
+        return
+    for key in ("prompt_tokens", "completion_tokens"):
+        n = reported.get(key)
+        if isinstance(n, int) and not isinstance(n, bool) and n >= 0:
+            s[key] = int(s.get(key, 0)) + n
