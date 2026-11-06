@@ -344,3 +344,53 @@ def test_the_limit_is_never_raised_above_the_cap_or_when_none_was_given(tmp_path
     with pytest.raises(LLMError):
         c.complete("critic", MSGS, max_tokens=MAX_TOKENS_CAP)
     assert seen == [MAX_TOKENS_CAP]
+
+
+# ── a cut-off reply: no growth when told not to, repetition detected, the tail logged ──
+
+LOOP = "and then she turned the page and read the same line again " * 40
+
+
+def test_a_caller_that_does_not_want_a_longer_reply_gets_one_request_and_a_clear_message(tmp_path):
+    seen = []
+
+    def handler(req):
+        seen.append(json.loads(req.content)["max_tokens"])
+        return ok(" ".join(f"word{i}" for i in range(300)), finish="length")  # long, but not repeating
+
+    c = client(handler, tmp_path)
+    with pytest.raises(LLMError) as e:
+        c.complete("critic", MSGS, max_tokens=500, grow=False)
+    assert seen == [500] and "the reply is longer than this call allows" in str(e.value)
+    assert "grow" not in json.dumps(records(tmp_path)[0].get("messages")) and len(records(tmp_path)) == 1
+
+
+def test_a_model_repeating_itself_is_not_given_more_tokens_and_is_named(tmp_path):
+    from bookforge.llm import TruncatedReply
+    seen = []
+
+    def handler(req):
+        seen.append(json.loads(req.content)["max_tokens"])
+        return ok(LOOP, finish="length")
+
+    c = client(handler, tmp_path)
+    with pytest.raises(TruncatedReply) as e:
+        c.complete("critic", MSGS, max_tokens=500)  # growth is allowed, but this reply is a loop
+    assert seen == [500] and e.value.repeating
+    assert "the model is repeating itself" in str(e.value) and "of the reply is repeated text" in str(e.value)
+
+
+def test_the_call_log_keeps_the_end_of_a_cut_off_reply_and_how_repeated_it_was(tmp_path):
+    c = client(lambda req: ok(LOOP, finish="length"), tmp_path)
+    with pytest.raises(LLMError):
+        c.complete("critic", MSGS, max_tokens=500, grow=False)
+    rec = records(tmp_path)[0]
+    assert rec["ok"] is False and rec["response_chars"] == len(LOOP)
+    assert rec["response_tail"] == LOOP.strip()[-300:] and rec["repeated_share"] > 0.9
+
+
+def test_repeated_share_is_low_for_prose_and_high_for_a_loop():
+    from bookforge.llm import repeated_share
+    prose = " ".join(f"word{i}" for i in range(300))
+    assert repeated_share(prose) == 0.0 and repeated_share(LOOP) > 0.9
+    assert repeated_share("too short") == 0.0 and repeated_share("") == 0.0

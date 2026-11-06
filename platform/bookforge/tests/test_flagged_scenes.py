@@ -176,3 +176,52 @@ def test_a_scene_whose_writer_reply_stays_cut_off_is_flagged_and_the_run_goes_on
     first = items[SID]
     assert first.status == "flagged" and "the writer's reply was cut off" in first.note
     assert calls["n"] >= 2  # every scene was tried: the run did not stop at the first
+
+
+# ── drafts: a cut-off draft is a failed draft, not a reason to ask for more tokens ──
+
+def _cut(messages):
+    from bookforge.llm import TruncatedReply
+    raise TruncatedReply("writer model reply was cut off at 5100 tokens (finish_reason=length): the reply is longer than this call allows")
+
+
+def test_one_cut_off_draft_leaves_the_other_to_carry_the_scene(book):
+    from bookforge.layers.prose import _write_drafts
+    from bookforge.layers.runner import StepContext
+    from bookforge.bible import store as bible_store
+    scene = next(s for s in bible_store.load_scenes(book) if s.id == SID)
+    seen = []
+
+    def draft(messages):
+        seen.append(len(seen))
+        return _cut(messages) if len(seen) == 1 else good(SID, 2)
+
+    llm = RuleLLM([("Write the scene described below", draft)])
+    texts = _write_drafts(StepContext(project=book, layer="prose", llm=llm), scene, "briefing", 2, (100, 600))
+    assert len(texts) == 1 and len(seen) == 2  # both were tried; only the second survived
+    assert not scenefiles.draft_path(book, SID, 1).exists() and scenefiles.draft_path(book, SID, 2).exists()
+    assert all(c["options"]["grow"] is False for c in llm.calls)
+
+
+def test_when_every_draft_is_cut_off_the_scene_says_how_and_what_to_do(book):
+    from bookforge.layers.prose import _write_drafts
+    from bookforge.layers.runner import StepContext
+    from bookforge.llm import TruncatedReply
+    from bookforge.bible import store as bible_store
+    scene = next(s for s in bible_store.load_scenes(book) if s.id == SID)
+    llm = RuleLLM([("Write the scene described below", _cut)])
+    with pytest.raises(TruncatedReply) as e:
+        _write_drafts(StepContext(project=book, layer="prose", llm=llm), scene, "briefing", 2, (100, 600))
+    assert f"every draft was cut off at {int(600 * 1.6) + 300} tokens, more than the 600 words a scene may have" in str(e.value)
+    assert "raise layers.prose.max_tokens" in str(e.value)
+
+
+def test_the_token_ceiling_of_a_draft_can_be_set_separately_from_the_words(book):
+    from bookforge.layers.prose import _write_drafts
+    from bookforge.layers.runner import StepContext
+    from bookforge.bible import store as bible_store
+    scene = next(s for s in bible_store.load_scenes(book) if s.id == SID)
+    book.config.layers["prose"].max_tokens = 9000
+    llm = RuleLLM([("Write the scene described below", lambda m: good(SID, 1))])
+    _write_drafts(StepContext(project=book, layer="prose", llm=llm), scene, "briefing", 1, (100, 600))
+    assert llm.calls[0]["options"]["max_tokens"] == 9000  # not 600 x 1.6 + 300
