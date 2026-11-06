@@ -316,3 +316,42 @@ def test_an_act_that_only_extends_an_existing_track_is_fine(p, constants):
     first, _ = parse_chapters(dump(chapters_act1()), **ctx_args(p, constants))
     bundle, problems = parse_chapters(dump(chapters_act2()), **ctx_args(p, constants, 2, first.tracks))
     assert problems == [] and bundle.tracks
+
+
+# ── a new track without its owner ───────────────────────────────────────────
+
+def _track_entities():
+    from bookforge.bible.models import Constants, Entity
+    from bookforge.bible.validate import entity_map
+    return entity_map(Constants(entities=[Entity(id=i, kind=k, name=i, facts=["f"]) for i, k in
+                                          (("anna", "character"), ("anna-voss", "character"), ("jonas", "character"), ("harbor", "place"))]))
+
+
+def test_a_new_track_named_after_its_owner_gets_the_owner_filled_in():
+    from bookforge.bible.validate import _parse_tracks
+    problems: list[str] = []
+    raw = [{"id": "jonas-trust-in-anna", "kind": "relationship", "plan": [{"from": "b1.ch07.s1", "value": "wary"}]},
+           {"id": "anna-voss-debt", "plan": [{"from": "b1.ch07.s2", "value": "owes the guild"}]}]
+    out = _parse_tracks(raw, entities=_track_entities(), existing={}, allowed_from={"b1.ch07.s1", "b1.ch07.s2"}, prefix="tracks", problems=problems)
+    assert problems == [] and [(t.id, t.entity) for t in out] == [("jonas-trust-in-anna", "jonas"), ("anna-voss-debt", "anna-voss")]  # the longest match wins
+
+
+def test_a_new_track_whose_owner_cannot_be_told_gets_a_message_that_says_what_to_do():
+    from bookforge.bible.validate import _parse_tracks
+    problems: list[str] = []
+    out = _parse_tracks([{"id": "ledger-location", "plan": [{"from": "b1.ch07.s1", "value": "in the vestry"}]}],
+                        entities=_track_entities(), existing={}, allowed_from={"b1.ch07.s1"}, prefix="tracks", problems=problems)
+    assert out == [] and len(problems) == 1
+    assert "tracks[0]: track 'ledger-location' is not an existing track and has no entity" in problems[0]
+    assert "give 'entity:' (one of: anna, anna-voss, harbor, jonas)" in problems[0] and "Field required" not in problems[0]
+
+
+def test_extending_an_existing_track_still_needs_no_entity():
+    from bookforge.bible.models import Track
+    from bookforge.bible.validate import _parse_tracks
+    existing = {"ledger-location": Track.model_validate({"id": "ledger-location", "entity": "harbor", "kind": "location",
+                                                          "plan": [{"from": "b1.ch01", "value": "in the vestry"}]})}
+    problems: list[str] = []
+    out = _parse_tracks([{"id": "ledger-location", "plan": [{"from": "b1.ch07.s1", "value": "moved"}]}],
+                        entities=_track_entities(), existing=existing, allowed_from={"b1.ch07.s1"}, prefix="tracks", problems=problems)
+    assert problems == [] and out[0].entity == "harbor"
