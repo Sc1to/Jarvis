@@ -17,13 +17,52 @@ from .models import Act, Chapter, Constants, Entity, Rule, Scene, TimelineEntry,
 from .positions import act_id, canonical, chapter_id, parse_act_id, parse_position, scene_id
 
 
+# A model often writes `summary: Anna finds it: the ledger` with the colon unquoted, which is not valid YAML.
+_KEY_LINE = re.compile(r"^(?P<lead>\s*(?:-\s+)*)(?P<key>[A-Za-z_][\w .-]*?):[ \t]+(?P<value>\S.*?)\s*$")
+_ALREADY_FINE = ('"', "'", "|", ">", "[", "{", "&", "*", "!", "#")
+
+
+def quote_plain_colons(text: str) -> str:
+    """Wrap in double quotes the plain `key: value` values that contain ': ', ' #' or end in ':' (YAML cannot read them).
+
+    Only used after the text failed to parse, and only on single-line values; anything else is left as it was.
+    """
+    out = []
+    block_indent: int | None = None  # inside a `|` or `>` block: its lines are text, not keys
+    for line in text.splitlines():
+        indent = len(line) - len(line.lstrip())
+        if block_indent is not None:
+            if not line.strip() or indent > block_indent:
+                out.append(line)
+                continue
+            block_indent = None
+        m = _KEY_LINE.match(line)
+        if m and re.fullmatch(r"[|>][+-]?\d*", m["value"]):
+            block_indent = indent
+        elif m and not m["value"].startswith(_ALREADY_FINE) and (": " in m["value"] or " #" in m["value"] or m["value"].endswith(":")):
+            value = m["value"].replace("\\", "\\\\").replace('"', '\\"')
+            line = f'{m["lead"]}{m["key"]}: "{value}"'
+        out.append(line)
+    return "\n".join(out) + ("\n" if text.endswith("\n") else "")
+
+
 def load_reply_yaml(text: str):
-    """The YAML in a model reply. Returns (data, error)."""
+    """The YAML in a model reply. Returns (data, error). A reply with unquoted colons in its text is repaired and read."""
     try:
         return yaml.safe_load(text), None
-    except yaml.YAMLError as e:
-        first = str(e).splitlines()[0] if str(e) else "unknown error"
-        return None, f"the reply is not valid YAML ({first}). Quote any text that contains a colon."
+    except yaml.YAMLError as first_error:
+        try:
+            return yaml.safe_load(quote_plain_colons(text)), None
+        except yaml.YAMLError:
+            pass
+        e = first_error
+    first = str(e).splitlines()[0] if str(e) else "unknown error"
+    mark = getattr(e, "problem_mark", None)
+    lines = text.splitlines()
+    where = ""
+    if mark is not None and 0 <= mark.line < len(lines):
+        where = f" at line {mark.line + 1}: {lines[mark.line].strip()[:120]!r}"
+    return None, f"the reply is not valid YAML ({first}){where}. Put double quotes around every text value that contains a colon."
 
 
 def _items(data, key: str, problems: list[str], required: bool = True) -> list:
