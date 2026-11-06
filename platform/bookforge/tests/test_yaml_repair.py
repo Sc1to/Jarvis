@@ -62,3 +62,58 @@ def test_text_inside_a_block_scalar_is_never_rewritten():
     item = data["a"][0]
     assert item["note"] == "broken: here" and item["after"] == "also: fixed"
     assert item["body"] == "keep: this: as it is\nand: this\n"
+
+
+# ── valid YAML that is not the text the model meant ─────────────────────────
+
+def test_a_beat_with_a_colon_is_read_as_the_sentence_it_is():
+    from bookforge.bible.models import Scene
+    data, error = load_reply_yaml("""scene:
+  id: b1.ch11.s1
+  purpose: Anna decides
+  pov: anna
+  setting: harbor
+  characters: [anna]
+  beats:
+    - Anna reaches the vestry
+    - Jonas confronts her: she lies about the ledger
+    - She leaves
+""")
+    assert error is None
+    assert data["scene"]["beats"][1] == {"Jonas confronts her": "she lies about the ledger"}  # what YAML makes of it
+    scene = Scene.model_validate(data["scene"])
+    assert scene.beats[1] == "Jonas confronts her: she lies about the ledger"
+
+
+def test_numbers_and_dates_become_text_where_text_is_expected():
+    from bookforge.bible.models import Act, TimelineEntry
+    data, _ = load_reply_yaml("id: b1.act1\ntitle: 1883\nsummary: s\npurpose: p\nturning_point: t\nchapter_count: 3\n")
+    assert Act.model_validate(data).title == "1883"
+    data, _ = load_reply_yaml("id: b1.ch01.s1\nday: 1\ntime: dusk\ndate: 1883-04-12\ntravel: 3\n")
+    entry = TimelineEntry.model_validate(data)
+    assert entry.date == "1883-04-12" and entry.travel == "3"
+
+
+def test_a_mapping_with_several_keys_or_a_nested_value_is_still_an_error():
+    from pydantic import ValidationError
+    from bookforge.bible.models import Scene
+    base = {"id": "b1.ch01.s1", "purpose": "p", "pov": "anna", "setting": "harbor", "characters": ["anna"]}
+    for bad in ({"a": "b", "c": "d"}, {"a": ["b", "c"]}, ["x"]):
+        with pytest.raises(ValidationError):
+            Scene.model_validate({**base, "beats": ["fine", bad]})
+
+
+def test_plain_sentences_and_empty_values_are_untouched():
+    from bookforge.bible.models import as_text
+    assert as_text("plain: text here") == "plain: text here" and as_text(None) is None and as_text(True) is True
+    assert as_text({"only key": None}) == "only key:"
+
+
+def test_a_text_field_given_the_wrong_shape_says_what_it_got_and_how_to_fix_it():
+    from pydantic import ValidationError
+    from bookforge.bible.models import Scene, problems_from
+    base = {"id": "b1.ch01.s1", "purpose": "p", "pov": "anna", "setting": "harbor", "characters": ["anna"]}
+    with pytest.raises(ValidationError) as e:
+        Scene.model_validate({**base, "beats": ["fine", {"a": "b", "c": "d"}]})
+    [problem] = problems_from(e.value)
+    assert problem == "beats.1: must be one piece of text but is a mapping (key: value); write it as a single sentence inside double quotes"
