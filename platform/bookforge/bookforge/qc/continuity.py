@@ -106,7 +106,8 @@ def _judge(q: Question, a: Answer, threshold: float) -> tuple[Flag | None, dict 
     if a.yes and a.verified and p > threshold and q.severity == "block":
         return Flag("contradiction", q.text, a.evidence, a.confidence, round(p, 2), fixable=True, rule=q.rule), None
     if p > threshold:  # a "yes" without quotable evidence, or a hesitant "no": reported, not acted on
-        return None, {"question": q.text, "answer": "yes" if a.yes else "no", "confidence": a.confidence, "evidence": a.evidence, "rule": q.rule}
+        return None, {"question": q.text, "answer": "yes" if a.yes else "no", "relation": a.relation, "confidence": a.confidence,
+                      "evidence": a.evidence, "rule": q.rule}
     return None, None
 
 

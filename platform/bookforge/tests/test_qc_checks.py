@@ -50,9 +50,9 @@ def reply_for(answers):
 def test_answers_are_read_with_confidence_and_verified_evidence(book):
     text = "Anna put her left hand on the rail and did not look back at him."
     llm = RuleLLM([(CONTINUITY, reply_for([
-        {"id": "q1", "answer": "yes", "confidence": 0.8, "evidence": "left hand on the rail"},
-        {"id": "q2", "answer": "yes", "confidence": 0.9, "evidence": "words that are not in the text"},
-        {"id": "q3", "answer": "no", "confidence": 0.7}]))])
+        {"id": "q1", "relation": "contradicts", "confidence": 0.8, "evidence": "left hand on the rail"},
+        {"id": "q2", "relation": "contradicts", "confidence": 0.9, "evidence": "words that are not in the text"},
+        {"id": "q3", "relation": "silent", "confidence": 0.7}]))])
     a = ask_questions(ctx_for(book, llm), "t", "scene", text, qs(), batch_size=8)
     assert [(x.yes, x.confidence, x.verified) for x in a] == [(True, 0.8, True), (True, 0.9, False), (False, 0.7, False)]
 
@@ -61,7 +61,7 @@ def test_questions_go_in_batches(book):
     def reply(messages):
         import re
         ids = re.findall(r"^(q\d+) \[", messages[1]["content"], re.MULTILINE)
-        return reply_for([{"id": i, "answer": "no", "confidence": 0.9} for i in ids])
+        return reply_for([{"id": i, "relation": "silent", "confidence": 0.9} for i in ids])
 
     llm = RuleLLM([(CONTINUITY, reply)])
     answers = ask_questions(ctx_for(book, llm), "t", "scene", TEXT, qs(5), batch_size=2)
@@ -69,13 +69,13 @@ def test_questions_go_in_batches(book):
 
 
 def test_incomplete_answers_are_sent_back_and_then_fail(book):
-    partial = reply_for([{"id": "q1", "answer": "no", "confidence": 0.9}])
+    partial = reply_for([{"id": "q1", "relation": "silent", "confidence": 0.9}])
     llm = RuleLLM([(CONTINUITY, partial)])
     with pytest.raises(LayerError, match="no answer for q2"):
         ask_questions(ctx_for(book, llm), "t", "scene", TEXT, qs(2), 8)
     assert len(llm.calls) == 1 + book.config.qc.max_revision_rounds
-    bad = RuleLLM([(CONTINUITY, reply_for([{"id": "q1", "answer": "maybe", "confidence": 2}, {"id": "q2", "answer": "no", "confidence": 0.5}]))])
-    with pytest.raises(LayerError, match="must be \"yes\" or \"no\""):
+    bad = RuleLLM([(CONTINUITY, reply_for([{"id": "q1", "relation": "maybe", "confidence": 2}, {"id": "q2", "relation": "silent", "confidence": 0.5}]))])
+    with pytest.raises(LayerError, match="'relation' must be one of: contradicts, agrees, silent"):
         ask_questions(ctx_for(book, bad), "t", "scene", TEXT, qs(2), 8)
 
 
@@ -276,3 +276,50 @@ def test_a_clash_with_an_approved_decision_is_unsure_and_never_a_flag(book):
     rep = check_continuity(ctx_for(book, llm), scene_of(book, "b1.ch04.s1"), store.load_scenes(book), TEXT)
     assert rep.flags == []
     assert [u["question"] for u in rep.unsure] == [f"Author's decision about this world ({n.id}): Locks fail if forced."]
+
+
+# ── an answer that AGREES with the fact is never a flag (found on the first prose run) ──
+
+def _text_with(*sentences):
+    return " ".join(sentences) + " " + TEXT
+
+
+def test_quoting_words_that_confirm_a_fact_is_agreement_not_a_flag(book):
+    # The real log: "born on a Dominion transport vessel" answered 'yes' with the quote "the transit vessel that had been his birthplace",
+    # and "abandoned mining tunnels on Erebus-7" with the fact itself as the quote. Every one flagged the scene at confidence 1.0.
+    text = _text_with("Eli navigated the cramped quarters of the transit vessel that had been his birthplace.",
+                      "The Lower Sectors were abandoned mining tunnels on Erebus-7.")
+    quotes = {"Anna Voss: grey eyes": ("agrees", 1.0, "the transit vessel that had been his birthplace"),
+              "World rule": ("agrees", 1.0, "abandoned mining tunnels on Erebus-7")}
+    llm = RuleLLM([(CONTINUITY, continuity(quotes))])
+    rep = check_continuity(ctx_for(book, llm), scene_of(book, "b1.ch04.s1"), store.load_scenes(book), text)
+    assert rep.flags == [] and rep.unsure == [] and rep.error is None
+
+
+def test_a_scene_that_does_not_touch_a_fact_is_silent_and_never_flags(book):
+    llm = RuleLLM([(CONTINUITY, continuity({"grey eyes": ("silent", 1.0, TEXT.split(".")[0])}))])
+    rep = check_continuity(ctx_for(book, llm), scene_of(book, "b1.ch04.s1"), store.load_scenes(book), TEXT)
+    assert rep.flags == []
+
+
+def test_only_a_contradiction_with_a_real_quote_flags_the_scene(book):
+    evidence = " ".join(TEXT.split()[:6])
+    llm = RuleLLM([(CONTINUITY, continuity({"grey eyes": ("contradicts", 0.9, evidence)}))])
+    rep = check_continuity(ctx_for(book, llm), scene_of(book, "b1.ch04.s1"), store.load_scenes(book), TEXT)
+    [flag] = rep.flags
+    assert flag.kind == "contradiction" and flag.fixable and flag.evidence == evidence and "grey eyes" in flag.question
+
+
+def test_a_shown_question_cannot_be_answered_with_a_contradiction_relation(book):
+    from bookforge.qc.decide import Question
+    q = [Question("q1", "shown", "Anna: healed")]
+    bad = RuleLLM([(CONTINUITY, reply_for([{"id": "q1", "relation": "contradicts", "confidence": 0.9}]))])
+    with pytest.raises(LayerError, match="'relation' must be one of: shown, not_shown"):
+        ask_questions(ctx_for(book, bad), "t", "scene", TEXT, q, 8)
+
+
+def test_the_continuity_prompt_names_the_three_relations_and_says_confirming_words_agree():
+    from bookforge import prompts
+    text = (prompts.PROMPT_DIR / "continuity.md").read_text()
+    for needle in ('"contradicts"', '"agrees"', '"silent"', '"shown"', '"not_shown"', "never \"contradicts\"", "tendencies"):
+        assert needle in text, needle
