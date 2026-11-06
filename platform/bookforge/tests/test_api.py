@@ -656,3 +656,15 @@ def test_the_status_of_a_running_job_carries_what_it_is_doing(book):
     assert status["job"]["activity"] == {"layer": "prose", "scene": "b1.ch02.s1", "step": "writing drafts"}
     release.set()
     api.jobs.wait(job.id, 5)
+
+
+def test_the_rewrite_preview_and_the_rewrite_with_all_through_the_api(book):
+    from test_prose_qc import qc_rules, go
+    from conftest import RuleLLM
+    go(book, RuleLLM(qc_rules()))
+    plan = data(client.get(f"{B}/rewrite-plan", params=[("targets", "all")]))
+    assert plan["reset"] and plan["kept"] == [] and sum(plan["by_status"].values()) == len(plan["reset"])
+    error(client.get(f"{B}/rewrite-plan", params=[("targets", "nope")]), 400)
+    done = data(client.post(f"{B}/rewrite", json={"targets": ["all"], "reset_voice": True}))
+    assert done["reset"] == plan["reset"] and done["voice_reset"] is True
+    assert {s["status"] for s in data(client.get(f"{B}/scenes"))} == {"pending"}

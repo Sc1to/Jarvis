@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, bookPath, post } from '../lib/api'
 import { useAction, useApi } from '../lib/hooks'
-import type { BookStatus, JobActivity } from '../lib/types'
+import type { BookStatus, JobActivity, SceneRow } from '../lib/types'
 import { href } from '../lib/route'
 import { Button, Card, Dot, ErrorBanner, StatusBadge, fmtTime } from '../components/ui'
 
@@ -50,6 +50,53 @@ function RedoPanel({ base, layer, onDone, onClose, locked }: { base: string; lay
 const seconds = (ms: number) => Math.max(0, Math.round(ms / 1000))
 const label = (s?: string | null) => (s ?? '').replace(/_/g, ' ')
 
+/** Write scenes again: all of them or one chapter. Shows what would be reset before anything happens; nothing is lost from the Git history. */
+function RewritePanel({ base, onDone, onClose, locked }: { base: string; onDone: () => void; onClose: () => void; locked: boolean }) {
+  const scenes = useApi<SceneRow[]>(`${base}/scenes`)
+  const [scope, setScope] = useState('all')
+  const [force, setForce] = useState(false)
+  const [voice, setVoice] = useState(false)
+  const act = useAction()
+  const plan = useApi<{ reset: string[]; kept: string[]; by_status: Record<string, number> }>(`${base}/rewrite-plan?targets=${encodeURIComponent(scope)}&force=${force}`)
+  const chapters = [...new Set((scenes.data ?? []).map((s) => s.chapter))]
+  const touchesFirst = scope === 'all' || scope === chapters[0]
+  const counts = plan.data ? Object.entries(plan.data.by_status).map(([k, n]) => `${n} ${k}`).join(', ') : ''
+  const n = plan.data?.reset.length ?? 0
+  return (
+    <div className="mt-2 space-y-2 rounded-md border border-slate-200 bg-slate-50 p-3">
+      <p className="text-sm text-slate-700">Write scenes again. Their text, summaries, checks and findings are removed so the next Run writes them from scratch; everything already written stays in the series history.</p>
+      <label className="block text-xs font-medium text-slate-700">Which scenes
+        <select value={scope} onChange={(e) => { setScope(e.target.value); setVoice(false) }} disabled={act.busy || locked}
+          className="mt-1 block min-h-10 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-normal">
+          <option value="all">All scenes of the book</option>
+          {chapters.map((c) => <option key={c} value={c}>Chapter {c.split('.').pop()?.replace('ch', '')} only ({c})</option>)}
+        </select>
+      </label>
+      {plan.error && <ErrorBanner message={plan.error} />}
+      {plan.data && <p className="text-sm text-slate-800"><strong>{n} scene(s)</strong> will be reset{counts ? ` (${counts})` : ''}.{plan.data.kept.length > 0 && ` ${plan.data.kept.length} scene(s) with text you wrote yourself are kept.`}</p>}
+      <label className="flex items-start gap-2 text-sm text-slate-800">
+        <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} className="mt-0.5 h-4 w-4" disabled={act.busy || locked} />
+        <span>Also discard text I wrote myself</span>
+      </label>
+      {touchesFirst && (
+        <label className="flex items-start gap-2 text-sm text-slate-800">
+          <input type="checkbox" checked={voice} onChange={(e) => setVoice(e.target.checked)} className="mt-0.5 h-4 w-4" disabled={act.busy || locked} />
+          <span>Ask me to approve the voice again: the next Run writes chapter 1 only and waits for me.</span>
+        </label>
+      )}
+      <ErrorBanner message={act.error} onClose={act.clear} />
+      <div className="flex flex-wrap gap-2">
+        <Button kind="danger" disabled={act.busy || locked || !plan.data || n === 0}
+          onClick={async () => {
+            if (!window.confirm(`Write ${n} scene(s) again? The current text is removed from the working folder (it stays in the series history).`)) return
+            if (await act.run(() => post(`${base}/rewrite`, { targets: [scope], force, reset_voice: voice }))) { onDone(); onClose() }
+          }}>Reset them, then press Run</Button>
+        <Button disabled={act.busy} onClick={onClose}>Cancel</Button>
+      </div>
+    </div>
+  )
+}
+
 /** What the running job is doing now. Times come from the server's clock (`server_time` of the last poll), not from this device's. */
 function ActivityPanel({ activity, serverTime }: { activity?: JobActivity; serverTime?: string }) {
   const [, tick] = useState(0)
@@ -80,6 +127,7 @@ export default function Overview({ series, book, status, reload }: { series: str
   const act = useAction()
   const [until, setUntil] = useState('')
   const [redoing, setRedoing] = useState<string | null>(null)
+  const [rewriting, setRewriting] = useState(false)
   const base = bookPath(series, book)
   const busy = status.job?.status === 'running'
   const waiting = Object.entries(status.checkpoints).filter(([, v]) => v === 'waiting').map(([k]) => k)
@@ -161,9 +209,13 @@ export default function Overview({ series, book, status, reload }: { series: str
                 </div>
                 {l.note && <p className="mt-0.5 break-words text-xs text-slate-500">{l.note}</p>}
                 {redoing === l.name && <RedoPanel base={base} layer={l.name} locked={busy} onClose={() => setRedoing(null)} onDone={reload} />}
+                {l.name === 'prose' && rewriting && <RewritePanel base={base} locked={busy} onClose={() => setRewriting(false)} onDone={reload} />}
               </div>
               {l.name !== 'prose' && l.status !== 'pending' && redoing !== l.name && (
                 <Button disabled={busy} onClick={() => setRedoing(l.name)} title="Write this layer again, with a note on what to change">Redo…</Button>
+              )}
+              {l.name === 'prose' && !rewriting && (status.scenes.total ?? 0) > 0 && (
+                <Button disabled={busy} onClick={() => setRewriting(true)} title="Write all scenes, or one chapter, again">Write again…</Button>
               )}
             </li>
           ))}
