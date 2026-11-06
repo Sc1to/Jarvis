@@ -473,3 +473,23 @@ def test_the_research_test_command_shows_pages_on_request(project, monkeypatch):
     monkeypatch.setattr(cli, "build_web_client", lambda p: scripted_web())
     out = CliRunner().invoke(cli.app, ["research-test", str(project.root), "What did customs clerks do?", "--query", "customs clerk 1880s", "--show-pages"])
     assert out.exit_code == 0 and "text shown to the model" in out.output and PAGE_A in out.output
+
+
+# ── a claim may say only what its quote says ────────────────────────────────
+
+def test_the_reader_and_the_check_are_told_a_claim_must_match_its_quote(project):
+    from bookforge.prompts import render
+    facts = render("research_facts", project.root, question="q", url="u", setting="s", page_text="p")
+    check = render("research_check", project.root, question="q", setting="s", story="st", facts="1. c")
+    assert "says only what the quote says" in facts and "never swap in the words of the question" in facts
+    assert "says more than its quote" in check and "word by word" in check
+
+
+def test_a_claim_the_check_finds_unsupported_is_dropped_with_its_reason(project):
+    page = "Next was the Comptroller who was responsible for the financial accounting."
+    web = FakeWebClient(searches={"q": "r"}, pages={URL_A: page}, links={"q": [{"text": "Customs", "href": URL_A}]})
+    facts = json.dumps({"facts": [{"claim": "A customs clerk managed the accounts.", "quote": "the Comptroller who was responsible for the financial accounting"}]})
+    drop = json.dumps({"keep": [], "drop": [{"n": 1, "why": "claim says clerk, quote says Comptroller"}]})
+    llm = RuleLLM([("Source page:", facts), ("Which of these facts directly answer", drop)])
+    attempt = answer_question(make_ctx(project, llm, web), web, Question("What did a clerk do?", "q", False, "England, 1880s"), "story", set())
+    assert not attempt.facts and attempt.pages[0].dropped[0]["why"] == "claim says clerk, quote says Comptroller"
