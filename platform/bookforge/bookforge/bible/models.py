@@ -4,12 +4,34 @@ Unknown keys a model adds are ignored. Every file is written back from these rec
 so what is stored is always the validated form.
 """
 
+import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, StringConstraints, ValidationError
+
+
+def as_text(value):
+    """Give back the sentence the model wrote when YAML read it as something else.
+
+    A beat like `- Jonas confronts her: she lies` is valid YAML, but it is read as the mapping {"Jonas confronts her": "she lies"};
+    a title like `1883` is read as a number and a date like `1883-04-12` as a date. Anything else is returned unchanged.
+    """
+    scalar = (str, int, float, bool, datetime.date, datetime.datetime)
+    if isinstance(value, dict) and len(value) == 1:
+        key, inner = next(iter(value.items()))
+        if isinstance(key, scalar) and (inner is None or isinstance(inner, scalar)):
+            return f"{as_text(key)}: {as_text(inner)}" if inner is not None else f"{as_text(key)}:"
+        return value
+    if isinstance(value, (datetime.date, datetime.datetime)):
+        return value.isoformat()
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return str(value)
+    return value
+
 
 Slug = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9-]*$", max_length=60)]
-Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+Text = Annotated[str, BeforeValidator(as_text), StringConstraints(strip_whitespace=True, min_length=1)]
+Loose = Annotated[str, BeforeValidator(as_text)]  # free text that may be empty (a date, a travel note)
 
 ENTITY_KINDS = ("character", "place", "object", "group", "concept")
 TRACK_KINDS = ("physical", "location", "relationship", "possession", "knowledge", "status", "other")
@@ -38,7 +60,7 @@ class Constants(_Record):
 
 class PlanEntry(_Record):
     from_: str = Field(alias="from")  # a chapter id (from the start of the chapter) or a scene id
-    value: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=300)]
+    value: Annotated[str, BeforeValidator(as_text), StringConstraints(strip_whitespace=True, min_length=1, max_length=300)]
     must_show: bool = False  # the change itself must happen on the page in that scene
 
 
@@ -87,9 +109,9 @@ class TimelineEntry(_Record):
     id: str  # scene id
     day: int = Field(ge=1)  # story day, counted from day 1 at the start of the story
     time: Text  # time of day or similar: "dusk", "just after midnight"
-    date: str = ""  # optional calendar date in the book's own calendar
+    date: Loose = ""  # optional calendar date in the book's own calendar
     flashback: bool = False  # story time runs backwards here
-    travel: str = ""  # optional note on travel since the previous scene
+    travel: Loose = ""  # optional note on travel since the previous scene
 
 
 def problems_from(error: ValidationError, limit: int = 8) -> list[str]:
@@ -97,6 +119,10 @@ def problems_from(error: ValidationError, limit: int = 8) -> list[str]:
     out = []
     for e in error.errors()[:limit]:
         where = ".".join(str(p) for p in e["loc"]) or "(top level)"
+        if e["type"] == "string_type":
+            kind = {dict: "a mapping (key: value)", list: "a list", type(None): "empty", bool: "yes/no"}.get(type(e.get("input")), type(e.get("input")).__name__)
+            out.append(f"{where}: must be one piece of text but is {kind}; write it as a single sentence inside double quotes")
+            continue
         out.append(f"{where}: {e['msg']}")
     if len(error.errors()) > limit:
         out.append(f"... and {len(error.errors()) - limit} more")
