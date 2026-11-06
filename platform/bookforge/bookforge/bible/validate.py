@@ -277,6 +277,10 @@ def parse_chapters(
     existing = {t.id: t for t in tracks_so_far}
     tracks = _parse_tracks(_items(data, "tracks", problems, required=False), entities=entities, existing=existing,
                            allowed_from=allowed, prefix="tracks", problems=problems)
+    if raw and not any(t.plan for t in tracks):
+        # Without tracks the story's changes (injuries, who knows what, where people are) are neither planned nor checked later.
+        problems.append(f"{act.id} defines no state tracks: add a 'tracks:' list with at least one track created or extended in these chapters "
+                        "(an injury, where a key character is, a relationship, a possession, who knows which secret)")
     return (None, problems) if problems else (ChaptersBundle(chapters, tracks), [])
 
 

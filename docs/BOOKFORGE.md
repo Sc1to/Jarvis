@@ -804,7 +804,7 @@ The UI is built in three levels, each usable on its own; v1 needs no UI code at 
 
 - **Draft compare:** two drafts side by side with the judge's verdict and the critic's quoted weak lines.
 
-- **Track timeline:** each state track as a bar across chapters (the wound from ch4 to ch10), with marks where `observed` disagrees with `plan`.
+- **Track timeline:** each state track as a bar across chapters (across scenes once they are planned) (the wound from ch4 to ch10), with marks where `observed` disagrees with `plan`.
 
 - **Research browser:** facts with their sources, filterable by the scenes that use them.
 
@@ -932,6 +932,8 @@ A typical run: start it in the evening with `python -m bookforge run /opt/platfo
 **A layer flagged with "the reply is not valid YAML".** The acts, cast, chapters and scenes layers ask the model for YAML, and a model often leaves a colon unquoted inside a sentence (`summary: Anna finds it: the ledger`), which YAML cannot read. Found on the first end-to-end run (acts flagged after two correction rounds). `bible/validate.py` `load_reply_yaml` now repairs such replies itself (it puts double quotes around plain single-line values that contain `: `, ` #` or end in a colon, and leaves quoted values, flow values and `|` / `>` blocks alone), and when a reply still cannot be read the message to the model names the line. A flagged layer is run again by the next `run`; nothing needs to be deleted.
 
 **A chapters or scenes layer flagged with "'the-kestrel' is a object, expected a place".** Found on the first end-to-end run: the cast listed a ship as an object and a chapter used it as its setting. A setting may now be a **place or an object** (a thing people are inside: a ship, a carriage); characters, groups and concepts are still refused. The cast prompt says a ship, train, carriage, house or room that people are inside is a place, and a refused setting now lists the ids that would do (`use one of: harbor, the-kestrel`), so a correction round can choose one. A flagged layer is run again by the next `run`; an already written cast is kept.
+
+**State tracks that do not show up.** Found on the first end-to-end run. (1) The chapters layer saves `bible/tracks.yaml` (and the cast) only when it has planned **every act**, so while the layer is flagged part-way there is nothing to show; the pieces are kept in `books/<id>/work/chapters/` and a rerun continues from them. (2) The Tracks tab used to draw only once scenes existed, but tracks are created with the chapters; it now shows them **by chapter** until the scenes are planned (and says so), and when chapters exist but there are no tracks it says that the model defined none. (3) A model could return no tracks without anyone noticing; an act's reply must now create or extend at least one state track (`<act> defines no state tracks: ...` goes back to the model as a correction, and a saved piece without tracks is asked for again on the next run).
 
 ## Operations note: Ollama request isolation
 
