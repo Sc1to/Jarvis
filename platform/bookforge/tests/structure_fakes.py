@@ -107,7 +107,7 @@ def ready(project):
     from conftest import file_handler  # noqa: F401
     p = small(project)
     ns = "# T\n\n" + "\n\n".join(f"## {s}\nSome words about the {s.lower()} of the story and more words." for s in
-                                  ("Premise", "Themes", "Emotional promise", "Tone", "Ending direction", "What it is not"))
+                                  ("Premise", "Themes", "Emotional promise", "Tone", "Realism", "Ending direction", "What it is not"))
     (p.root / "north-star.md").write_text(ns)
     (p.root / "books/b1/north-star.md").write_text(ns)
     (p.root / "books/b1/synopsis.md").write_text("A long synopsis. " * 40)
@@ -123,7 +123,7 @@ def ready(project):
 
 def north_star_text(marker=""):
     return "# T\n\n" + "\n\n".join(f"## {s}\n" + " ".join([f"{s.split()[0].lower()}{marker}"] * 30) for s in
-                                  ("Premise", "Themes", "Emotional promise", "Tone", "Ending direction", "What it is not"))
+                                  ("Premise", "Themes", "Emotional promise", "Tone", "Realism", "Ending direction", "What it is not"))
 
 
 def direction_rules():
