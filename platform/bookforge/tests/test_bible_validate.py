@@ -267,3 +267,37 @@ def test_scene_ids_are_normalised(p, constants):
     data["scenes"][0]["id"] = "b1.ch2.s1"
     bundle, problems = parse_scenes(dump(data), **scene_args(p, constants))
     assert problems == [] and bundle.scenes[0].id == "b1.ch02.s1" and bundle.timeline[0].id == "b1.ch02.s1"
+
+
+# ── a setting may be a place, or an object people are inside (a ship) ───────
+
+def test_an_object_such_as_a_ship_may_be_a_setting_but_a_character_may_not():
+    from bookforge.bible.models import Constants, Entity
+    from bookforge.bible.validate import SETTING_ALSO, _check_entity
+    cast = Constants(entities=[Entity(id="anna", kind="character", name="Anna", facts=["f"]), Entity(id="harbor", kind="place", name="Harbor", facts=["f"]),
+                               Entity(id="the-kestrel", kind="object", name="The Kestrel", facts=["f"]), Entity(id="guild", kind="group", name="Guild", facts=["f"])])
+    from bookforge.bible.validate import entity_map
+    entities = entity_map(cast)
+    ok: list[str] = []
+    for place in ("harbor", "the-kestrel"):
+        _check_entity(entities, place, "place", "chapters[0].setting", ok, SETTING_ALSO)
+    assert ok == []
+    bad: list[str] = []
+    _check_entity(entities, "anna", "place", "chapters[1].setting", bad, SETTING_ALSO)
+    _check_entity(entities, "guild", "place", "chapters[2].setting", bad, SETTING_ALSO)
+    assert "'anna' is a character, expected a place (use one of: harbor, the-kestrel)" in bad[0]
+    assert "'guild' is a group, expected a place" in bad[1]
+
+
+def test_a_wrong_kind_that_has_no_alternative_says_the_cast_lacks_one():
+    from bookforge.bible.models import Constants, Entity
+    from bookforge.bible.validate import _check_entity, entity_map
+    entities = entity_map(Constants(entities=[Entity(id="anna", kind="character", name="Anna", facts=["f"])]))
+    problems: list[str] = []
+    _check_entity(entities, "anna", "place", "x.setting", problems)
+    assert "the cast has no place yet" in problems[0]
+
+
+def test_the_cast_prompt_says_a_ship_is_a_place():
+    from bookforge import prompts
+    assert "a ship, train, carriage, house or room that people are inside is a place" in (prompts.PROMPT_DIR / "cast.md").read_text()
