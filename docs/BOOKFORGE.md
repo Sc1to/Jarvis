@@ -929,6 +929,8 @@ A typical run: start it in the evening with `python -m bookforge run /opt/platfo
 - Whether colibri's `/v1/systemone` exists and what its request shape is. `doctor` only checks that the URL answers; the continuity layer does not use it (the planner model answers the questions instead).
 
 
+**A layer flagged with "the reply is not valid YAML".** The acts, cast, chapters and scenes layers ask the model for YAML, and a model often leaves a colon unquoted inside a sentence (`summary: Anna finds it: the ledger`), which YAML cannot read. Found on the first end-to-end run (acts flagged after two correction rounds). `bible/validate.py` `load_reply_yaml` now repairs such replies itself (it puts double quotes around plain single-line values that contain `: `, ` #` or end in a colon, and leaves quoted values, flow values and `|` / `>` blocks alone), and when a reply still cannot be read the message to the model names the line. A flagged layer is run again by the next `run`; nothing needs to be deleted.
+
 ## Operations note: Ollama request isolation
 
 **Reasoning models (found on the first real run, 2026-11-05).** `qwen3.5:35b` on Ollama's OpenAI-compatible endpoint spends the token budget on hidden thinking by default: a 900-token request came back with an empty `content`, 3,638 characters of `reasoning` and `finish_reason=length`. Sending `reasoning_effort: none` fixes it (a 372-word scene in 8 s at about 56 tokens/s). Set it per model with `models.<role>.extra_body` (any extra request fields; the keys bookforge sets itself are refused), for example `extra_body: {reasoning_effort: none}`. A reply that is only thinking now fails with a message that says so and names this setting, instead of "empty reply".
