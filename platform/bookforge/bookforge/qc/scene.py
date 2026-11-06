@@ -15,6 +15,7 @@ in the review but never revised.
 
 from dataclasses import dataclass, field
 
+from .. import activity
 from ..bible.models import Scene
 from ..errors import LayerError
 from . import scene_notes
@@ -43,6 +44,7 @@ def _choose(ctx, scene: Scene, drafts: dict[str, str], reports: dict[str, Mechan
     candidates = [n for n in drafts if not reports[n].blocking] or list(drafts)
     if len(candidates) == 1 or not ctx.project.config.qc.judge_drafts:
         return min(candidates, key=lambda n: (reports[n].score, n)), None
+    activity.set(step="comparing the drafts")
     verdict = choose_draft(ctx, scene, {n: drafts[n] for n in candidates}, {n: reports[n] for n in candidates})
     return verdict.winner, {"candidates": candidates, "wins": verdict.wins, "pairs": verdict.pairs, "error": verdict.error}
 
@@ -75,6 +77,7 @@ def settle_scene(ctx, scene: Scene, scenes: list[Scene], drafts: dict[str, str],
         flags, unfixable = _mechanical_flags(report)
         continuity = None
         if not report.blocking and cfg.continuity_check:
+            activity.set(step="checking continuity")
             continuity = check_continuity(ctx, scene, scenes, text)
             instructions = scene_notes.read(ctx.project, scene.id)["instructions"]
             for f in continuity.flags:
@@ -85,6 +88,7 @@ def settle_scene(ctx, scene: Scene, scenes: list[Scene], drafts: dict[str, str],
                     unfixable.append(f.message())
         cheap_ok = not report.blocking and not (continuity and continuity.flags)
         if cheap_ok and cfg.critic_check and not critic_given_up and (critic is None or critic.needs_work(cfg.critic_min_score)):
+            activity.set(step="the critic is reading it")
             critic = run_critic(ctx, scene, text)
             if critic.error:
                 critic_given_up = True
@@ -96,6 +100,7 @@ def settle_scene(ctx, scene: Scene, scenes: list[Scene], drafts: dict[str, str],
         review["rounds"].append(record)
         if not flags or r == cfg.max_revision_rounds:
             break
+        activity.set(step=f"revising (round {r + 1})")
         try:
             revision = revise_text(ctx, text, flags, all_banned(mech), f"{scene.id} round {r + 1}")
         except LayerError as e:  # the model could not produce an acceptable revision: leave the scene for the author

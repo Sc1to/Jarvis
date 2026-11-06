@@ -19,7 +19,7 @@ import time
 
 import yaml
 
-from .. import changes, rules, scenefiles, vcs
+from .. import activity, changes, rules, scenefiles, vcs
 from ..bible import store
 from ..bible.models import Scene
 from ..briefing import build_briefing
@@ -220,6 +220,7 @@ def write_scene(ctx: StepContext, scene: Scene, scenes: list[Scene], drafts: int
             saved = scenefiles.best_text(project, sid)
             if saved and saved.strip():
                 _set_status(project, sid, "drafted")
+                activity.set(step="revising the saved text")
                 attempt = settle_scene(ctx, scene, scenes, {"saved": saved}, check_ctx)
                 if attempt.accepted:
                     result = attempt
@@ -228,6 +229,7 @@ def write_scene(ctx: StepContext, scene: Scene, scenes: list[Scene], drafts: int
             if flagged_before:
                 for old in list(d.glob("draft-*.md")) + [scenefiles.revised_path(project, sid)]:
                     old.unlink(missing_ok=True)
+            activity.set(step="writing drafts")
             texts = _write_drafts(ctx, scene, briefing.text() + problems_section, drafts, words)
             _set_status(project, sid, "drafted")
             paths += [scenefiles.draft_path(project, sid, i) for i in range(1, len(texts) + 1)]
@@ -250,11 +252,13 @@ def write_scene(ctx: StepContext, scene: Scene, scenes: list[Scene], drafts: int
     final = scenefiles.final_path(project, sid)
     if source == "written":
         final.write_text(text.rstrip() + "\n", encoding="utf-8")  # an adopted file is the author's: left exactly as it is
+    activity.set(step="summarising")
     summary, summary_source = _summarise(ctx, scene, text)
     scenefiles.summary_path(project, sid).write_text(summary.rstrip() + "\n", encoding="utf-8")
     review["summary_source"] = summary_source
     paths += [final, scenefiles.summary_path(project, sid)]
 
+    activity.set(step="recording what the scene shows")
     gaps, filed = record_extraction(ctx, scene, scenes, text, review, paths)
     review_file.write_text(json.dumps(review, indent=2, ensure_ascii=False), encoding="utf-8")
     note = f"{report.stats['words']} words, {len(report.warnings)} warning(s)" + (f", {gaps} gap(s) between plan and prose" if gaps else "") + (f" ({len(filed)} change request(s) filed, {sum(c.status == 'pending' for c in filed)} waiting for you)" if filed else "")
@@ -291,6 +295,7 @@ def prose(ctx: StepContext) -> StepResult:
         if status == "stale":
             stale.append(scene.id)  # brought up to date by `stale --fix`, not rewritten from scratch
             continue
+        activity.set(scene=scene.id, step="starting")
         try:
             accepted, scene_files = write_scene(ctx, scene, scenes, drafts, words)
         except TruncatedReply as e:
@@ -300,6 +305,8 @@ def prose(ctx: StepContext) -> StepResult:
             continue
         files += scene_files
         done_now += accepted
+        if accepted:
+            activity.add("scenes_done")
 
     items = project.state.items
     flagged = [s.id for s in scenes if items.get(s.id, Item()).status == "flagged"]
