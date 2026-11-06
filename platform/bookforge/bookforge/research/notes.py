@@ -251,3 +251,15 @@ def notes_for_prompt(project: Project, max_chars: int) -> str:
         lines.append(line)
         used += len(line) + 1
     return "\n".join(reversed(lines)) if lines else "none yet"
+
+
+def approved_decisions(project: Project) -> list[Need]:
+    """The author's approved rules, assumptions and deviations (invent, extrapolate, bend), series first.
+
+    These are canon: things the story invented or changed on purpose. A research fact says what the real world is
+    like; a decision says what is true in this story, and the writer must not mistake one for the other.
+    """
+    out: list[Need] = []
+    for store in stores_for(project).values():
+        out += [n for n in store.needs() if n.status == "approved" and n.stance in ("invent", "extrapolate", "bend") and n.rule]
+    return out
