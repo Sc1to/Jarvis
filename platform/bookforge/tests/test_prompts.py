@@ -5,7 +5,7 @@ from bookforge.errors import PromptError
 from bookforge.layers.direction import NORTH_STAR_SECTIONS
 
 NAMES = ["system", "series_north_star", "book_north_star", "synopsis", "correct",
-         "research_system", "research_questions", "research_facts", "research_check"]
+         "research_system", "research_questions", "research_facts", "research_check", "research_audit"]
 
 
 @pytest.mark.parametrize("name", NAMES)
