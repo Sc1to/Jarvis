@@ -24,7 +24,7 @@ log = logging.getLogger("platform_bookforge.llm")
 Messages = Sequence[dict]
 
 # Options a caller may pass through to the server, plus `draft` (picks the temperature).
-ALLOWED_OPTIONS = {"temperature", "max_tokens", "top_p", "stop", "seed", "draft"}
+ALLOWED_OPTIONS = {"temperature", "max_tokens", "top_p", "stop", "seed", "draft", "grow"}  # draft and grow are ours, not sent to the server
 RETRY_STATUS = {408, 429, 500, 502, 503, 504}
 
 
@@ -78,8 +78,36 @@ class LLMError(BookforgeError):
     """A model call failed for good (after retries, or not worth retrying)."""
 
 
+REPEAT_WORDS = 8  # a run of this many words
+REPEATING = 0.4  # at least this share of a cut-off reply made of repeated runs: the model is stuck repeating itself
+
+
+def repeated_share(text: str) -> float:
+    """The share of the text's runs of 8 words that occur more than once: near 0 for prose, high for a model stuck in a loop."""
+    words = text.split()
+    runs = [" ".join(words[i:i + REPEAT_WORDS]) for i in range(len(words) - REPEAT_WORDS + 1)]
+    if not runs:
+        return 0.0
+    counts: dict[str, int] = {}
+    for r in runs:
+        counts[r] = counts.get(r, 0) + 1
+    return sum(c for c in counts.values() if c > 1) / len(runs)
+
+
 class TruncatedReply(LLMError):
     """The model stopped because it ran out of tokens (finish_reason=length), so the reply is incomplete."""
+
+    def __init__(self, message: str, tail: str = "", chars: int = 0, repeated: float = 0.0):
+        super().__init__(message)
+        self.tail, self.chars, self.repeated = tail, chars, repeated
+
+    @property
+    def repeating(self) -> bool:
+        return self.repeated >= REPEATING
+
+    def extras(self) -> dict:
+        """What the call log keeps about the cut-off reply, so a repeating model can be told from a merely long reply."""
+        return {"response_chars": self.chars, "response_tail": self.tail, "repeated_share": round(self.repeated, 3)}
 
 
 class _Retryable(Exception):
@@ -118,15 +146,21 @@ class HttpLLMClient:
     def complete(self, role: str, messages: Messages, **options) -> str:
         """The model's reply. A reply cut off at its token limit is asked for again with a larger limit before it counts as a failure."""
         limit = options.get("max_tokens")
+        may_grow = options.get("grow", True)
         for grown in range(TRUNCATION_RETRIES + 1):
             try:
                 return self._complete(role, messages, **options)
             except TruncatedReply as e:
-                if not isinstance(limit, int) or limit >= MAX_TOKENS_CAP or grown == TRUNCATION_RETRIES:
+                # A model that is repeating itself will repeat itself at any limit, and a caller that knows its reply has a hard
+                # maximum (a scene) does not want a longer one: neither is asked again with more tokens.
+                if (not may_grow or e.repeating or not isinstance(limit, int) or limit >= MAX_TOKENS_CAP or grown == TRUNCATION_RETRIES):
                     first = next((m["content"] for m in reversed(list(messages)) if m.get("role") == "user"), "")
+                    why = (f"the model is repeating itself ({e.repeated:.0%} of the reply is repeated text)" if e.repeating
+                           else "the reply is longer than this call allows" if not may_grow else f"even after raising the limit {grown} time(s)")
                     raise TruncatedReply(
-                        f"{role} model reply was cut off at {limit} tokens (finish_reason=length), even after raising the limit "
-                        f"{grown} time(s); the task is too long for one reply. The prompt began: {' '.join(str(first).split())[:90]!r}") from e
+                        f"{role} model reply was cut off at {limit} tokens (finish_reason=length): {why}. "
+                        f"The prompt began: {' '.join(str(first).split())[:90]!r}",
+                        tail=e.tail, chars=e.chars, repeated=e.repeated) from e
                 bigger = min(MAX_TOKENS_CAP, max(limit * 2, limit + 1000))
                 log.warning("%s reply cut off at %d tokens; asking again with %d", role, limit, bigger)
                 limit = bigger
@@ -174,7 +208,7 @@ class HttpLLMClient:
                     continue
                 err = LLMError(f"{role} model call failed after {attempt} attempts: {e}")
             except LLMError as err:
-                self._record(record, started, attempt, error=str(err))
+                self._record(record, started, attempt, error=str(err), **(err.extras() if isinstance(err, TruncatedReply) else {}))
                 raise
             else:
                 self._record(record, started, attempt, response=text, finish_reason=finish, usage=usage)
@@ -232,7 +266,8 @@ class HttpLLMClient:
             raise LLMError(f"{role} model returned an empty reply")
         finish = choice.get("finish_reason")
         if finish == "length":
-            raise TruncatedReply(f"{role} model reply was cut off (finish_reason=length); raise max_tokens or shorten the task")
+            raise TruncatedReply(f"{role} model reply was cut off (finish_reason=length); raise max_tokens or shorten the task",
+                                 tail=text.strip()[-300:], chars=len(text), repeated=repeated_share(text))
         return text, finish, data.get("usage")
 
     def _record(self, record: dict, started: float, attempts: int, **extra) -> None:

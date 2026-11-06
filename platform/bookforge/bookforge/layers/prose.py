@@ -15,6 +15,7 @@ stopped. Drafts already on disk for an unfinished scene are reused; a flagged sc
 
 import json
 import logging
+import time
 
 import yaml
 
@@ -107,19 +108,36 @@ def _write_drafts(ctx: StepContext, scene: Scene, briefing_text: str, drafts: in
     messages = [{"role": "system", "content": render("prose_system", project.root, **values)},
                 {"role": "user", "content": render("prose", project.root, briefing=briefing_text, **values)}]
     layer_cfg = project.config.layers["prose"]
-    texts = []
+    ceiling = layer_cfg.max_tokens or int(words[1] * 1.6) + 300
+    texts: list[str] = []
+    cut_off: list[TruncatedReply] = []
     for i in range(1, drafts + 1):
         path = scenefiles.draft_path(project, scene.id, i)
         existing = scenefiles.read(path)
         if existing is None:
-            options = {"max_tokens": int(words[1] * 1.6) + 300, "draft": i - 1}
+            # `grow=False`: the ceiling is already well above the longest scene asked for. A draft that hits it is far too long (or the
+            # model is repeating itself); asking again with more tokens only costs minutes. It is a failed draft, and the other one is used.
+            options = {"max_tokens": ceiling, "draft": i - 1, "grow": False}
             if layer_cfg.temperature is not None:
                 options["temperature"] = layer_cfg.temperature
-            reply = ctx.llm.complete(layer_cfg.model, messages, **options)
+            started = time.monotonic()
+            try:
+                reply = ctx.llm.complete(layer_cfg.model, messages, **options)
+            except TruncatedReply as e:
+                log.warning("%s draft %d: %s (after %.0fs)", scene.id, i, e, time.monotonic() - started)
+                cut_off.append(e)
+                continue
             existing = reply.strip()
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(existing + "\n", encoding="utf-8")
         texts.append(existing)
+    if not texts:
+        first = cut_off[0]
+        raise TruncatedReply(
+            f"every draft was cut off at {ceiling} tokens, more than the {words[1]} words a scene may have "
+            + ("(the model is repeating itself: " + f"{first.repeated:.0%} of the text is repeated) " if first.repeating else "")
+            + "- shorten the scene's beats, lower layers.prose.words, or raise layers.prose.max_tokens",
+            tail=first.tail, chars=first.chars, repeated=first.repeated)
     return texts
 
 

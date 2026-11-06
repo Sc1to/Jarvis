@@ -259,7 +259,7 @@ def test_the_model_gets_the_briefing_and_the_word_range(book):
     assert "Write scene b1.ch01.s1 as continuous prose of about 100 to 600 words" in user
     assert "Point of view: third-limited. Tense: past." in user
     assert "1. Something happens.\n2. Anna decides." in user and "## Series north star" in user
-    assert first["role"] == "writer" and first["options"] == {"max_tokens": int(600 * 1.6) + 300, "draft": 0}
+    assert first["role"] == "writer" and first["options"] == {"max_tokens": int(600 * 1.6) + 300, "draft": 0, "grow": False}
     assert scene_calls(llm, "b1.ch01.s1")[1]["options"]["draft"] == 1
 
 

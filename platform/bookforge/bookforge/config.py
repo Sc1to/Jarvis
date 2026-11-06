@@ -70,6 +70,7 @@ class LayerSettings(_Strict):
     per_chapter: tuple[int, int] | None = None
     drafts: int | None = None
     words: tuple[int, int] | None = None
+    max_tokens: int | None = Field(None, gt=0)  # most tokens one draft may use; unset = words[1] x 1.6 + 300. Set it to shorten `words` without shrinking this
     temperature: float | None = None  # overrides the model's own temperature for this layer
 
 
