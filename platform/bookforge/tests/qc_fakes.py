@@ -23,9 +23,15 @@ def user(messages) -> str:
 
 
 def continuity(overrides=None):
-    """Answers every question 'no contradiction' / 'shown', unless a substring of the question text is in `overrides`
-    mapped to (answer, confidence, evidence)."""
+    """Answers every question 'silent' / 'shown', unless a substring of the question text is in `overrides` mapped to
+    (answer, confidence, evidence). `answer` is "yes" (contradicts / shown) or "no" (silent / not_shown), or a relation itself
+    ("agrees", "silent", "contradicts", "shown", "not_shown")."""
     overrides = overrides or {}
+
+    def relation(kind, answer):
+        if answer in ("contradicts", "agrees", "silent", "shown", "not_shown"):
+            return answer
+        return ("shown" if answer == "yes" else "not_shown") if kind == "shown" else ("contradicts" if answer == "yes" else "silent")
 
     def reply(messages):
         out = []
@@ -34,7 +40,7 @@ def continuity(overrides=None):
             for needle, value in overrides.items():
                 if needle in text:
                     answer, conf, evidence = value
-            out.append({"id": qid, "answer": answer, "confidence": conf, "evidence": evidence})
+            out.append({"id": qid, "relation": relation(kind, answer), "confidence": conf, "evidence": evidence})
         return json.dumps({"answers": out})
 
     return reply

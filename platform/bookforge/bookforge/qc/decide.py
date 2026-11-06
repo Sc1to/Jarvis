@@ -20,6 +20,13 @@ class Question:
     rule: str | None = None
 
 
+# What the model may say about each kind of question. "yes" below (Answer.yes) means the outcome the question looks for: the scene
+# contradicts the fact, or shows the change. Asking yes/no was the problem: a model answered "yes" meaning "the scene shows this fact"
+# and quoted the words that CONFIRM it, so scenes that agreed with their facts were flagged. A relation has an explicit place for "agrees".
+RELATIONS = {"contradiction": ("contradicts", "agrees", "silent"), "shown": ("shown", "not_shown")}
+YES = {"contradicts", "shown"}
+
+
 @dataclass
 class Answer:
     id: str
@@ -27,10 +34,12 @@ class Answer:
     confidence: float
     evidence: str = ""
     verified: bool = False  # the evidence really appears in the text
+    relation: str = ""  # contradicts | agrees | silent (contradiction questions); shown | not_shown (shown questions)
 
 
 def _check(questions: list[Question]):
     ids = {q.id for q in questions}
+    kinds = {q.id: q.kind for q in questions}
 
     def check(data: dict) -> list[str]:
         answers = data.get("answers")
@@ -42,8 +51,9 @@ def _check(questions: list[Question]):
                 problems.append(f"answers[{i}] does not name one of the questions ({', '.join(sorted(ids))})")
                 continue
             seen.add(a["id"])
-            if a.get("answer") not in ("yes", "no"):
-                problems.append(f"{a['id']}: 'answer' must be \"yes\" or \"no\"")
+            allowed = RELATIONS[kinds[a["id"]]]
+            if a.get("relation") not in allowed:
+                problems.append(f"{a['id']}: 'relation' must be one of: {', '.join(allowed)}")
             c = a.get("confidence")
             if isinstance(c, bool) or not isinstance(c, (int, float)) or not 0 <= c <= 1:
                 problems.append(f"{a['id']}: 'confidence' must be a number from 0.0 to 1.0")
@@ -65,6 +75,6 @@ def ask_questions(ctx, label: str, what: str, text: str, questions: list[Questio
         for q in batch:
             a = by_id[q.id]
             evidence = " ".join(str(a.get("evidence") or "").split())
-            out.append(Answer(q.id, a["answer"] == "yes", float(a["confidence"]), evidence,
-                              bool(evidence) and quote_in_page(evidence, text)))
+            out.append(Answer(q.id, a["relation"] in YES, float(a["confidence"]), evidence,
+                              bool(evidence) and quote_in_page(evidence, text), a["relation"]))
     return out
