@@ -393,6 +393,7 @@ def needs_cmd(
     edit_id: Optional[str] = typer.Option(None, "--edit", help="Change the stance and/or text of this need (it goes back to 'proposed')"),
     stance: Optional[str] = typer.Option(None, "--stance", help="ground, extrapolate, bend or invent"),
     rule: Optional[str] = typer.Option(None, "--rule", help="The rule, assumption or deviation, in your words"),
+    applies_to: Optional[list[str]] = typer.Option(None, "--applies-to", help="Chapters or scenes it applies to, like b1.ch03 or b1.ch03.s2 (repeat the option); 'all' for the whole book"),
     show_all: bool = typer.Option(False, "--all", help="Also list lookups that need no decision"),
 ) -> None:
     """List what the story needs to know or decide, and approve, reject or edit a proposed rule, assumption or deviation."""
@@ -401,9 +402,10 @@ def needs_cmd(
         target = approve_id or reject_id or edit_id
         decided = None
         if target:
-            if edit_id and not (stance or rule):
-                raise BookforgeError("--edit needs --stance and/or --rule")
-            decided = ops.decide_need(project, target, True if approve_id else False if reject_id else None, stance, rule)
+            if edit_id and not (stance or rule or applies_to):
+                raise BookforgeError("--edit needs --stance, --rule and/or --applies-to")
+            places = None if applies_to is None else [] if [a.casefold() for a in applies_to] == ["all"] else applies_to
+            decided = ops.decide_need(project, target, True if approve_id else False if reject_id else None, stance, rule, places)
         needs = ops.list_needs(project)
     except BookforgeError as e:
         _fail(e)
@@ -414,7 +416,7 @@ def needs_cmd(
         typer.echo("nothing waiting for you" if needs else "no needs recorded yet")
     for scope, n in shown:
         typer.echo(f"{n.id} [{n.stance}, {n.status}] {n.question}" + (f"\n    why: {n.reason}" if n.reason else "")
-                   + (f"\n    proposed: {n.rule}" if n.rule else "") + (f"\n    facts: {', '.join(n.fact_ids)}" if n.fact_ids else ""))
+                   + (f"\n    proposed: {n.rule}" if n.rule else "") + (f"\n    applies to: {', '.join(n.applies_to)}" if n.applies_to else "") + (f"\n    facts: {', '.join(n.fact_ids)}" if n.fact_ids else ""))
 
 
 @app.command("state-at")

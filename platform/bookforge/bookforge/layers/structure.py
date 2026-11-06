@@ -295,7 +295,8 @@ def _ch(project, n: int) -> str:
 
 # ── layer 6: scenes, timeline and track refinement ──────────────────────────
 
-SCENE_RESEARCH_FOCUS = "Concrete details for this chapter's scenes: how things look, work and are done in this place and time."
+SCENE_RESEARCH_FOCUS = ("Concrete details for this chapter's scenes: how things look, work and are done in this place and time, "
+                        "and what a made-up or changed thing does when these scenes use it.")
 
 
 def validate_scenes_file(project) -> list[str]:
@@ -341,7 +342,7 @@ def _build_scenes(ctx: StepContext, files: list[str]) -> str:
         if cfg.research.enabled and ctx.web is not None and cfg.research.scene_questions > 0:
             def before(chapter=chapter):
                 outcome = run_research(ctx, "book", SCENE_RESEARCH_FOCUS, dump_yaml(to_plain(chapter)),
-                                       max_questions=cfg.research.scene_questions)
+                                       max_questions=cfg.research.scene_questions, applies_to=[chapter.id])
                 research_files.extend(outcome.files)
 
         def build(chapter=chapter, idx=idx, ch_num=ch_num, tracks=tracks, prev_when=prev_when):

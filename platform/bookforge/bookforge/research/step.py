@@ -410,8 +410,12 @@ def answer_question(ctx, web, q: Question, document: str, seen_urls: set[str]) -
     return attempt
 
 
-def run_research(ctx, scope: str, focus: str, document: str, max_questions: int | None = None) -> ResearchOutcome:
-    """Research for ctx.layer. `scope` is "series" or "book" (where the notes are kept)."""
+def run_research(ctx, scope: str, focus: str, document: str, max_questions: int | None = None,
+                 applies_to: list[str] | None = None) -> ResearchOutcome:
+    """Research for ctx.layer. `scope` is "series" or "book" (where the notes are kept).
+
+    `applies_to` names the chapter or scenes the needs raised here are for (scene planning); None means the whole book.
+    """
     project, web = ctx.project, ctx.web
     cfg = project.config.research
     all_stores = stores_for(project)
@@ -436,7 +440,7 @@ def run_research(ctx, scope: str, focus: str, document: str, max_questions: int 
     for q in questions:
         if q.stance == "invent":  # nothing to look up: the proposed rule waits for the author
             store.add_need(layer=ctx.layer, question=q.question, stance=q.stance, reason=q.reason, rule=q.rule,
-                           context=q.context, sensitive=q.sensitive, status="proposed")
+                           context=q.context, sensitive=q.sensitive, status="proposed", applies_to=list(applies_to or []))
             outcome.decisions += 1
             continue
         outcome.asked += 1
@@ -458,7 +462,7 @@ def run_research(ctx, scope: str, focus: str, document: str, max_questions: int 
                                           context=q.context))
         decision = q.stance != "ground"  # a lookup is automatic; an assumption or deviation is the author's to approve
         store.add_need(layer=ctx.layer, question=q.question, stance=q.stance, reason=q.reason, rule=q.rule, query=q.query,
-                       context=q.context, sensitive=q.sensitive, fact_ids=fact_ids,
+                       context=q.context, sensitive=q.sensitive, fact_ids=fact_ids, applies_to=list(applies_to or []),
                        status="proposed" if decision and q.rule else "approved", decided_by="" if decision and q.rule else "auto")
         if decision and q.rule:
             outcome.decisions += 1

@@ -139,6 +139,7 @@ class NeedBody(BaseModel):
     action: str | None = None  # approve | reject; leave out to only edit
     stance: str | None = None
     rule: str | None = None
+    applies_to: list[str] | None = None  # chapter or scene ids; [] = the whole book
 
 
 class RewriteBody(BaseModel):
@@ -378,7 +379,7 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
         if body.action not in (None, "approve", "reject"):
             raise HTTPException(422, "action must be approve or reject")
         approve = None if body.action is None else body.action == "approve"
-        return ok(asdict(ops.decide_need(project, need_id, approve, body.stance, body.rule)))
+        return ok(asdict(ops.decide_need(project, need_id, approve, body.stance, body.rule, body.applies_to)))
 
     @router.post("/series/{series}/books/{book}/changes/{cr_id}/{decision}")
     def decide(series: str, book: str, cr_id: str, decision: str):

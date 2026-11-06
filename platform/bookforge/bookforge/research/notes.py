@@ -14,6 +14,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
 
+from ..bible.positions import Position, parse_position
 from ..project import Project
 
 log = logging.getLogger("platform_bookforge.research")
@@ -67,6 +68,7 @@ class Need:
     status: str = "proposed"
     fact_ids: list[str] = field(default_factory=list)
     decided_by: str = ""  # "auto" for a lookup, "author" once you decided
+    applies_to: list[str] = field(default_factory=list)  # chapter or scene ids it applies to; empty = the whole book (or series)
 
 
 def normalize_question(q: str) -> str:
@@ -190,6 +192,8 @@ class ResearchStore:
                 lines.append(f"- why: {n.reason}")
             if n.rule:
                 lines.append(f"- {'rule' if n.stance == 'invent' else 'assumption' if n.stance == 'extrapolate' else 'deviation'}: {n.rule}")
+            if n.applies_to:
+                lines.append(f"- applies to: {', '.join(n.applies_to)}")
             for fid in n.fact_ids:
                 f = facts.get(fid)
                 if f:
@@ -235,13 +239,18 @@ def _short_source(url: str) -> str:
     return (p.hostname or "") + (p.path if len(p.path) < 40 else p.path[:37] + "...")
 
 
+DECISIONS_PROMPT_CHARS = 1500
+
+
 def notes_for_prompt(project: Project, max_chars: int) -> str:
-    """Stored facts as prompt text, newest kept first when over budget. Reference data, not instructions."""
+    """Stored facts as prompt text, newest kept first when over budget, then the author's approved decisions about the world.
+
+    Reference data, not instructions. The decisions are shown so that planning does not contradict them (a plot that needs a
+    loud laser when the author decided it is silent) and so a question already settled is not asked again.
+    """
     facts: list[Fact] = []
     for store in stores_for(project).values():
         facts.extend(store.facts())
-    if not facts:
-        return "none yet"
     lines: list[str] = []
     used = 0
     for f in reversed(facts):
@@ -250,18 +259,45 @@ def notes_for_prompt(project: Project, max_chars: int) -> str:
             break
         lines.append(line)
         used += len(line) + 1
-    return "\n".join(reversed(lines)) if lines else "none yet"
+    text = "\n".join(reversed(lines)) if lines else "none yet"
+    kind = {"invent": "invented", "extrapolate": "assumed", "bend": "changed on purpose"}
+    decided, used = [], 0
+    for n in approved_decisions(project):
+        line = f"- ({kind[n.stance]}) {n.rule}" + (f" [applies to {', '.join(n.applies_to)}]" if n.applies_to else "")
+        if used + len(line) > DECISIONS_PROMPT_CHARS:
+            break
+        decided.append(line)
+        used += len(line) + 1
+    if decided:
+        text += "\n\nThe author's decisions about this world (canon, not real-world fact):\n" + "\n".join(decided)
+    return text
 
 
-def approved_decisions(project: Project) -> list[Need]:
+def canonical_places(ids: list[str]) -> list[str]:
+    """Chapter and scene ids in their standard spelling (b1.ch4 -> b1.ch04). Raises ValueError for anything else."""
+    return list(dict.fromkeys(parse_position(i).id for i in ids))
+
+
+def applies_to_scene(need: Need, scene_id: str | None) -> bool:
+    """A need with no places applies everywhere; otherwise only to the chapters and scenes it names."""
+    if scene_id is None or not need.applies_to:
+        return True
+    pos = parse_position(scene_id)
+    return scene_id in need.applies_to or pos.id in need.applies_to or Position(pos.book, pos.chapter).id in need.applies_to
+
+
+def approved_decisions(project: Project, scene_id: str | None = None) -> list[Need]:
     """The author's approved rules, assumptions and deviations (invent, extrapolate, bend), series first.
 
-    These are canon: things the story invented or changed on purpose. A research fact says what the real world is
-    like; a decision says what is true in this story, and the writer must not mistake one for the other.
+    With `scene_id`, only those that apply to that scene (a need raised while planning one chapter's scenes applies to
+    that chapter; one raised earlier applies everywhere). These are canon: things the story invented or changed on
+    purpose. A research fact says what the real world is like; a decision says what is true in this story, and the
+    writer must not mistake one for the other.
     """
     out: list[Need] = []
     for store in stores_for(project).values():
-        out += [n for n in store.needs() if n.status == "approved" and n.stance in ("invent", "extrapolate", "bend") and n.rule]
+        out += [n for n in store.needs() if n.status == "approved" and n.stance in ("invent", "extrapolate", "bend") and n.rule
+                and applies_to_scene(n, scene_id)]
     return out
 
 

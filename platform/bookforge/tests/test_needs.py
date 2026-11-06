@@ -127,7 +127,7 @@ def test_the_needs_command_lists_and_decides(project, monkeypatch):
     done = runner.invoke(cli.app, ["needs", str(project.root), "--approve", "s-n002"])
     assert done.exit_code == 0 and "s-n002: approved (invent)" in done.output
     bad = runner.invoke(cli.app, ["needs", str(project.root), "--edit", "s-n002"])
-    assert bad.exit_code == 1 and "--stance and/or --rule" in bad.output
+    assert bad.exit_code == 1 and "--edit needs --stance" in bad.output
 
 
 def test_a_proposed_decision_is_in_the_morning_report(project):
@@ -180,3 +180,64 @@ def test_a_decision_is_asked_about_as_a_continuity_question(book):
     scenes = bible_store.load_scenes(book)
     questions, _ = build_questions(book, scenes[0], scenes)
     assert any("Author's decision about this world (b1-n001): Lasers are silent." in q.text for q in questions)
+
+
+# ── where a need applies ────────────────────────────────────────────────────
+
+def test_needs_raised_while_planning_a_chapter_apply_to_that_chapter(project):
+    llm = RuleLLM([asking(INVENT)])
+    run_research(StepContext(project=project, layer="scenes", llm=llm, web=web()), "book", "scene details", "chapter text",
+                 max_questions=1, applies_to=["b1.ch02"])
+    [n] = stores_for(project)["book"].needs()
+    assert n.applies_to == ["b1.ch02"]
+    run(project, RuleLLM([asking(need_item("Another?", rule="Elsewhere."))]), web(), scope="series")
+    assert stores_for(project)["series"].needs()[0].applies_to == []
+
+
+def test_a_decision_reaches_only_the_scenes_it_applies_to(book):
+    from bookforge.research.notes import approved_decisions
+    everywhere = _decide(book, "invent", "Everywhere rule.")
+    chapter = _decide(book, "invent", "Chapter two rule.")
+    scene = _decide(book, "bend", "One scene only.")
+    ops.decide_need(book, chapter.id, applies_to=["b1.ch2"])  # spelled loosely: stored in the standard form
+    ops.decide_need(book, scene.id, applies_to=["b1.ch01.s1"])
+    assert [n.rule for n in approved_decisions(book, "b1.ch01.s1")] == ["Everywhere rule.", "One scene only."]
+    assert [n.rule for n in approved_decisions(book, "b1.ch02.s2")] == ["Everywhere rule.", "Chapter two rule."]
+    assert len(approved_decisions(book)) == 3  # no scene given: all of them
+    assert stores_for(book)["book"].needs()[1].applies_to == ["b1.ch02"]
+
+
+def test_the_briefing_filters_decisions_by_scene(book):
+    from bookforge.briefing import build_briefing
+    n = _decide(book, "invent", "Only in chapter two.")
+    ops.decide_need(book, n.id, applies_to=["b1.ch02"])
+    assert "Only in chapter two." not in build_briefing(book, "b1.ch01.s1").text()
+    assert "Only in chapter two." in build_briefing(book, "b1.ch02.s1").text()
+
+
+def test_changing_where_a_decision_applies_keeps_it_approved_and_bad_places_are_refused(book):
+    n = _decide(book, "invent", "A rule.")
+    moved = ops.decide_need(book, n.id, applies_to=["b1.ch03"])
+    assert moved.status == "approved" and moved.applies_to == ["b1.ch03"]
+    assert ops.decide_need(book, n.id, applies_to=[]).applies_to == []
+    with pytest.raises(BookforgeError, match="not a position"):
+        ops.decide_need(book, n.id, applies_to=["the harbour"])
+
+
+def test_planning_prompts_show_approved_decisions(book):
+    from bookforge.research.notes import notes_for_prompt
+    assert "decisions" not in notes_for_prompt(book, 2000)
+    n = _decide(book, "invent", "Lasers are silent.")
+    ops.decide_need(book, n.id, applies_to=["b1.ch02"])
+    _decide(book, "invent", "Not approved.", approve=False)
+    text = notes_for_prompt(book, 2000)
+    assert "(invented) Lasers are silent. [applies to b1.ch02]" in text and "Not approved." not in text
+
+
+def test_the_needs_command_sets_where_a_decision_applies(book):
+    n = _decide(book, "invent", "A rule.")
+    runner = CliRunner()
+    out = runner.invoke(cli.app, ["needs", str(book.root), "--edit", n.id, "--applies-to", "b1.ch02", "--applies-to", "b1.ch03.s1", "--all"])
+    assert out.exit_code == 0 and "applies to: b1.ch02, b1.ch03.s1" in out.output
+    out = runner.invoke(cli.app, ["needs", str(book.root), "--edit", n.id, "--applies-to", "all", "--all"])
+    assert out.exit_code == 0 and "applies to" not in out.output.split("\n", 1)[1]
