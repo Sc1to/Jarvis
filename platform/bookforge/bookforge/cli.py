@@ -139,6 +139,7 @@ def research_test_cmd(
     query: Optional[str] = typer.Option(None, "--query", help="What to search for (default: the question itself)"),
     setting: str = typer.Option("any time", "--setting", help="The time and place an answer must fit, like 'England, 1880s'"),
     book: str = BookOpt,
+    show_pages: bool = typer.Option(False, "--show-pages", help="Also print, for each page, the text the model was shown and its raw reply"),
 ) -> None:
     """Try one research question end to end and show what was searched, read, kept and dropped. Stores nothing."""
     from .layers.runner import StepContext
@@ -153,7 +154,7 @@ def research_test_cmd(
         attempt = answer_question(ctx, web, q, story, set())
     except BookforgeError as e:
         _fail(e)
-    for line in probe.describe(attempt, q, probe.source_of(web)):
+    for line in probe.describe(attempt, q, probe.source_of(web), show_pages):
         typer.echo(line)
     raise typer.Exit(0 if attempt.facts else 1)
 

@@ -273,7 +273,7 @@ def extract_facts(ctx, question: str, url: str, page_text: str, context: str = "
     data = parse_json_object(reply) or {}
     raw = data.get("facts") if isinstance(data.get("facts"), list) else []
     if stats is not None:
-        stats.update(excerpt_chars=len(shown), model_facts=len(raw), quote_rejected=0)
+        stats.update(excerpt_chars=len(shown), model_facts=len(raw), quote_rejected=0, shown=shown, reply=reply)
     facts = []
     for item in raw[:MAX_FACTS_PER_PAGE]:
         if not isinstance(item, dict):
@@ -315,6 +315,8 @@ class PageTrace:
     kept: list[dict] = field(default_factory=list)
     dropped: list[dict] = field(default_factory=list)  # facts the relevance check dropped, each with its reason
     error: str = ""
+    shown: str = ""  # the text of the page the model was shown (for research-test --show-pages)
+    reply: str = ""  # the model's raw answer about the page
 
 
 @dataclass
@@ -374,6 +376,7 @@ def answer_question(ctx, web, q: Question, document: str, seen_urls: set[str]) -
                 trace.excerpt_chars, trace.model_facts, trace.quote_rejected = (stats.get("excerpt_chars", 0), stats.get("model_facts", 0),
                                                                                 stats.get("quote_rejected", 0))
                 trace.fit_rejected, trace.kept, trace.dropped = dropped, found_facts, stats.get("dropped_facts", [])
+                trace.shown, trace.reply = stats.get("shown", ""), stats.get("reply", "")
                 rejected += dropped
             except BookforgeError as e:
                 log.warning("%s: page %s skipped: %s", ctx.layer, hit.url, e)
