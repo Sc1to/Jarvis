@@ -7,7 +7,7 @@ import yaml
 from .document import DocumentSpec, generate_document, word_count
 from .runner import StepContext, StepResult
 
-NORTH_STAR_SECTIONS = ("Premise", "Themes", "Emotional promise", "Tone", "Ending direction", "What it is not")
+NORTH_STAR_SECTIONS = ("Premise", "Themes", "Emotional promise", "Tone", "Realism", "Ending direction", "What it is not")
 NORTH_STAR_MIN_WORDS = 150
 NORTH_STAR_MAX_WORDS = 600  # "one page"; the prompt asks for 350-450
 SYNOPSIS_MIN_WORDS = 300
@@ -26,7 +26,7 @@ def validate_north_star(text: str) -> list[str]:
     for i, (name, _, end) in enumerate(headings):
         if name in {s.casefold() for s in NORTH_STAR_SECTIONS}:
             stop = headings[i + 1][1] if i + 1 < len(headings) else len(text)
-            if word_count(text[end:stop]) < 4:
+            if word_count(text[end:stop]) < (2 if name == "realism" else 4):
                 problems.append(f"the section '{name}' is empty")
     n = word_count(text)
     if n > NORTH_STAR_MAX_WORDS:

@@ -1,3 +1,4 @@
+from pathlib import Path
 import subprocess
 
 import pytest
@@ -442,3 +443,47 @@ def test_unanswered_questions_are_retried_and_listed_once(project):
     run(p, LayerLLM(), HANDLERS, web=research_web(), until="series_north_star")
     notes = (project.root / "research/series_north_star.md").read_text()
     assert notes.count("## Who kept death records") == 1 and "[s-0001]" in notes and "No answer found" not in notes
+
+
+# ── the realism setting ─────────────────────────────────────────────────────
+
+def _realism_project(project, series, book):
+    from bookforge.realism import realism_setting
+    (project.root / "north-star.md").write_text(series, encoding="utf-8")
+    (project.resolve(f"books/{project.book}/north-star.md")).parent.mkdir(parents=True, exist_ok=True)
+    project.resolve(f"books/{project.book}/north-star.md").write_text(book, encoding="utf-8")
+    return realism_setting(project)
+
+
+def test_a_north_star_needs_a_realism_section():
+    assert "Realism" in NORTH_STAR_SECTIONS
+    assert any("Realism" in p for p in validate_north_star(north_star(drop=("Realism",))))
+    assert validate_north_star(north_star()) == []
+
+
+def test_the_prompts_ask_for_the_realism_section():
+    from bookforge.prompts import render
+    series = render("series_north_star", Path("."), premise="p", target_words="1", pov="p", tense="t")
+    book = render("book_north_star", Path("."), book_id="b1", premise="p", series_north_star="s", ledger="l",
+                  research_notes="r", target_words="1", pov="p", tense="t")
+    assert "## Realism" in series and "Hard SF" in series
+    assert "## Realism" in book and "As the series." in book
+
+
+def test_the_books_realism_wins_over_the_series(project):
+    got = _realism_project(project, "# S\n\n## Realism\nHard SF: physics must hold.\n\n## Tone\nx\n",
+                           "# B\n\n## Realism\nSpace opera: plausible is enough.\n\n## Tone\nx\n")
+    assert got == "Space opera: plausible is enough."
+
+
+def test_as_the_series_uses_the_series_and_keeps_the_exception(project):
+    series = "# S\n\n## Realism\nHard SF: physics must hold.\n\n## Tone\nx\n"
+    assert _realism_project(project, series, "# B\n\n## Realism\nAs the series.\n\n## Tone\nx\n") == "Hard SF: physics must hold."
+    got = _realism_project(project, series, "# B\n\n## Realism\nAs the series, except the drive.\n\n## Tone\nx\n")
+    assert got == "Hard SF: physics must hold. except the drive."
+
+
+def test_an_older_north_star_without_a_realism_section_gives_nothing_or_the_series(project):
+    assert _realism_project(project, "# S\n\n## Tone\nx\n", "# B\n\n## Tone\nx\n") == ""
+    got = _realism_project(project, "# S\n\n## Realism\nHistorical: accurate to the decade.\n", "# B\n\n## Tone\nx\n")
+    assert got == "Historical: accurate to the decade."

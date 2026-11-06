@@ -40,6 +40,9 @@ What the reader feels over the course of this book and at its end. One short par
 ## Tone
 Voice and mood of this book, and how it differs from or deepens the series tone. One short paragraph.
 
+## Realism
+How faithful to the real world this book must be. If it is the same as the series north star, write "As the series." and nothing else, or add one sentence of exceptions after it. If this book differs (a flashback book in a real period of a space opera, a book with a stated exception to the physics), start with a short label and say how, in one or two sentences. The book's statement wins over the series' where they differ.
+
 ## Ending direction
 How this book ends: the change in the protagonist, what is resolved, and what stays open for later books (if any). Direction, not a scene.
 
