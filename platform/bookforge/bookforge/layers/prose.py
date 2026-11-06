@@ -30,6 +30,7 @@ from ..prompts import render
 from ..qc.extract import extract_observed, record_observed
 from ..qc.mechanical import CheckContext, check_scene, load_banned
 from ..qc import scene_notes
+from ..qc.critic import rubric_line
 from ..qc.scene import settle_scene
 from ..state import Item, now
 from .document import ask_until_valid, prompt_values, word_count
@@ -164,16 +165,21 @@ def record_extraction(ctx: StepContext, scene: Scene, scenes: list[Scene], text:
     return len(extraction.gaps), filed
 
 
-def _previous_problems(project, sid: str) -> str:
-    """What was wrong the last time this scene was flagged, and what the author said about it, for the writer. "" if nothing."""
+def _saved_review(project, sid: str) -> dict:
     raw = scenefiles.read(scenefiles.review_path(project, sid))
     try:
-        review = json.loads(raw) if raw else {}
+        return json.loads(raw) if raw else {}
     except ValueError:
-        review = {}
+        return {}
+
+
+def _problems_text(project, scene: Scene, review: dict) -> str:
+    """What was wrong with an attempt at this scene (from its review), and what the author said about it, for the writer. "" if nothing."""
+    sid = scene.id
     notes = scene_notes.read(project, sid)
+    continuity = review.get("continuity") or {}
     lines: list[str] = []
-    for f in (review.get("continuity") or {}).get("flags") or []:
+    for f in continuity.get("flags") or []:
         q = f.get("question", "")
         if not q or q in notes["dismissed"]:
             continue
@@ -181,13 +187,25 @@ def _previous_problems(project, sid: str) -> str:
         if notes["instructions"].get(q):
             line += f" The author says: {notes['instructions'][q]}"
         lines.append(line)
-    flagged_text = {f.get("question") for f in (review.get("continuity") or {}).get("flags") or []}
-    for b in review.get("blocking") or []:
-        if not any(q and q in b for q in flagged_text):
-            lines.append(f"- {b}")
+    # The critic: what it scored too low, what each criterion asks for, and the three lines it quoted with what is wrong with them.
+    critic = review.get("critic") or {}
+    minimum = project.config.qc.critic_min_score
+    low = {c: v for c, v in (critic.get("scores") or {}).items() if isinstance(v, int) and v < minimum}
+    if low:
+        for c, v in low.items():
+            lines.append(f"- The critic scored {c} {v} (minimum {minimum}): {rubric_line(project, c)}")
+        for w in critic.get("weakest") or []:
+            lines.append(f"- [{w.get('criterion')}] \"{w.get('quote')}\": {w.get('issue')}")
+        if "beats_covered" in low:
+            lines.append("- Make every one of these beats happen on the page, in order: " + "; ".join(f"{n}. {b}" for n, b in enumerate(scene.beats, 1)))
+    flagged_text = {f.get("question") for f in continuity.get("flags") or []}
+    for b in review.get("blocking") or review.get("unresolved") or []:
+        if any(q and q in b for q in flagged_text) or (low and b.startswith("the critic scored")):
+            continue
+        lines.append(f"- {b}")
     if not lines:
         return ""
-    return ("\n\n## Problems found in the previous attempt at this scene (do not repeat them)\n\n" + "\n".join(lines)[:1800])
+    return "\n\n## Problems found in the previous attempt at this scene (do not repeat them)\n\n" + "\n".join(lines)[:2600]
 
 
 def write_scene(ctx: StepContext, scene: Scene, scenes: list[Scene], drafts: int, words: tuple[int, int]) -> tuple[bool, list[str]]:
@@ -213,18 +231,22 @@ def write_scene(ctx: StepContext, scene: Scene, scenes: list[Scene], drafts: int
         reasons = [i.message for i in report.blocking]
     else:
         flagged_before = _item(project, sid).status == "flagged"
-        problems_section = _previous_problems(project, sid) if flagged_before else ""
+        prior_review = _saved_review(project, sid) if flagged_before else {}
+        problems_section = _problems_text(project, scene, prior_review) if flagged_before else ""
+        rewrite_ok = project.config.qc.critic_rewrite
         result = None
-        if flagged_before and project.config.qc.revise_flagged:
-            # Revise what was written, with what was found, before throwing it away and starting again.
+        # Revise what was written, with what was found, before throwing it away and starting again. Not when the critic said the scene as a
+        # whole is the problem (a missing beat, uneven pacing): patching lines cannot fix that, only writing it again can.
+        if flagged_before and project.config.qc.revise_flagged and not (rewrite_ok and prior_review.get("rewrite_advised")):
             saved = scenefiles.best_text(project, sid)
             if saved and saved.strip():
                 _set_status(project, sid, "drafted")
                 activity.set(step="revising the saved text")
-                attempt = settle_scene(ctx, scene, scenes, {"saved": saved}, check_ctx)
+                attempt = settle_scene(ctx, scene, scenes, {"saved": saved}, check_ctx, can_rewrite=rewrite_ok)
                 if attempt.accepted:
                     result = attempt
                     review["revised_after_flag"] = True
+        extra: dict = {}
         if result is None:
             if flagged_before:
                 for old in list(d.glob("draft-*.md")) + [scenefiles.revised_path(project, sid)]:
@@ -233,9 +255,20 @@ def write_scene(ctx: StepContext, scene: Scene, scenes: list[Scene], drafts: int
             texts = _write_drafts(ctx, scene, briefing.text() + problems_section, drafts, words)
             _set_status(project, sid, "drafted")
             paths += [scenefiles.draft_path(project, sid, i) for i in range(1, len(texts) + 1)]
-            result = settle_scene(ctx, scene, scenes, {f"draft-{i}": t for i, t in enumerate(texts, 1)}, check_ctx)
+            # A scene flagged before already carries the notes of the earlier attempt; otherwise the first attempt may be redone once.
+            may_rewrite = rewrite_ok and not flagged_before
+            result = settle_scene(ctx, scene, scenes, {f"draft-{i}": t for i, t in enumerate(texts, 1)}, check_ctx, can_rewrite=may_rewrite)
+            if may_rewrite and not result.accepted and result.review.get("rewrite_advised"):
+                notes = _problems_text(project, scene, result.review)
+                extra = {"rewrote_with_critic_notes": True, "first_attempt_critic": result.review.get("critic")}
+                for old in list(d.glob("draft-*.md")) + [scenefiles.revised_path(project, sid)]:
+                    old.unlink(missing_ok=True)
+                activity.set(step="writing the scene again with the critic's notes")
+                texts = _write_drafts(ctx, scene, briefing.text() + notes, drafts, words)
+                paths += [scenefiles.draft_path(project, sid, i) for i in range(1, len(texts) + 1)]
+                result = settle_scene(ctx, scene, scenes, {f"draft-{i}": t for i, t in enumerate(texts, 1)}, check_ctx, can_rewrite=False)
         text, source, reasons = result.text, "written", [] if result.accepted else result.reasons
-        review.update(source=source, **result.review)
+        review.update(source=source, **result.review, **extra)
         report = check_scene(text, check_ctx)
 
     if reasons:

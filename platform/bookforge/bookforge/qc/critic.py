@@ -17,6 +17,8 @@ from .revise import Flag
 from .support import ask_json, quote_in_page, scene_brief, voice_excerpt
 
 CRITERIA = ("stakes", "voice", "show_dont_tell", "pacing", "dialogue", "beats_covered")
+# About the scene as a whole: three patched lines cannot fix a missing beat or uneven pacing, only writing the scene again can.
+WHOLE_SCENE = ("beats_covered", "pacing")
 MIN_QUOTE_WORDS = 6
 
 
