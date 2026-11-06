@@ -310,6 +310,52 @@ def test_only_a_contradiction_with_a_real_quote_flags_the_scene(book):
     assert flag.kind == "contradiction" and flag.fixable and flag.evidence == evidence and "grey eyes" in flag.question
 
 
+def _confirm_reply(conflict, log=None):
+    def reply(messages):
+        if log is not None:
+            log.append(messages[-1]["content"])
+        return json.dumps({"fact_says": "late 20s", "text_says": "twenty-eight years", "conflict": conflict, "confidence": 0.9})
+    return reply
+
+
+def _flagged(book, confirm, **cfg):
+    evidence = " ".join(TEXT.split()[:6])
+    llm = RuleLLM([(CONTINUITY, continuity({"grey eyes": ("contradicts", 0.9, evidence)})), ("A reader flagged", confirm)])
+    book.config.qc.confirm_contradictions = cfg.get("on", True)
+    return llm, check_continuity(ctx_for(book, llm), scene_of(book, "b1.ch04.s1"), store.load_scenes(book), TEXT)
+
+
+def test_a_contradiction_the_second_check_does_not_confirm_is_only_unsure(book):
+    log = []
+    llm, rep = _flagged(book, _confirm_reply(False, log))
+    assert rep.flags == []
+    [u] = rep.unsure
+    assert u["confirmed"] is False and u["fact_says"] == "late 20s" and u["text_says"] == "twenty-eight years"
+    assert len(log) == 1 and "grey eyes" in log[0] and TEXT.split(".")[0] in log[0]
+
+
+def test_a_confirmed_contradiction_stays_a_flag_with_the_compared_values(book):
+    llm, rep = _flagged(book, _confirm_reply(True))
+    [flag] = rep.flags
+    assert flag.fact_says == "late 20s" and flag.text_says == "twenty-eight years"
+
+
+def test_a_failed_second_check_keeps_the_flag(book):
+    llm, rep = _flagged(book, "not json at all")
+    assert len(rep.flags) == 1
+
+
+def test_the_second_check_can_be_switched_off(book):
+    llm, rep = _flagged(book, _confirm_reply(False), on=False)
+    assert len(rep.flags) == 1 and not any("A reader flagged" in c["messages"][-1]["content"] for c in llm.calls)
+
+
+def test_no_flag_means_no_second_call(book):
+    llm = RuleLLM([(CONTINUITY, continuity())])
+    check_continuity(ctx_for(book, llm), scene_of(book, "b1.ch04.s1"), store.load_scenes(book), TEXT)
+    assert len(llm.calls) == 1
+
+
 def test_a_shown_question_cannot_be_answered_with_a_contradiction_relation(book):
     from bookforge.qc.decide import Question
     q = [Question("q1", "shown", "Anna: healed")]

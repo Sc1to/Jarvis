@@ -73,6 +73,8 @@ class RuleLLM:
                 return reply(messages) if callable(reply) else reply
         if "Audit the facts below" in first:  # the claim audit: clean unless a test scripts something else
             return '{"unsupported": []}'
+        if "A reader flagged a possible contradiction" in first:  # the second check: confirms the flag unless a test scripts otherwise
+            return '{"fact_says": "the fact", "text_says": "the passage", "conflict": true, "confidence": 0.9}'
         raise AssertionError(f"no rule matches this prompt: {first[:120]!r}")
 
     def calls_matching(self, marker):

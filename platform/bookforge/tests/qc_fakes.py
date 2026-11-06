@@ -7,6 +7,7 @@ import re
 CONTINUITY = "against facts the author has fixed"
 CRITIC = "Review the scene below as a demanding editor"
 JUDGE = "Two drafts of the same scene follow"
+CONFIRM = "A reader flagged a possible contradiction"
 REVISE = "Revise one passage of a scene"
 INSERT = "A scene has to show a change on the page"
 EXTRACT = "Record what the scene below actually says"

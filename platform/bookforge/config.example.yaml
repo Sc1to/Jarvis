@@ -85,6 +85,7 @@ qc:
   critic_check: true                   # the rubric critique
   extract_observed: true               # record what each accepted scene says about the tracked states
   review_structure: true               # critic review of acts, chapters and scene plans against their parents
+  confirm_contradictions: true         # re-check each contradiction flag in a narrow second call
   continuity_batch_size: 8             # questions per model call
   continuity_max_questions: 40         # per scene
 
