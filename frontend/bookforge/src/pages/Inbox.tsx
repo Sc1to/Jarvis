@@ -43,13 +43,15 @@ export function NeedDecision({ need, series, book, onDone, locked }: { need: Nee
   const act = useAction()
   const [stance, setStance] = useState<Stance>(need.stance)
   const [rule, setRule] = useState(need.rule)
+  const [wholeBook, setWholeBook] = useState(false)
   const info = STANCES.find((x) => x.value === stance)!
-  const changed = stance !== need.stance || rule !== need.rule
+  const changed = stance !== need.stance || rule !== need.rule || wholeBook
   const send = async (action?: 'approve' | 'reject') => {
     const body: Record<string, unknown> = {}
     if (action) body.action = action
     if (stance !== need.stance) body.stance = stance
     if (rule !== need.rule) body.rule = rule
+    if (wholeBook) body.applies_to = []
     if (await act.run(() => post(`${bookPath(series, book)}/needs/${need.id}`, body))) onDone()
   }
   const needsRule = stance !== 'ground' && !rule.trim()
@@ -70,6 +72,12 @@ export function NeedDecision({ need, series, book, onDone, locked }: { need: Nee
         <textarea value={rule} onChange={(e) => setRule(e.target.value)} rows={3} disabled={act.busy || locked}
           className="mt-1 block w-full rounded-md border border-slate-300 p-2 text-sm font-normal" />
       </label>
+      {need.applies_to.length > 0 && (
+        <label className="flex items-start gap-2 text-xs text-slate-700">
+          <input type="checkbox" checked={wholeBook} onChange={(e) => setWholeBook(e.target.checked)} disabled={act.busy || locked} className="mt-0.5 h-4 w-4" />
+          <span>Raised for {need.applies_to.join(', ')}, so only those scenes get it. Tick to apply it to the whole book.</span>
+        </label>
+      )}
       {need.fact_ids.length > 0 && <p className="text-xs text-slate-600">{need.fact_ids.length} researched fact(s) found for this ({need.fact_ids.join(', ')}); see the Research tab.</p>}
       {stance !== 'invent' && stance !== need.stance && !need.fact_ids.length && <p className="text-xs text-amber-800">Nothing is looked up when you change the handling here, so there are no facts for it yet.</p>}
       <ErrorBanner message={act.error} onClose={act.clear} />

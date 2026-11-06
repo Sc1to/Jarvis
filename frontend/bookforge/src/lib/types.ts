@@ -41,6 +41,7 @@ export interface Need {
   id: string; scope: 'series' | 'book'; layer: string; question: string; stance: Stance
   reason: string; rule: string; query: string; context: string; sensitive: boolean
   status: 'proposed' | 'approved' | 'rejected'; fact_ids: string[]; decided_by: string
+  applies_to: string[]  // chapter or scene ids; empty = the whole book
 }
 
 export interface SceneDetail {

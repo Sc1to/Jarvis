@@ -216,7 +216,7 @@ def _assemble(d: _Data, k: _Knobs) -> tuple[list[Section], Deps]:
     deps.bible += [tag(f"entity:{e.id}", e.model_dump()) for e in entities]
     deps.bible += [tag(f"rule:{r.id}", r.model_dump()) for r in d.constants.rules]
 
-    decisions = approved_decisions(project)
+    decisions = approved_decisions(project, scene.id)
     if decisions:
         kind = {"invent": "invented", "extrapolate": "assumed", "bend": "changed on purpose"}
         sections.append(Section("The author's decisions about this world (canon: " + "invented or changed on purpose, not real-world fact)",

@@ -127,7 +127,8 @@ def list_needs(project: Project) -> list:
     return [(scope, n) for scope, store in stores_for(project).items() for n in store.needs()]
 
 
-def decide_need(project: Project, need_id: str, approve: bool | None = None, stance: str | None = None, rule: str | None = None):
+def decide_need(project: Project, need_id: str, approve: bool | None = None, stance: str | None = None, rule: str | None = None,
+                applies_to: list[str] | None = None):
     """Approve or reject a proposed rule, assumption or deviation, and/or change its stance or its text.
 
     Changing the stance or the text without saying approve or reject puts the need back to 'proposed': an edit is not an
@@ -145,6 +146,12 @@ def decide_need(project: Project, need_id: str, approve: bool | None = None, sta
         need.stance = stance
     if rule is not None:
         need.rule = " ".join(rule.split())[:MAX_RULE_CHARS_STORED]
+    if applies_to is not None:  # [] = the whole book
+        from .research.notes import canonical_places
+        try:
+            need.applies_to = canonical_places(applies_to)
+        except ValueError as e:
+            raise BookforgeError(str(e)) from None
     if need.stance == "invent" and not need.rule:
         raise BookforgeError("an invented thing needs the rule you decide on (--rule \"...\")")
     if approve is True:
@@ -152,7 +159,7 @@ def decide_need(project: Project, need_id: str, approve: bool | None = None, sta
     elif approve is False:
         need.status, need.decided_by = "rejected", "author"
     elif stance is not None or rule is not None:
-        need.status, need.decided_by = "proposed", ""
+        need.status, need.decided_by = "proposed", ""  # (changing only where it applies does not reopen a decision)
     store.save_need(need)
     store.write_needs_md()
     if project.config.git.commit_each_step:
