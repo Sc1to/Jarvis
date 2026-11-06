@@ -8,6 +8,7 @@ CONTINUITY = "against facts the author has fixed"
 CRITIC = "Review the scene below as a demanding editor"
 JUDGE = "Two drafts of the same scene follow"
 REVISE = "Revise one passage of a scene"
+INSERT = "A scene has to show a change on the page"
 EXTRACT = "Record what the scene below actually says"
 PLAN_REVIEW = "Review the proposed"
 
@@ -109,5 +110,17 @@ def plan_review(problems=None):
             if needle in what:
                 return json.dumps({"ok": False, "problems": [{"item": i, "issue": t} for i, t in items]})
         return json.dumps({"ok": True, "problems": []})
+
+    return reply
+
+
+def inserter(after=1, words=60, log=None):
+    """Writes a passage of `words` words and says it goes after paragraph `after`."""
+
+    def reply(messages):
+        if log is not None:
+            log.append(user(messages))
+        passage = " ".join(["She felt the cut open on her shoulder, and the world narrowed to that one bright line."] * ((words // 17) + 1))
+        return json.dumps({"after": after, "passage": " ".join(passage.split()[:words])})
 
     return reply

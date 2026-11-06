@@ -50,15 +50,19 @@ export interface SceneDetail {
   status: Status; version: number; note: string | null
   text: string | null; summary: string | null
   review: Review | null
+  findings: SceneFindings
   drafts: Record<string, string>
   change_requests: ChangeRequest[]
 }
+
+/** What the author said about this scene's findings: false alarms and instructions for the writer. */
+export interface SceneFindings { dismissed: string[]; instructions: Record<string, string> }
 
 export interface Review {
   chosen?: string; source?: string; blocking?: string[]
   judge?: { wins: Record<string, number>; pairs: { a: string; b: string; run1: string; run2: string; winner: string | null }[]; error?: string | null } | null
   critic?: { scores: Record<string, number>; weakest?: { criterion: string; quote: string; issue: string }[]; error?: string | null } | null
-  continuity?: { questions: number; flags: { question: string; evidence: string }[]; unsure: { question: string; answer: string; confidence: number }[] } | null
+  continuity?: { questions: number; flags: { question: string; evidence: string; confidence?: number }[]; unsure: { question: string; answer: string; confidence: number; evidence?: string }[] } | null
   rounds?: { round: number; mechanical_blocking: string[]; continuity_flags: string[]; critic_lowest: number | null; revisions: { mode: string; before: string; after?: string }[] }[]
   mechanical?: Record<string, { score: number; issues: { severity: string; message: string }[] }>
   extraction?: { gaps: { track: string; planned: string; observed: string }[] }

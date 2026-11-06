@@ -13,7 +13,7 @@ from bookforge.project import Project
 from bookforge.state import load_state
 from conftest import RuleLLM
 from prose_fakes import prose
-from qc_fakes import CONTINUITY, CRITIC, EXTRACT, JUDGE, REVISE, continuity, critic, extractor, judge, reviser
+from qc_fakes import CONTINUITY, CRITIC, EXTRACT, INSERT, JUDGE, REVISE, continuity, critic, extractor, inserter, judge, reviser
 from structure_fakes import SMALL_CONFIG, ready, rules
 from test_prose import BANNED, SCENES, SUMMARY, good, prose_rules
 
@@ -38,14 +38,14 @@ def qc_rules(**kw):
     """Scene replies from test_prose plus a clean reply for every quality-control call (override any via kw)."""
     over = kw.pop("overrides", None)
     base = {"judge": (JUDGE, judge("Zebra")), "continuity": (CONTINUITY, continuity()), "critic": (CRITIC, critic()),
-            "revise": (REVISE, reviser({"a testament to": "proof of"})), "extract": (EXTRACT, extractor())}
+            "revise": (REVISE, reviser({"a testament to": "proof of"})), "extract": (EXTRACT, extractor()), "insert": (INSERT, inserter())}
     for k, v in kw.items():
         base[k] = v
     return prose_rules(over) + list(base.values())
 
 
 KINDS = (("draft", "Write the scene described below"), ("judge", JUDGE), ("continuity", CONTINUITY), ("critic", CRITIC),
-         ("summary", "Summarise the scene below"), ("extract", EXTRACT), ("revise", REVISE))
+         ("summary", "Summarise the scene below"), ("extract", EXTRACT), ("revise", REVISE), ("insert", INSERT))
 
 
 def kinds(llm):
@@ -103,7 +103,7 @@ def test_the_review_records_every_layer(book):
     r = review(book)
     assert r["judge"]["wins"] == {"draft-1": 0, "draft-2": 1} and r["chosen"] == "draft-2" and r["revised"] is False
     assert len(r["rounds"]) == 1 and r["rounds"][0]["critic_lowest"] == 4 and r["rounds"][0]["revisions"] == []
-    assert r["continuity"]["flags"] == [] and r["continuity"]["questions"] > 5
+    assert r["continuity"]["flags"] == [] and r["continuity"]["questions"] >= 5  # a state that begins in the scene has no fixed-fact question
     assert r["critic"]["scores"]["stakes"] == 4 and len(r["critic"]["weakest"]) == 3
     assert r["unresolved"] == [] and r["extraction"]["observations"] == 1 and r["summary_source"] == "model"
     assert len(calls(llm, JUDGE)) >= 2 and len(calls(llm, CRITIC)) >= 1
@@ -179,21 +179,43 @@ def test_a_contradiction_is_revised_and_checked_again(book):
     assert [len(x["continuity_flags"]) for x in r["rounds"]] == [1, 0] and r["unresolved"] == []
 
 
-def test_a_missing_must_show_change_is_left_for_the_author_without_a_revision(book):
+def test_a_missing_must_show_change_gets_a_passage_inserted_and_is_flagged_if_the_check_still_says_no(book):
     go(book, RuleLLM(prose_rules() + [(JUDGE, judge("Zebra")), (CONTINUITY, continuity()), (CRITIC, critic()),
                                        (EXTRACT, extractor()), (REVISE, reviser({}))]), until="prose")
     p = Project.open(book.root)
     p.state.approve_checkpoint("voice")
     p.save_state()
     sid = "b1.ch02.s2"  # where the wound begins and has to be shown
-    llm = RuleLLM(qc_rules(continuity=(CONTINUITY, continuity({"Anna Voss: deep cut": ("no", 0.9, "")}))))
+    log = []
+    llm = RuleLLM(qc_rules(continuity=(CONTINUITY, continuity({"Anna Voss: deep cut": ("no", 0.9, "")})), insert=(INSERT, inserter(log=log))))
     summary = go(Project.open(book.root), llm)
     assert summary.stopped == "failed" and sid in summary.detail
     r = review(book, sid)
-    assert any("does not show this on the page" in b for b in r["blocking"])
-    assert all(rd["revisions"] == [] for rd in r["rounds"]) and len(r["rounds"]) == 1
+    assert any("does not show this on the page" in b for b in r["blocking"])  # the check kept saying no
+    assert [m["mode"] for rd in r["rounds"] for m in rd["revisions"]] == ["insert", "insert"]  # but a passage was inserted each round
+    assert "Anna Voss: deep cut" in log[0] and "50 to 150 words" in log[0]
     assert not scenefiles.final_path(book, sid).exists() and load_state(book.state_path).items[sid].status == "flagged"
     assert load_state(book.state_path).items["b1.ch03.s1"].status == "accepted"  # the rest went on
+
+
+def test_an_inserted_passage_that_shows_the_change_makes_the_scene_pass(book):
+    go(book, RuleLLM(prose_rules() + [(JUDGE, judge("Zebra")), (CONTINUITY, continuity()), (CRITIC, critic()),
+                                       (EXTRACT, extractor()), (REVISE, reviser({}))]), until="prose")
+    p = Project.open(book.root)
+    p.state.approve_checkpoint("voice")
+    p.save_state()
+    sid = "b1.ch02.s2"
+    inserted = []
+
+    def answers(messages):
+        shown = "She felt the cut open" in messages[-1]["content"]  # the scene now contains the inserted passage
+        return continuity({} if shown else {"Anna Voss: deep cut": ("no", 0.9, "")})(messages)
+
+    llm = RuleLLM(qc_rules(continuity=(CONTINUITY, answers), insert=(INSERT, inserter(after=2, log=inserted))))
+    summary = go(Project.open(book.root), llm)
+    assert summary.stopped != "failed", summary.detail
+    assert load_state(book.state_path).items[sid].status == "accepted" and len(inserted) == 1
+    assert "She felt the cut open on her shoulder" in scenefiles.final_path(book, sid).read_text()
 
 
 # ── the critic ──────────────────────────────────────────────────────────────

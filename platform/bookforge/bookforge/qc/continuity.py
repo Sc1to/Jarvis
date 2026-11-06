@@ -7,8 +7,9 @@ Changes marked must_show get a "shown" question: does the change actually happen
 A "yes" to a contradiction question is a flag only if the quoted evidence really is in the text;
 otherwise it is only an "unsure". P(contradiction) is the confidence for a yes and 1 - confidence for
 a no; above `qc.continuity_flag_threshold` a no is reported as unsure, never revised. A must_show
-change that is not shown cannot be repaired by rewriting one passage, so it is not fixable: the
-scene is left for the author.
+change that is not shown is repaired by inserting a short passage that shows it (see revise.py).
+A question whose finding the author dismissed is not asked again; a state that begins in the scene
+gets only the "shown" question, and an approved decision of the author only warns.
 """
 
 from dataclasses import dataclass, field
@@ -19,7 +20,15 @@ from ..bible.lookup import scene_entities, state_at
 from ..bible.models import Scene
 from ..errors import BookforgeError
 from ..research.notes import approved_decisions, stores_for
+from . import scene_notes
 from .decide import Answer, Question, ask_questions
+
+
+@dataclass(frozen=True)
+class _Warn:
+    """Stands in for a rule from the rules panel when a question should only warn: recorded under `unsure`, never revised."""
+    severity: str = "warn"
+    id: None = None
 
 
 @dataclass
@@ -57,6 +66,12 @@ def build_questions(project, scene: Scene, scenes: list[Scene]) -> tuple[list[Qu
     ids = scene_entities(scenes, scene.id)
     items: list[tuple[str, str, object]] = []  # (kind, text, the rule it comes from, if any)
     for s in state_at(tracks, scene.id, ids):
+        if s.begins_here:
+            # The state starts in this scene: the scene may begin before the change, so the new value is not a fact it can
+            # contradict. Only the "shown" question below applies, when the change has to happen on the page.
+            if s.must_show:
+                items.append(("shown", f"{names.get(s.entity, s.entity)}: {s.value}", None))
+            continue
         fact = f"{names.get(s.entity, s.entity)} ({s.kind}): {s.value}"
         items.append(("contradiction", fact, None))
         if s.must_show:
@@ -65,12 +80,16 @@ def build_questions(project, scene: Scene, scenes: list[Scene]) -> tuple[list[Qu
         if e.id in ids:
             items += [("contradiction", f"{e.name}: {fact}", None) for fact in e.facts]
     items += [("contradiction", f"World rule: {r.text}", None) for r in constants.rules]
-    items += [("contradiction", f"Author's decision about this world ({n.id}): {n.rule}", None) for n in approved_decisions(project, scene.id)]
+    # A decision is asked about as a warning only: it is a statement of how this story's world works, often long and descriptive,
+    # and a scene that dramatises it differently is not necessarily wrong. A clash is recorded as "unsure" for you to read.
+    items += [("contradiction", f"Author's decision about this world ({n.id}): {n.rule}", _Warn()) for n in approved_decisions(project, scene.id)]
     items += [("contradiction", f"Author's rule {r.id}: {r.text}", r) for r in rules.rules_for(project, scene, ("hard_constraint",))]
     facts = {f.id: f for st in stores_for(project).values() for f in st.facts()}
     for fid in dict.fromkeys(scene.research):
         if fid in facts:
             items.append(("contradiction", f"Real-world fact: {facts[fid].claim}", None))
+    dismissed = set(scene_notes.read(project, scene.id)["dismissed"])  # false alarms the author has dismissed for this scene
+    items = [it for it in items if it[1] not in dismissed and f"the scene contradicts a fixed fact: {it[1]}" not in dismissed]
     cap = project.config.qc.continuity_max_questions
     questions = [Question(f"q{i}", kind, text, rule.severity if rule else "block", rule.id if rule else None)
                  for i, (kind, text, rule) in enumerate(items[:cap], 1)]
@@ -81,7 +100,7 @@ def _judge(q: Question, a: Answer, threshold: float) -> tuple[Flag | None, dict 
     if q.kind == "shown":
         p_fail = a.confidence if not a.yes else 1 - a.confidence
         if p_fail > threshold:
-            return Flag("obligation", q.text, "", a.confidence, round(p_fail, 2), fixable=False), None
+            return Flag("obligation", q.text, "", a.confidence, round(p_fail, 2), fixable=True), None
         return None, None
     p = a.confidence if a.yes else 1 - a.confidence
     if a.yes and a.verified and p > threshold and q.severity == "block":

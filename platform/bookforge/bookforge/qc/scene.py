@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 
 from ..bible.models import Scene
 from ..errors import LayerError
+from . import scene_notes
 from .continuity import ContinuityReport, check_continuity
 from .critic import CriticReport, critic_flags, run_critic
 from .judge import choose_draft
@@ -75,9 +76,11 @@ def settle_scene(ctx, scene: Scene, scenes: list[Scene], drafts: dict[str, str],
         continuity = None
         if not report.blocking and cfg.continuity_check:
             continuity = check_continuity(ctx, scene, scenes, text)
+            instructions = scene_notes.read(ctx.project, scene.id)["instructions"]
             for f in continuity.flags:
                 if f.fixable:
-                    flags.append(Flag("continuity", "contradiction", f.message(), quote=f.evidence))
+                    flags.append(Flag("continuity", f.kind, f.message(), quote=f.evidence, fact=f.question,
+                                      instruction=instructions.get(f.question, "")))
                 else:
                     unfixable.append(f.message())
         cheap_ok = not report.blocking and not (continuity and continuity.flags)

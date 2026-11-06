@@ -132,6 +132,27 @@ def approve(path: Path = PathArg, checkpoint: str = typer.Argument(..., help=f"O
     typer.echo(f"Approved '{checkpoint}'.")
 
 
+@app.command("finding")
+def finding_cmd(
+    path: Path = PathArg,
+    scene: str = typer.Argument(..., help="The scene, like b1.ch07.s2"),
+    question: str = typer.Option(..., "--question", help="The finding, exactly as the review shows it (the fact it is about)"),
+    dismiss: bool = typer.Option(False, "--dismiss", help="A false alarm: do not ask about it again for this scene"),
+    instruct: Optional[str] = typer.Option(None, "--instruct", help="What the writer should do about it when the scene is revised"),
+    clear: bool = typer.Option(False, "--clear", help="Take back a dismissal or an instruction"),
+    book: str = BookOpt,
+) -> None:
+    """Tell the pipeline what you think of a finding that flagged a scene. It applies the next time the scene runs."""
+    action = "dismiss" if dismiss else "instruct" if instruct else "clear" if clear else None
+    try:
+        if action is None or (dismiss + bool(instruct) + clear) > 1:
+            raise BookforgeError("give exactly one of --dismiss, --instruct \"...\" or --clear")
+        notes = ops.decide_finding(Project.open(path, book), scene, question, action, instruct or "")
+    except BookforgeError as e:
+        _fail(e)
+    typer.echo(f"{scene}: {len(notes['dismissed'])} dismissed, {len(notes['instructions'])} instruction(s); applied the next time it runs")
+
+
 @app.command("add-book")
 def add_book_cmd(
     path: Path = PathArg,

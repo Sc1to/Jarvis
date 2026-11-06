@@ -84,7 +84,7 @@ def test_incomplete_answers_are_sent_back_and_then_fail(book):
 def test_questions_cover_states_obligations_the_cast_and_rules(book):
     questions, facts = build_questions(book, scene_of(book, "b1.ch04.s1"), store.load_scenes(book))
     kinds = [(q.kind, q.text) for q in questions]
-    assert ("contradiction", "Anna Voss (physical): healed; scar remains") in kinds
+    assert ("contradiction", "Anna Voss (physical): healed; scar remains") not in kinds  # it begins in this scene: the scene may start before it
     assert ("shown", "Anna Voss: healed; scar remains") in kinds  # a must_show change that begins in this scene
     assert ("contradiction", "Anna Voss: grey eyes") in kinds and ("contradiction", "World rule: each name crossed out costs a year of memory") in kinds
     assert not any("Jonas" in t and "knows" in t and k == "shown" for k, t in kinds)
@@ -131,11 +131,11 @@ def test_the_threshold_comes_from_the_config(book):
     assert check_continuity(ctx_for(book, llm), scene_of(book, "b1.ch04.s1"), store.load_scenes(book), TEXT).unsure == []
 
 
-def test_a_change_that_is_not_shown_is_an_obligation_that_cannot_be_patched(book):
+def test_a_change_that_is_not_shown_is_an_obligation_a_passage_can_repair(book):
     llm = RuleLLM([(CONTINUITY, continuity({"Anna Voss: healed; scar remains": ("no", 0.9, "")}))])
     rep = check_continuity(ctx_for(book, llm), scene_of(book, "b1.ch04.s1"), store.load_scenes(book), TEXT)
     [flag] = rep.flags
-    assert flag.kind == "obligation" and not flag.fixable and "does not show this on the page" in flag.message()
+    assert flag.kind == "obligation" and flag.fixable and "does not show this on the page" in flag.message()
     shown_unsure = RuleLLM([(CONTINUITY, continuity({"Anna Voss: healed; scar remains": ("yes", 0.6, "")}))])  # P(not shown) = 0.4
     assert check_continuity(ctx_for(book, shown_unsure), scene_of(book, "b1.ch04.s1"), store.load_scenes(book), TEXT).flags[0].kind == "obligation"
 
@@ -262,3 +262,17 @@ def test_a_scene_is_acceptable_exactly_when_nothing_is_left_unresolved():
     from bookforge.qc.scene import SceneQC
     assert SceneQC("text", "draft-1").accepted
     assert not SceneQC("text", "draft-1", reasons=["the critic scored pacing 2 (minimum 3)"]).accepted
+
+
+# ── an approved decision clashing with a scene is recorded, not flagged ─────
+
+def test_a_clash_with_an_approved_decision_is_unsure_and_never_a_flag(book):
+    from bookforge import ops
+    from bookforge.research.notes import stores_for
+    n = stores_for(book)["book"].add_need(layer="synopsis", question="How do locks work?", stance="invent", rule="Locks fail if forced.", status="proposed")
+    ops.decide_need(book, n.id, approve=True)
+    evidence = " ".join(TEXT.split()[:6])
+    llm = RuleLLM([(CONTINUITY, continuity({"Author's decision": ("yes", 0.95, evidence)}))])
+    rep = check_continuity(ctx_for(book, llm), scene_of(book, "b1.ch04.s1"), store.load_scenes(book), TEXT)
+    assert rep.flags == []
+    assert [u["question"] for u in rep.unsure] == [f"Author's decision about this world ({n.id}): Locks fail if forced."]
