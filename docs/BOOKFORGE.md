@@ -349,6 +349,31 @@ The same applies between planning layers: a changed act marks its chapters stale
 
 **Change requests** (`books/b1/change-requests/*.yaml`) hold the proposing item, the parent change, the reason, and the stale items it would cause. The critic may accept changes inside one chapter; anything that touches an act, a north star or another book waits for you.
 
+## Knowledge needs: research, extrapolation, deviation and invention (design, not built)
+
+What research is for: bookforge notices that the story needs to know something, puts it as a question, asks it, and gets back what it needs to carry the story forward. The first implementation tuned the asking and reading of web pages and left the first two steps (notice, formulate) as one prompt and the last (does it help a scene) unmeasured. This section is the intended design; the research code described above is the engine for part of it.
+
+**A knowledge need** is a record, not just a question: what it is for (the book, chapter or scene and beat that needs it), what kind of knowledge it is (a fact to get right, texture, a constraint, vocabulary), and a **stance** that says how it is to be handled.
+
+| Stance | Meaning | What happens |
+|---|---|---|
+| ground | The real world must be right (history, medicine, real places and people, how real things work) | Web research with verbatim quotes, as now. Facts are kept as research facts. |
+| extrapolate | A real basis, an imagined application (a laser rifle) | Research the real constraints (power, heat, visibility), then record what the story assumes, with the real basis beside it. |
+| bend | The truth is known and deliberately changed for the story | Research the truth, then record the deviation and the reason. The critic and the continuity checks treat it as intended, not as an error. |
+| invent | Nothing real to look up (a name, a made-up rule) | No search. The decision is written to the bible as a world rule so it stays the same in every scene. |
+
+**The realism setting** decides the default stance. It is one plain statement, for example "hard SF: physics must hold", "space opera: plausible-sounding is enough", "historical: accurate to the decade". It is written in the series north star and may be overridden in a book's north star (both are read; the book wins). The same laser is *extrapolate* under the first, *invent* under the second. Two further inputs: the existing `sensitive` flag pushes towards *ground*; and consequence (does the plot depend on it, would a reader or critic notice) lets a cheap invention stand where a lookup would not change the story.
+
+**Where needs are raised.** After each planning document, as now, and also when a scene brief is written (the point where "what does this office smell like" or "what does this weapon do" first becomes concrete). Needs the writer or the extraction pass finds later (a gap in the draft) are filed through the existing change-request path.
+
+**Who decides.** The model proposes each need with its stance and a one-line reason; **the author approves**. Stances are listed in the direction and structure checkpoints (a short list, one line each) and can be edited there. A need raised at scene-brief time inside an unattended run takes the stance the realism setting implies; any stance that is *bend* or that differs from the default is listed in the morning report for the author to confirm or change, and the affected scenes are marked stale if it changes.
+
+**What is stored and used.** `needs.jsonl` per scope (need, purpose, stance, status proposed/approved, reason, outcome: fact ids, world-rule id, or deviation note). The briefing for a scene carries the approved outcomes that scene depends on: research facts, world rules and deviations, each marked as such, so the writer cannot mistake an invented rule for a real fact, and the checkers can tell an intended deviation from a mistake.
+
+**Measuring it.** Not "did the search return a page" but: for a premise, were the needs the right ones, were the stances sensible, and does a scene that depends on a need carry its outcome. A batch check runs every need of a series through the real code and prints one table (stance, answered or recorded, facts, claims whose quote does not support them). It is run on premises from different eras and places, not only one.
+
+**Known weakness to fix first.** A fact's claim can drift towards the wording of the question (asked about a clerk, a page about surveyors and boatmen yields "a customs clerk supervised the staff"). The reader must state only what the quote says, using the page's own role names, and a check must drop a claim whose quote does not support it.
+
 ## Quality control
 
 Quality control runs in four layers, cheapest first; a scene only reaches the expensive layers after passing the cheap ones.
