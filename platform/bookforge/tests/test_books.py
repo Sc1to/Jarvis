@@ -138,7 +138,8 @@ def test_redo_resets_the_layer_its_checkpoint_and_asks_for_a_cascade(project):
     with pytest.raises(BookforgeError, match="also resets synopsis"):
         ops.redo_layer(project, "book_north_star", "darker")
     out = ops.redo_layer(project, "book_north_star", "darker", cascade=True)
-    assert out == {"layer": "book_north_star", "reset": ["book_north_star", "synopsis"], "note": True}
+    assert out == {"layer": "book_north_star", "reset": ["book_north_star", "synopsis"], "note": True,
+                   "archived": {"questions": 0, "facts": 0, "needs": 0}}
     assert project.state.layers["book_north_star"].status == "pending" and project.state.layers["synopsis"].status == "pending"
     assert project.state.layers["series_north_star"].status == "accepted"  # not built on the book north star
     assert project.state.checkpoints["direction"].status == "pending"
@@ -331,3 +332,84 @@ def test_the_model_client_stops_before_asking_again():
             client.complete("writer", [{"role": "user", "content": "hi"}])
     finally:
         cancel.bind(None)
+
+
+# ── redo moves the research of the reset layers to the archive ──────────────
+
+def _research(project):
+    """Research made by two layers: a fact, a question and three needs (one decided by the author) for each."""
+    from bookforge.research.notes import QuestionRecord, stores_for
+    store = stores_for(project)["book"]
+    for layer in ("synopsis", "acts"):
+        f = store.add_fact(claim=f"A fact from {layer}.", url=f"https://x.example/{layer}", title="t", fetched="2026-11-06",
+                           quote="a quote that is long enough", layer=layer, question=f"What about {layer}?")
+        store.add_question(QuestionRecord(layer=layer, question=f"What about {layer}?", query="q", answered=True, fact_ids=[f.id]))
+        store.add_need(layer=layer, question=f"Look up {layer}", stance="ground", fact_ids=[f.id], status="approved", decided_by="auto")
+        store.add_need(layer=layer, question=f"Invent for {layer}", stance="invent", rule="A rule.", status="proposed")
+        mine = store.add_need(layer=layer, question=f"My decision for {layer}", stance="invent", rule="My rule.", status="proposed")
+        ops.decide_need(project, mine.id, approve=True)
+        (store.dir / f"{layer}.md").parent.mkdir(parents=True, exist_ok=True)
+        (store.dir / f"{layer}.md").write_text(f"# notes for {layer}\n")
+    return store
+
+
+def test_redo_archives_the_reset_layers_research_and_keeps_the_authors_decisions(project):
+    store = _research(project)
+    out = ops.redo_layer(project, "synopsis", "")
+    assert out["reset"] == ["synopsis"] and out["archived"] == {"questions": 1, "facts": 1, "needs": 2}
+    assert [f.layer for f in store.facts()] == ["acts"] and [q.layer for q in store.current_questions()] == ["acts"]  # other layers keep theirs
+    kept = {n.question: n for n in store.needs()}
+    assert "My decision for synopsis" in kept and kept["My decision for synopsis"].status == "approved"  # yours stays
+    assert "Look up synopsis" not in kept and "Invent for synopsis" not in kept and "Look up acts" in kept
+    assert not (store.dir / "synopsis.md").exists() and (store.dir / "acts.md").exists()
+
+
+def test_what_was_archived_is_all_in_the_archive_and_nothing_is_deleted(project):
+    store = _research(project)
+    ops.redo_layer(project, "synopsis", "")
+    files = sorted(p.name for p in store.archive_dir.iterdir())
+    assert any(n.endswith("-synopsis.md") for n in files)
+    [records] = [p for p in store.archive_dir.glob("*.jsonl")]
+    kinds = [json.loads(l)["kind"] for l in records.read_text().splitlines()]
+    assert sorted(kinds) == ["fact", "need", "need", "question"]
+    assert "A fact from synopsis." in records.read_text()
+    assert "before redoing synopsis" in git(project, "log", "--format=%s")  # everything as it was is committed first, too
+
+
+def test_a_fact_id_that_was_archived_is_never_given_to_a_new_fact(project):
+    store = _research(project)
+    assert [f.id for f in store.facts()] == ["b1-0001", "b1-0002"]
+    ops.redo_layer(project, "synopsis", "")  # b1-0001 moves to the archive
+    new = store.add_fact(claim="New.", url="https://y.example", title="t", fetched="2026-11-06", quote="another long quote here", layer="synopsis", question="q")
+    assert new.id == "b1-0003"
+
+
+def test_a_kept_decision_does_not_point_at_a_fact_that_moved(project):
+    from bookforge.research.notes import stores_for
+    store = stores_for(project)["book"]
+    f = store.add_fact(claim="Basis.", url="https://x.example/b", title="t", fetched="2026-11-06", quote="a quote that is long enough", layer="synopsis", question="q")
+    n = store.add_need(layer="synopsis", question="Extend it", stance="extrapolate", rule="Assume this.", fact_ids=[f.id], status="proposed")
+    ops.decide_need(project, n.id, approve=True)
+    ops.redo_layer(project, "synopsis", "")
+    [kept] = store.needs()
+    assert kept.status == "approved" and kept.fact_ids == []
+    assert "no facts found yet" in (store.dir / "needs.md").read_text()
+
+
+def test_redo_without_any_research_creates_no_archive(project):
+    from bookforge.research.notes import stores_for
+    ops.redo_layer(project, "synopsis", "")
+    assert not stores_for(project)["book"].archive_dir.exists()
+
+
+def test_the_series_wide_research_is_only_archived_when_the_series_has_one_book(project):
+    from bookforge.research.notes import stores_for
+    series = stores_for(project)["series"]
+    series.add_fact(claim="Series fact.", url="https://s.example", title="t", fetched="2026-11-06", quote="a quote that is long enough", layer="series_north_star", question="q")
+    out = ops.redo_layer(project, "series_north_star", "")
+    assert out["archived"]["facts"] == 1 and series.facts() == []  # the only book: its research moves
+    series.add_fact(claim="Series fact 2.", url="https://s2.example", title="t", fetched="2026-11-06", quote="a quote that is long enough", layer="series_north_star", question="q2")
+    books.add_book(project.root, "Two", "Brief two.")
+    project.state.set_layer_status("series_north_star", "accepted")
+    out = ops.redo_layer(project, "series_north_star", "")
+    assert out["archived"]["facts"] == 0 and len(series.facts()) == 1  # another book may cite it: left alone

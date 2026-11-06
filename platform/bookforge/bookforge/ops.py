@@ -192,7 +192,9 @@ def redo_layer(project: Project, layer: str, note: str = "", cascade: bool = Fal
     so. Nothing is deleted: what is on disk now is committed first (so hand edits survive in Git history) and is
     overwritten when the layer runs again; a layer that is one document shows its previous version to the model with
     your note. Refused once scenes have been written (use `rewrite`), because re-planning would orphan them.
-    The checkpoints these layers belong to go back to pending, so you review the new version.
+    The checkpoints these layers belong to go back to pending, so you review the new version. The research those layers made
+    (questions, facts, undecided needs, notes) is moved to `research/archive/` so they research from scratch; decisions you
+    made yourself stay (see `archive_layers`).
     """
     from .layers.structure import _clean_work
     downstream = redo_plan(project, layer)
@@ -214,10 +216,12 @@ def redo_layer(project: Project, layer: str, note: str = "", cascade: bool = Fal
         steering.clear(project, l)
     if note.strip():
         steering.write(project, layer, note)
+    from .research.notes import archive_layers
+    archived = archive_layers(project, reset, datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S"))
     project.save_state()
     if project.config.git.commit_each_step:
         vcs.commit(project.root, f"{project.book}: redo {layer}" + (" with a note" if note.strip() else ""))
-    return {"layer": layer, "reset": reset, "note": bool(note.strip())}
+    return {"layer": layer, "reset": reset, "note": bool(note.strip()), "archived": archived}
 
 
 def decide_change(project: Project, cr_id: str, approve: bool) -> change_requests.ChangeRequest:

@@ -182,7 +182,9 @@ def redo_cmd(
         out = ops.redo_layer(project, layer, note, cascade)
     except BookforgeError as e:
         _fail(e)
-    typer.echo(f"reset: {', '.join(out['reset'])}" + ("; your note will be used" if out["note"] else "")
+    a = out["archived"]
+    moved = f"\nresearch moved to research/archive/: {a['questions']} question(s), {a['facts']} fact(s), {a['needs']} undecided need(s); your own decisions stay" if any(a.values()) else ""
+    typer.echo(f"reset: {', '.join(out['reset'])}" + ("; your note will be used" if out["note"] else "") + moved
                + f"\nthe checkpoints they belong to are pending again; run `run {path}` to write them")
 
 

@@ -168,3 +168,14 @@ def test_redo_command(tmp_path):
     done = runner.invoke(_cli.app, ["redo", str(p.root), "synopsis", "--note", "shorter"])
     assert done.exit_code == 0 and "reset: synopsis" in done.output and "your note will be used" in done.output
     assert Project.open(p.root).state.layers["synopsis"].status == "pending"
+
+
+def test_redo_command_says_what_research_it_archived(tmp_path):
+    from typer.testing import CliRunner
+    from bookforge import cli as _cli
+    from bookforge.project import Project
+    from bookforge.research.notes import stores_for
+    p = Project.create(tmp_path / "s", "A clerk finds a ledger.\n")
+    stores_for(p)["book"].add_fact(claim="c", url="https://x.example", title="t", fetched="2026-11-06", quote="a quote that is long enough", layer="synopsis", question="q")
+    done = CliRunner().invoke(_cli.app, ["redo", str(p.root), "synopsis"])
+    assert done.exit_code == 0 and "research moved to research/archive/: 0 question(s), 1 fact(s), 0 undecided need(s); your own decisions stay" in done.output

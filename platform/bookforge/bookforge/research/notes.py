@@ -129,11 +129,28 @@ class ResearchStore:
     def answered_count(self, layer: str) -> int:
         return sum(1 for r in self.current_questions() if r.layer == layer and r.answered)
 
+    @property
+    def archive_dir(self) -> Path:
+        return self.dir / "archive"
+
+    def archived_fact_ids(self) -> set[str]:
+        """Ids of facts moved to the archive by a redo, so that a new fact never takes an id an old one had."""
+        ids: set[str] = set()
+        for path in sorted(self.archive_dir.glob("*.jsonl")) if self.archive_dir.is_dir() else []:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(rec, dict) and rec.get("kind") == "fact" and isinstance(rec.get("record"), dict):
+                    ids.add(str(rec["record"].get("id", "")))
+        return ids
+
     def next_fact_id(self) -> str:
         numbers = []
-        for f in self.facts():
-            tail = f.id.rsplit("-", 1)[-1]
-            if f.id.startswith(self.prefix + "-") and tail.isdigit():
+        for fid in [f.id for f in self.facts()] + list(self.archived_fact_ids()):
+            tail = fid.rsplit("-", 1)[-1]
+            if fid.startswith(self.prefix + "-") and tail.isdigit():
                 numbers.append(int(tail))
         return f"{self.prefix}-{max(numbers, default=0) + 1:04d}"
 
@@ -305,3 +322,55 @@ def waiting_decisions(project: Project) -> list[Need]:
     """Proposed rules, assumptions and deviations that wait for the author (a lookup needs no decision)."""
     return [n for store in stores_for(project).values() for n in store.needs()
             if n.status == "proposed" and (n.rule or n.stance == "invent")]
+
+
+def _write_jsonl(path: Path, records) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(asdict(r), ensure_ascii=False) + "\n" for r in records), encoding="utf-8")
+
+
+def archive_layers(project: Project, layers: list[str], stamp: str) -> dict:
+    """Move the research the given layers made into `research/archive/`, so they can research from scratch (used by `redo`).
+
+    Moved: their questions, their facts, the needs nobody decided (proposed ones and automatic lookups) and their notes
+    file. Kept: every need the author decided (approved, rejected or edited in the Inbox), and the research of all other
+    layers. The series-wide store is left alone when the series has more than one book: other books may cite its facts.
+    Nothing is deleted; the archive file says what each record was.
+    """
+    from ..books import book_ids
+    counts = {"questions": 0, "facts": 0, "needs": 0}
+    shared = len(book_ids(project.root)) > 1
+    for scope, store in stores_for(project).items():
+        if scope == "series" and shared:
+            continue
+        facts = [f for f in store.facts() if f.layer in layers]
+        questions = [q for q in store.questions() if q.layer in layers]
+        log = _read_jsonl(store.needs_path, Need)
+        gone_ids = {n.id for n in store.needs() if n.layer in layers and n.decided_by != "author"}
+        notes = [store.dir / f"{layer}.md" for layer in layers if (store.dir / f"{layer}.md").is_file()]
+        if not (facts or questions or gone_ids or notes):
+            continue
+        store.archive_dir.mkdir(parents=True, exist_ok=True)
+        records = ([{"kind": "fact", "record": asdict(f)} for f in facts] + [{"kind": "question", "record": asdict(q)} for q in questions]
+                   + [{"kind": "need", "record": asdict(n)} for n in log if n.id in gone_ids])
+        if records:
+            (store.archive_dir / f"{stamp}-{'+'.join(layers)}.jsonl").write_text(
+                "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in records), encoding="utf-8")
+        for path in notes:
+            path.replace(store.archive_dir / f"{stamp}-{path.name}")
+        dropped = {f.id for f in facts}
+        if facts:
+            _write_jsonl(store.sources_path, [f for f in store.facts() if f.layer not in layers])
+        if questions:
+            _write_jsonl(store.questions_path, [q for q in store.questions() if q.layer not in layers])
+        if gone_ids or dropped:
+            kept = [n for n in log if n.id not in gone_ids]
+            for n in kept:
+                n.fact_ids = [i for i in n.fact_ids if i not in dropped]  # a kept need must not point at a fact that moved
+            _write_jsonl(store.needs_path, kept)
+            if not store.write_needs_md():
+                store.needs_md_path.unlink(missing_ok=True)
+        counts["facts"] += len(facts)
+        counts["questions"] += len(questions)
+        counts["needs"] += len(gone_ids)
+    return counts

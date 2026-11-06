@@ -32,6 +32,7 @@ function RedoPanel({ base, layer, onDone, onClose, locked }: { base: string; lay
           <span>Also write again what was built on it: <strong>{also.map(label).join(', ')}</strong>.</span>
         </label>
       )}
+      <p className="text-xs text-slate-600">The research those layers gathered (questions, facts, undecided decisions) is moved to the archive folder, not deleted, so they research from scratch. Decisions you made yourself stay.</p>
       <label className="block text-sm text-slate-700">What should change? (optional)
         <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3} placeholder="For example: darker, and keep Anna's job as a customs clerk."
           className="mt-1 w-full rounded-md border border-slate-300 bg-white p-2 text-sm" />
