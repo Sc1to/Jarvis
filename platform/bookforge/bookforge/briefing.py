@@ -25,7 +25,7 @@ from .deps import Deps, tag
 from .errors import BookforgeError
 from .project import Project
 from .qc.mechanical import load_banned
-from .research.notes import stores_for
+from .research.notes import approved_decisions, stores_for
 
 CHARS_PER_TOKEN = 3.5
 ONE_LINER_CHARS = {0: 200, 1: 200, 2: 160, 3: 120}
@@ -215,6 +215,13 @@ def _assemble(d: _Data, k: _Knobs) -> tuple[list[Section], Deps]:
     sections.append(Section("Cast and rules of the world (fixed facts)", "\n".join(lines) or "none"))
     deps.bible += [tag(f"entity:{e.id}", e.model_dump()) for e in entities]
     deps.bible += [tag(f"rule:{r.id}", r.model_dump()) for r in d.constants.rules]
+
+    decisions = approved_decisions(project)
+    if decisions:
+        kind = {"invent": "invented", "extrapolate": "assumed", "bend": "changed on purpose"}
+        sections.append(Section("The author's decisions about this world (canon: " + "invented or changed on purpose, not real-world fact)",
+                                "\n".join(f"- ({kind[n.stance]}) {n.rule}" for n in decisions)))
+        deps.bible += [tag(f"decision:{n.id}", [n.stance, n.rule]) for n in decisions]
 
     states = state_at(d.tracks, scene.id, entity_ids)
     state_lines = []

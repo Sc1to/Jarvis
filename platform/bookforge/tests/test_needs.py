@@ -134,3 +134,49 @@ def test_a_proposed_decision_is_in_the_morning_report(project):
     run(project, RuleLLM([asking(INVENT)]), web())
     text = morning_report.build_report(project)
     assert "s-n001" in text and "needs --approve s-n001" in text
+
+
+# ── approved decisions reach the writer and the checks ──────────────────────
+
+from test_briefing import book  # noqa: E402,F401  (a project with a plan)
+
+
+def _decide(project, stance, rule, approve=True):
+    store = stores_for(project)["book"]
+    n = store.add_need(layer="synopsis", question=f"A {stance} question?", stance=stance, rule=rule, status="proposed")
+    return ops.decide_need(project, n.id, approve=approve)
+
+
+def test_an_approved_decision_is_in_the_briefing_and_a_proposed_one_is_not(book):
+    from bookforge.briefing import build_briefing
+    scene = "b1.ch01.s1"
+    _decide(book, "invent", "Lasers are silent and leave no recoil.")
+    _decide(book, "bend", "The harbour is a day's sail further north than on the real map.", approve=False)
+    store = stores_for(book)["book"]
+    store.add_need(layer="synopsis", question="Waiting?", stance="invent", rule="Not yet decided.", status="proposed")
+    b = build_briefing(book, scene)
+    text = b.text()
+    assert "The author's decisions about this world (canon: invented or changed on purpose, not real-world fact)" in text
+    assert "(invented) Lasers are silent and leave no recoil." in text
+    assert "further north" not in text and "Not yet decided" not in text  # rejected and proposed ones are not canon
+    assert any(t.startswith("decision:b1-n001@") for t in b.deps.bible)
+
+
+def test_changing_a_decision_makes_the_scenes_built_on_it_stale(book):
+    from bookforge.briefing import build_briefing
+    from bookforge.deps import diff
+    scene = "b1.ch01.s1"
+    n = _decide(book, "invent", "Lasers are silent.")
+    old = build_briefing(book, scene).deps
+    ops.decide_need(book, n.id, rule="Lasers whine at a high pitch.", approve=True)
+    reasons = diff(old, build_briefing(book, scene).deps)
+    assert any("decision:" in str(r) for r in reasons)
+
+
+def test_a_decision_is_asked_about_as_a_continuity_question(book):
+    from bookforge.bible import store as bible_store
+    from bookforge.qc.continuity import build_questions
+    _decide(book, "invent", "Lasers are silent.")
+    scenes = bible_store.load_scenes(book)
+    questions, _ = build_questions(book, scenes[0], scenes)
+    assert any("Author's decision about this world (b1-n001): Lasers are silent." in q.text for q in questions)

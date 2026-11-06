@@ -18,7 +18,7 @@ from ..bible import store
 from ..bible.lookup import scene_entities, state_at
 from ..bible.models import Scene
 from ..errors import BookforgeError
-from ..research.notes import stores_for
+from ..research.notes import approved_decisions, stores_for
 from .decide import Answer, Question, ask_questions
 
 
@@ -65,6 +65,7 @@ def build_questions(project, scene: Scene, scenes: list[Scene]) -> tuple[list[Qu
         if e.id in ids:
             items += [("contradiction", f"{e.name}: {fact}", None) for fact in e.facts]
     items += [("contradiction", f"World rule: {r.text}", None) for r in constants.rules]
+    items += [("contradiction", f"Author's decision about this world ({n.id}): {n.rule}", None) for n in approved_decisions(project)]
     items += [("contradiction", f"Author's rule {r.id}: {r.text}", r) for r in rules.rules_for(project, scene, ("hard_constraint",))]
     facts = {f.id: f for st in stores_for(project).values() for f in st.facts()}
     for fid in dict.fromkeys(scene.research):
