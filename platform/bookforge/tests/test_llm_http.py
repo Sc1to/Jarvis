@@ -301,3 +301,46 @@ def test_an_empty_reply_without_thinking_is_still_just_empty(tmp_path):
     with pytest.raises(LLMError) as e:
         c.complete("writer", MSGS)
     assert "empty reply" in str(e.value)
+
+
+# ── a reply cut off at its token limit is asked for again with a larger limit ─
+
+def test_a_cut_off_reply_is_asked_for_again_with_a_larger_limit(tmp_path):
+    limits = []
+
+    def handler(req):
+        body = json.loads(req.content)
+        limits.append(body["max_tokens"])
+        return ok("whole reply", finish="stop") if body["max_tokens"] >= 2000 else ok("partial", finish="length")
+
+    c = client(handler, tmp_path)
+    assert c.complete("critic", MSGS, max_tokens=500) == "whole reply"
+    assert limits == [500, 1500, 3000][: len(limits)] and limits[-1] >= 2000 and limits[0] == 500
+    assert [r["ok"] for r in records(tmp_path)] == [False] * (len(limits) - 1) + [True]
+    assert c.sleeps == []  # a larger limit is not a retry after a failure: no waiting
+
+
+def test_a_reply_that_is_still_cut_off_names_the_limit_and_the_call(tmp_path):
+    c = client(lambda req: ok("partial", finish="length"), tmp_path)
+    with pytest.raises(LLMError) as e:
+        c.complete("critic", [{"role": "user", "content": "Review this scene about the harbour ledger " * 5}], max_tokens=300)
+    msg = str(e.value)
+    assert "cut off at" in msg and "even after raising the limit 2 time(s)" in msg and "The prompt began: 'Review this scene about the harbour" in msg
+
+
+def test_the_limit_is_never_raised_above_the_cap_or_when_none_was_given(tmp_path):
+    from bookforge.llm import MAX_TOKENS_CAP
+    seen = []
+
+    def handler(req):
+        seen.append(json.loads(req.content).get("max_tokens"))
+        return ok("partial", finish="length")
+
+    c = client(handler, tmp_path)
+    with pytest.raises(LLMError, match="cut off"):
+        c.complete("critic", MSGS)  # no max_tokens: nothing to raise
+    assert seen == [None]
+    seen.clear()
+    with pytest.raises(LLMError):
+        c.complete("critic", MSGS, max_tokens=MAX_TOKENS_CAP)
+    assert seen == [MAX_TOKENS_CAP]

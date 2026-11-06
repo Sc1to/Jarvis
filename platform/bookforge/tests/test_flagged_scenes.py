@@ -157,3 +157,22 @@ def test_an_approved_decision_only_warns(book):
     questions, _ = build_questions(book, next(s for s in scenes if s.id == SID), scenes)
     [q] = [q for q in questions if "Author's decision" in q.text]
     assert q.severity == "warn"
+
+
+# ── one cut-off reply does not stop the book ────────────────────────────────
+
+def test_a_scene_whose_writer_reply_stays_cut_off_is_flagged_and_the_run_goes_on(book):
+    from bookforge.llm import TruncatedReply
+    from test_prose import good as _good  # noqa: F401
+    calls = {"n": 0}
+
+    def cut(messages):
+        calls["n"] += 1
+        raise TruncatedReply("writer model reply was cut off at 5000 tokens (finish_reason=length), even after raising the limit 2 time(s)")
+
+    llm = RuleLLM([("Write the scene described below", cut)] + qc_rules())
+    go(book, llm)
+    items = load_state(book.state_path).items
+    first = items[SID]
+    assert first.status == "flagged" and "the writer's reply was cut off" in first.note
+    assert calls["n"] >= 2  # every scene was tried: the run did not stop at the first

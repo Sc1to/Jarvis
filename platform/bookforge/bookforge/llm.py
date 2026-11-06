@@ -78,8 +78,18 @@ class LLMError(BookforgeError):
     """A model call failed for good (after retries, or not worth retrying)."""
 
 
+class TruncatedReply(LLMError):
+    """The model stopped because it ran out of tokens (finish_reason=length), so the reply is incomplete."""
+
+
 class _Retryable(Exception):
     pass
+
+
+# A reply cut off at its token limit is asked for again with a larger limit (doubled, at least +1000), up to this many times and
+# never above the cap. The limits the callers pass are estimates from word counts; models vary in how many tokens a word takes.
+TRUNCATION_RETRIES = 2
+MAX_TOKENS_CAP = 16000
 
 
 class HttpLLMClient:
@@ -106,6 +116,24 @@ class HttpLLMClient:
         self._sleep = sleep
 
     def complete(self, role: str, messages: Messages, **options) -> str:
+        """The model's reply. A reply cut off at its token limit is asked for again with a larger limit before it counts as a failure."""
+        limit = options.get("max_tokens")
+        for grown in range(TRUNCATION_RETRIES + 1):
+            try:
+                return self._complete(role, messages, **options)
+            except TruncatedReply as e:
+                if not isinstance(limit, int) or limit >= MAX_TOKENS_CAP or grown == TRUNCATION_RETRIES:
+                    first = next((m["content"] for m in reversed(list(messages)) if m.get("role") == "user"), "")
+                    raise TruncatedReply(
+                        f"{role} model reply was cut off at {limit} tokens (finish_reason=length), even after raising the limit "
+                        f"{grown} time(s); the task is too long for one reply. The prompt began: {' '.join(str(first).split())[:90]!r}") from e
+                bigger = min(MAX_TOKENS_CAP, max(limit * 2, limit + 1000))
+                log.warning("%s reply cut off at %d tokens; asking again with %d", role, limit, bigger)
+                limit = bigger
+                options = {**options, "max_tokens": bigger}
+        raise AssertionError("unreachable")  # pragma: no cover
+
+    def _complete(self, role: str, messages: Messages, **options) -> str:
         cancel.check()  # the author stopped the job: stop before asking the model again
         endpoint = self._models.get(role)
         if endpoint is None:
@@ -204,7 +232,7 @@ class HttpLLMClient:
             raise LLMError(f"{role} model returned an empty reply")
         finish = choice.get("finish_reason")
         if finish == "length":
-            raise LLMError(f"{role} model reply was cut off (finish_reason=length); raise max_tokens or shorten the task")
+            raise TruncatedReply(f"{role} model reply was cut off (finish_reason=length); raise max_tokens or shorten the task")
         return text, finish, data.get("usage")
 
     def _record(self, record: dict, started: float, attempts: int, **extra) -> None:
