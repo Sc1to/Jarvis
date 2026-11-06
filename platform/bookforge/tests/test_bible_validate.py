@@ -301,3 +301,18 @@ def test_a_wrong_kind_that_has_no_alternative_says_the_cast_lacks_one():
 def test_the_cast_prompt_says_a_ship_is_a_place():
     from bookforge import prompts
     assert "a ship, train, carriage, house or room that people are inside is a place" in (prompts.PROMPT_DIR / "cast.md").read_text()
+
+
+# ── every act must create or extend a state track ───────────────────────────
+
+def test_an_act_with_no_state_tracks_is_sent_back_with_a_clear_reason(p, constants):
+    for data in ({**chapters_act1(), "tracks": []}, {k: v for k, v in chapters_act1().items() if k != "tracks"}):
+        bundle, problems = parse_chapters(dump(data), **ctx_args(p, constants))
+        assert bundle is None
+        assert any("b1.act1 defines no state tracks" in x and "at least one track" in x for x in problems)
+
+
+def test_an_act_that_only_extends_an_existing_track_is_fine(p, constants):
+    first, _ = parse_chapters(dump(chapters_act1()), **ctx_args(p, constants))
+    bundle, problems = parse_chapters(dump(chapters_act2()), **ctx_args(p, constants, 2, first.tracks))
+    assert problems == [] and bundle.tracks

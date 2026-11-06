@@ -12,17 +12,26 @@ export default function Tracks({ series, book }: { series: string; book: string 
   if (t.error) return <ErrorBanner message={t.error} />
   if (!t.data) return <Loading />
   const { scenes, chapters, tracks } = t.data
-  if (!tracks.length || !scenes.length) return <Empty>No state tracks yet. They are created with the chapters.</Empty>
+  if (!tracks.length) {
+    return chapters.length
+      ? <Empty>The chapters are planned, but the model defined no state tracks. Without them the story's changes (injuries, where people are, who knows what) are neither tracked nor checked. Use Redo… on the chapters layer, with a note asking for tracks.</Empty>
+      : <Empty>No state tracks yet. They are created by the chapters layer and saved when it has planned every act.</Empty>
+  }
 
-  const n = scenes.length
-  const index = new Map(scenes.map((s, i) => [s.id, i]))
-  const firstOf = (ch: string) => { const i = scenes.findIndex((s) => s.chapter === ch); return i < 0 ? n : i }
-  const at = (pos: string) => (index.has(pos) ? index.get(pos)! : firstOf(pos))
-  const width = Math.max(n * 28, 560)
+  // The axis is the scenes once they are planned; before that, the chapters (tracks exist from the chapters layer on).
+  const byScene = scenes.length > 0
+  const axis = byScene ? scenes : chapters.map((c) => ({ id: c, chapter: c }))
+  const n = axis.length
+  const index = new Map(axis.map((s, i) => [s.id, i]))
+  const firstOf = (ch: string) => { const i = axis.findIndex((s) => s.chapter === ch); return i < 0 ? n : i }
+  const chapterOf = (pos: string) => pos.split('.').slice(0, 2).join('.')
+  const at = (pos: string) => (index.has(pos) ? index.get(pos)! : firstOf(byScene ? pos : chapterOf(pos)))
+  const width = Math.max(n * (byScene ? 28 : 44), 560)
   const pct = (i: number) => `${(100 * i) / n}%`
 
   return (
     <div className="space-y-3">
+      {!byScene && <p className="rounded-md bg-sky-50 p-2 text-sm text-sky-900">Shown by chapter: the scenes are not planned yet.</p>}
       <p className="text-sm text-slate-600">Each bar is one state across the book. Dots mark scenes where the extraction compared the prose with the plan:
         <span className="ml-1 inline-flex items-center gap-1"><i className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-600" /> agrees</span>
         <span className="ml-2 inline-flex items-center gap-1"><i className="inline-block h-2.5 w-2.5 rounded-full bg-red-600" /> differs</span>
