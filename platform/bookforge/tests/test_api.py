@@ -548,3 +548,14 @@ def test_a_very_large_document_is_cut_and_says_so(full):
     (full.root / "style" / "guide.md").write_text("word " * 200_000)
     doc = data(client.get(f"{B}/documents/style_guide"))
     assert doc["truncated"] is True and len(doc["text"]) <= 400_000
+
+
+def test_needs_are_listed_and_decided(book):
+    from bookforge.research.notes import stores_for
+    stores_for(book)["book"].add_need(layer="synopsis", question="How does the rifle behave?", stance="invent", rule="Silent.", status="proposed")
+    [n] = data(client.get(f"{B}/needs"))
+    assert (n["id"], n["scope"], n["status"]) == ("b1-n001", "book", "proposed")
+    assert data(client.post(f"{B}/needs/b1-n001", json={"action": "approve"}))["status"] == "approved"
+    assert data(client.post(f"{B}/needs/b1-n001", json={"rule": "Silent and cold."}))["status"] == "proposed"
+    error(client.post(f"{B}/needs/b1-n001", json={"action": "maybe"}), 422)
+    error(client.post(f"{B}/needs/b1-n099", json={"action": "approve"}), 400)

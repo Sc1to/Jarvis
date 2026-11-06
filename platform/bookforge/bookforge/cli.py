@@ -384,6 +384,39 @@ def changes_cmd(
                    f"plan '{c.planned}' -> prose '{c.observed}' ({len(c.affects)} scene(s), {c.scope})")
 
 
+@app.command("needs")
+def needs_cmd(
+    path: Path = PathArg,
+    book: str = BookOpt,
+    approve_id: Optional[str] = typer.Option(None, "--approve", help="Approve this rule, assumption or deviation"),
+    reject_id: Optional[str] = typer.Option(None, "--reject", help="Reject it (it will not be proposed again)"),
+    edit_id: Optional[str] = typer.Option(None, "--edit", help="Change the stance and/or text of this need (it goes back to 'proposed')"),
+    stance: Optional[str] = typer.Option(None, "--stance", help="ground, extrapolate, bend or invent"),
+    rule: Optional[str] = typer.Option(None, "--rule", help="The rule, assumption or deviation, in your words"),
+    show_all: bool = typer.Option(False, "--all", help="Also list lookups that need no decision"),
+) -> None:
+    """List what the story needs to know or decide, and approve, reject or edit a proposed rule, assumption or deviation."""
+    try:
+        project = Project.open(path, book)
+        target = approve_id or reject_id or edit_id
+        decided = None
+        if target:
+            if edit_id and not (stance or rule):
+                raise BookforgeError("--edit needs --stance and/or --rule")
+            decided = ops.decide_need(project, target, True if approve_id else False if reject_id else None, stance, rule)
+        needs = ops.list_needs(project)
+    except BookforgeError as e:
+        _fail(e)
+    if decided:
+        typer.echo(f"{decided.id}: {decided.status} ({decided.stance})")
+    shown = [(scope, n) for scope, n in needs if show_all or n.status != "approved" or n.decided_by == "author"]
+    if not shown:
+        typer.echo("nothing waiting for you" if needs else "no needs recorded yet")
+    for scope, n in shown:
+        typer.echo(f"{n.id} [{n.stance}, {n.status}] {n.question}" + (f"\n    why: {n.reason}" if n.reason else "")
+                   + (f"\n    proposed: {n.rule}" if n.rule else "") + (f"\n    facts: {', '.join(n.fact_ids)}" if n.fact_ids else ""))
+
+
 @app.command("state-at")
 def state_at_cmd(
     path: Path = PathArg,

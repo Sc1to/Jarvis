@@ -44,6 +44,31 @@ class QuestionRecord:
     context: str = ""  # the time and place an answer had to fit
 
 
+STANCES = ("ground", "extrapolate", "bend", "invent")
+# ground: the real world must be right; extrapolate: a real basis, an imagined application; bend: the truth is known and
+# deliberately changed; invent: nothing real to look up. Only ground needs no approval: a lookup changes nothing.
+LOOKUP_STANCES = ("ground", "extrapolate", "bend")
+NEED_STATUSES = ("proposed", "approved", "rejected")
+MAX_RULE_CHARS_STORED = 500
+
+
+@dataclass
+class Need:
+    """Something the story needs to know or decide, how it is to be handled, and what came of it."""
+    id: str
+    layer: str
+    question: str
+    stance: str = "ground"
+    reason: str = ""  # the model's one-line reason for the stance
+    rule: str = ""  # invent: the rule proposed; extrapolate: what the story assumes; bend: the deviation and why
+    query: str = ""
+    context: str = ""  # the time and place an answer had to fit
+    sensitive: bool = False
+    status: str = "proposed"
+    fact_ids: list[str] = field(default_factory=list)
+    decided_by: str = ""  # "auto" for a lookup, "author" once you decided
+
+
 def normalize_question(q: str) -> str:
     return " ".join(q.casefold().split())
 
@@ -120,6 +145,61 @@ class ResearchStore:
 
     def add_question(self, record: QuestionRecord) -> None:
         _append_jsonl(self.questions_path, [record])
+
+    @property
+    def needs_path(self) -> Path:
+        return self.dir / "needs.jsonl"
+
+    @property
+    def needs_md_path(self) -> Path:
+        return self.dir / "needs.md"
+
+    def needs(self) -> list[Need]:
+        """One record per need, the latest line for an id winning (a decision appends a line, it never rewrites one)."""
+        latest: dict[str, Need] = {}
+        for n in _read_jsonl(self.needs_path, Need):
+            latest[n.id] = n
+        return list(latest.values())
+
+    def next_need_id(self) -> str:
+        numbers = [int(n.id.rsplit("-n", 1)[-1]) for n in self.needs() if n.id.startswith(self.prefix + "-n") and n.id.rsplit("-n", 1)[-1].isdigit()]
+        return f"{self.prefix}-n{max(numbers, default=0) + 1:03d}"
+
+    def add_need(self, **fields) -> Need:
+        need = Need(id=self.next_need_id(), **fields)
+        _append_jsonl(self.needs_path, [need])
+        return need
+
+    def save_need(self, need: Need) -> None:
+        _append_jsonl(self.needs_path, [need])
+
+    def write_needs_md(self) -> Path | None:
+        """needs.md: every need with its stance, status and outcome, for review at the checkpoints."""
+        needs = self.needs()
+        if not needs:
+            return None
+        facts = {f.id: f for f in self.facts()}
+        lines = ["# What the story needs to know or decide", "",
+                 "Each need has a stance: **ground** (the real world must be right), **extrapolate** (a real basis, an imagined",
+                 "application), **bend** (the truth is known and changed on purpose) or **invent** (nothing real to look up).",
+                 "A lookup runs at once. A rule, assumption or deviation has no effect until it is approved:",
+                 "`python -m bookforge needs <series> --approve ID` (or `--reject ID`, `--stance`, `--rule \"...\"`).", ""]
+        for n in needs:
+            lines.append(f"## {n.id} [{n.stance}, {n.status}] {n.question}" + (" (sensitive: verify)" if n.sensitive else ""))
+            if n.reason:
+                lines.append(f"- why: {n.reason}")
+            if n.rule:
+                lines.append(f"- {'rule' if n.stance == 'invent' else 'assumption' if n.stance == 'extrapolate' else 'deviation'}: {n.rule}")
+            for fid in n.fact_ids:
+                f = facts.get(fid)
+                if f:
+                    lines.append(f"- [{f.id}] {f.claim}")
+            if n.stance in LOOKUP_STANCES and not n.fact_ids:
+                lines.append("- no facts found yet")
+            lines.append("")
+        self.needs_md_path.parent.mkdir(parents=True, exist_ok=True)
+        self.needs_md_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+        return self.needs_md_path
 
     def write_notes(self, layer: str) -> Path:
         """Rewrite <layer>.md from the two logs."""

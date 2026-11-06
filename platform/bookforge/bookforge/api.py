@@ -38,6 +38,7 @@ answers 409 (reads are always allowed). The model clients come from `make_llm` /
 import json
 import logging
 import re
+from dataclasses import asdict
 from pathlib import Path
 from typing import Callable
 
@@ -132,6 +133,12 @@ class PushUnsubscribe(BaseModel):
 class ExportBody(BaseModel):
     formats: list[str] | None = None
     draft: bool = False
+
+
+class NeedBody(BaseModel):
+    action: str | None = None  # approve | reject; leave out to only edit
+    stance: str | None = None
+    rule: str | None = None
 
 
 class RewriteBody(BaseModel):
@@ -357,7 +364,20 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
     def changes(series: str, book: str):
         return ok([c.model_dump() for c in change_requests.list_requests(open_project(series, book))])
 
+    @router.get("/series/{series}/books/{book}/needs")
+    def needs(series: str, book: str):
+        return ok([{"scope": scope, **asdict(n)} for scope, n in ops.list_needs(open_project(series, book))])
+
     # ── decisions (quick, change the files, need an idle series) ─────────────
+
+    @router.post("/series/{series}/books/{book}/needs/{need_id}")
+    def decide_need(series: str, book: str, need_id: str, body: NeedBody):
+        project = open_project(series, book)
+        require_idle(series)
+        if body.action not in (None, "approve", "reject"):
+            raise HTTPException(422, "action must be approve or reject")
+        approve = None if body.action is None else body.action == "approve"
+        return ok(asdict(ops.decide_need(project, need_id, approve, body.stance, body.rule)))
 
     @router.post("/series/{series}/books/{book}/changes/{cr_id}/{decision}")
     def decide(series: str, book: str, cr_id: str, decision: str):

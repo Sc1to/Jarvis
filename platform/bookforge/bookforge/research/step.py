@@ -17,7 +17,8 @@ from urllib.parse import urlparse
 from ..errors import BookforgeError
 from ..prompts import render
 from .hits import Hit, search_hits
-from .notes import QuestionRecord, normalize_question, notes_for_prompt, stores_for
+from ..realism import realism_setting
+from .notes import LOOKUP_STANCES, STANCES, QuestionRecord, normalize_question, notes_for_prompt, stores_for
 
 log = logging.getLogger("platform_bookforge.research")
 
@@ -29,6 +30,8 @@ MAX_QUERY_CHARS = 200
 DOCUMENT_CHARS = 6000
 STORY_EXCERPT_CHARS = 1500
 MAX_CONTEXT_CHARS = 200
+MAX_RULE_CHARS = 500
+MAX_REASON_CHARS = 200
 MIN_PAGE_CHARS = 40  # a page with less text than this is a failed fetch (script-only or blocked: it came back empty), not an answer
 LIST_TITLE_PREFIXES = ("list of", "lists of", "index of", "outline of", "timeline of")
 WINDOW_CHARS = 1500  # a long page is cut into windows this size; the ones that mention the question are read
@@ -40,14 +43,16 @@ class ResearchOutcome:
     asked: int = 0
     answered: int = 0
     facts: int = 0
+    decisions: int = 0  # rules, assumptions and deviations proposed, waiting for the author
     failures: list[str] = field(default_factory=list)
     files: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
+        waiting = f"; {self.decisions} decision(s) waiting for you (`needs`)" if self.decisions else ""
         if not self.asked:
-            return "research: no new questions" + (f" ({self.failures[0]})" if self.failures else "")
+            return "research: no new questions" + (f" ({self.failures[0]})" if self.failures else "") + waiting
         text = f"research: {self.answered}/{self.asked} questions answered, {self.facts} facts"
-        return text + (f" ({self.failures[0]})" if self.failures and self.answered < self.asked else "")
+        return text + (f" ({self.failures[0]})" if self.failures and self.answered < self.asked else "") + waiting
 
 
 @dataclass
@@ -56,6 +61,9 @@ class Question:
     query: str
     sensitive: bool
     context: str = ""  # the time, place and world an answer must fit, e.g. "England, 1880s"
+    stance: str = "ground"  # ground | extrapolate | bend | invent (see research.notes)
+    reason: str = ""  # why this stance
+    rule: str = ""  # the proposed rule (invent), assumption (extrapolate) or deviation (bend)
 
 
 def parse_json_object(text: str) -> dict | None:
@@ -88,6 +96,7 @@ def generate_questions(ctx, already_answered: set[str], focus: str, document: st
         layer_focus=focus, document=document[:DOCUMENT_CHARS], max_questions=str(max_questions),
         research_notes=notes_for_prompt(ctx.project, cfg.research.notes_max_chars),
         language=cfg.book.language,
+        realism=realism_setting(ctx.project) or "not stated: take it from the premise and the genre",
     )
     reply = ctx.llm.complete(
         cfg.layers[ctx.layer].model,
@@ -104,12 +113,17 @@ def generate_questions(ctx, already_answered: set[str], focus: str, document: st
             continue
         question = " ".join(str(item.get("question", "")).split())
         query = " ".join(str(item.get("query", "")).split())[:MAX_QUERY_CHARS]
+        stance = str(item.get("stance", "ground")).strip().casefold()
+        stance = stance if stance in STANCES else "ground"
+        rule = " ".join(str(item.get("rule", "")).split())[:MAX_RULE_CHARS]
         key = normalize_question(question)
-        if not question or not query or key in asked:
+        # A lookup needs something to search for; an invention needs the rule it proposes. Anything else is unusable.
+        if not question or key in asked or (stance in LOOKUP_STANCES and not query) or (stance == "invent" and not rule):
             continue
         asked.add(key)
         context = " ".join(str(item.get("setting", "")).split())[:MAX_CONTEXT_CHARS]
-        out.append(Question(question, query, bool(item.get("sensitive", False)), context))
+        reason = " ".join(str(item.get("reason", "")).split())[:MAX_REASON_CHARS]
+        out.append(Question(question, query, bool(item.get("sensitive", False)), context, stance, reason, rule))
         if len(out) >= max_questions:
             break
     return out
@@ -404,6 +418,8 @@ def run_research(ctx, scope: str, focus: str, document: str, max_questions: int 
     store = all_stores[scope]
     # Answered questions and pages already read count across the series and the book; unanswered ones are retried.
     answered = {normalize_question(r.question) for s in all_stores.values() for r in s.current_questions() if r.answered}
+    # A need already recorded (a rule waiting for approval, or one you rejected) is not proposed again.
+    answered |= {normalize_question(n.question) for s in all_stores.values() for n in s.needs() if not (n.stance in LOOKUP_STANCES and not n.fact_ids)}
     outcome = ResearchOutcome()
     if web is None or ctx.llm is None:
         return outcome
@@ -418,6 +434,11 @@ def run_research(ctx, scope: str, focus: str, document: str, max_questions: int 
     seen_urls = set().union(*(s.known_urls() for s in all_stores.values()))
     today = datetime.now(timezone.utc).date().isoformat()
     for q in questions:
+        if q.stance == "invent":  # nothing to look up: the proposed rule waits for the author
+            store.add_need(layer=ctx.layer, question=q.question, stance=q.stance, reason=q.reason, rule=q.rule,
+                           context=q.context, sensitive=q.sensitive, status="proposed")
+            outcome.decisions += 1
+            continue
         outcome.asked += 1
         attempt = answer_question(ctx, web, q, document, seen_urls)
         fact_ids: list[str] = []
@@ -435,9 +456,18 @@ def run_research(ctx, scope: str, focus: str, document: str, max_questions: int 
         store.add_question(QuestionRecord(layer=ctx.layer, question=q.question, query=q.query,
                                           answered=bool(fact_ids), fact_ids=fact_ids, reason=reason, sensitive=q.sensitive,
                                           context=q.context))
+        decision = q.stance != "ground"  # a lookup is automatic; an assumption or deviation is the author's to approve
+        store.add_need(layer=ctx.layer, question=q.question, stance=q.stance, reason=q.reason, rule=q.rule, query=q.query,
+                       context=q.context, sensitive=q.sensitive, fact_ids=fact_ids,
+                       status="proposed" if decision and q.rule else "approved", decided_by="" if decision and q.rule else "auto")
+        if decision and q.rule:
+            outcome.decisions += 1
 
-    if outcome.asked:
-        outcome.files = [store.rel(store.sources_path), store.rel(store.questions_path),
+    if outcome.asked or outcome.decisions:
+        outcome.files = [store.rel(store.sources_path), store.rel(store.questions_path), store.rel(store.needs_path),
                          store.rel(store.write_notes(ctx.layer))]
+        needs_md = store.write_needs_md()
+        if needs_md:
+            outcome.files.append(store.rel(needs_md))
         outcome.files = [f for f in outcome.files if (project.root / f).exists()]
     return outcome

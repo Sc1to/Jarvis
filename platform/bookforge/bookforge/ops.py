@@ -121,6 +121,45 @@ def approve_checkpoint(project: Project, checkpoint: str) -> None:
         vcs.tag(project.root, f"{project.book}-{checkpoint}-approved", message)
 
 
+def list_needs(project: Project) -> list:
+    """Every need of the series and the open book: (scope, Need) pairs, series first."""
+    from .research.notes import stores_for
+    return [(scope, n) for scope, store in stores_for(project).items() for n in store.needs()]
+
+
+def decide_need(project: Project, need_id: str, approve: bool | None = None, stance: str | None = None, rule: str | None = None):
+    """Approve or reject a proposed rule, assumption or deviation, and/or change its stance or its text.
+
+    Changing the stance or the text without saying approve or reject puts the need back to 'proposed': an edit is not an
+    approval. A stance that needs a lookup has no facts until the lookup is run (it is not run from here).
+    """
+    from .research.notes import MAX_RULE_CHARS_STORED, STANCES, stores_for
+    store = next((s for s in stores_for(project).values() if any(n.id == need_id for n in s.needs())), None)
+    if store is None:
+        raise BookforgeError(f"no need '{need_id}' (see `needs`)")
+    need = next(n for n in store.needs() if n.id == need_id)
+    if stance is not None:
+        stance = stance.strip().casefold()
+        if stance not in STANCES:
+            raise BookforgeError(f"stance must be one of: {', '.join(STANCES)}")
+        need.stance = stance
+    if rule is not None:
+        need.rule = " ".join(rule.split())[:MAX_RULE_CHARS_STORED]
+    if need.stance == "invent" and not need.rule:
+        raise BookforgeError("an invented thing needs the rule you decide on (--rule \"...\")")
+    if approve is True:
+        need.status, need.decided_by = "approved", "author"
+    elif approve is False:
+        need.status, need.decided_by = "rejected", "author"
+    elif stance is not None or rule is not None:
+        need.status, need.decided_by = "proposed", ""
+    store.save_need(need)
+    store.write_needs_md()
+    if project.config.git.commit_each_step:
+        vcs.commit(project.root, f"{project.book}: need {need.id} {need.status} ({need.stance})")
+    return need
+
+
 def decide_change(project: Project, cr_id: str, approve: bool) -> change_requests.ChangeRequest:
     decided = change_requests.approve(project, cr_id) if approve else change_requests.reject(project, cr_id)
     if project.config.git.commit_each_step:

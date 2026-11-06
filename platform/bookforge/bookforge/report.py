@@ -161,6 +161,11 @@ def build_report(project: Project, since: str | None = None, today: str | None =
         if cr.status == "pending":
             needs.append(f"Change request **{cr.id}** ({cr.proposed_by}, {cr.entity or cr.track}): plan '{cr.planned}', prose '{cr.observed}'; "
                          f"{len(cr.affects)} scene(s), {cr.scope}. `changes --approve {cr.id}` or `--reject {cr.id}`.")
+    for research_store in stores_for(project).values():
+        for n in research_store.needs():
+            if n.status == "proposed" and (n.rule or n.stance == "invent"):
+                needs.append(f"Decision **{n.id}** ({n.stance}): {n.question} Proposed: {n.rule or 'no text yet'}. "
+                             f"`needs --approve {n.id}` or `--reject {n.id}`.")
     try:
         needs += [f"{p.kind.capitalize()} **{p.id}** needs a look: {p.reason}. `stale --accept {p.id}` once it is fine." for p in stale._scan_plan(project)]
     except BookforgeError:
