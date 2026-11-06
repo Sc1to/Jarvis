@@ -24,6 +24,7 @@ from ..bible.models import Scene
 from ..briefing import build_briefing
 from ..deps import write_deps
 from ..errors import BookforgeError, LayerError
+from ..llm import TruncatedReply
 from ..prompts import render
 from ..qc.extract import extract_observed, record_observed
 from ..qc.mechanical import CheckContext, check_scene, load_banned
@@ -93,7 +94,7 @@ def _summarise(ctx: StepContext, scene: Scene, text: str) -> tuple[str, str]:
     try:
         messages = [{"role": "system", "content": render("system", project.root, **prompt_values(project))},
                     {"role": "user", "content": render("scene_summary", project.root, scene_text=text, **prompt_values(project))}]
-        reply = ask_until_valid(ctx, f"{scene.id} summary", "writer", messages, valid, {"max_tokens": 400}, strip_preamble=False)
+        reply = ask_until_valid(ctx, f"{scene.id} summary", "writer", messages, valid, {"max_tokens": 700}, strip_preamble=False)
         return reply.strip(), "model"
     except BookforgeError as e:
         log.warning("%s: no model summary (%s); using the plan", scene.id, e)
@@ -272,7 +273,13 @@ def prose(ctx: StepContext) -> StepResult:
         if status == "stale":
             stale.append(scene.id)  # brought up to date by `stale --fix`, not rewritten from scratch
             continue
-        accepted, scene_files = write_scene(ctx, scene, scenes, drafts, words)
+        try:
+            accepted, scene_files = write_scene(ctx, scene, scenes, drafts, words)
+        except TruncatedReply as e:
+            # One reply that is too long for its token limit, even after raising it, must not stop the book: this scene waits for you.
+            log.warning("%s: %s", scene.id, e)
+            _set_status(project, scene.id, "flagged", f"the writer's reply was cut off: {e}"[:300])
+            continue
         files += scene_files
         done_now += accepted
 

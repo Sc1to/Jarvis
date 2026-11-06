@@ -138,7 +138,7 @@ def revise_text(ctx, text: str, flags: list[Flag], banned: list[str], label: str
                 {"role": "user", "content": render("revise", project.root, issues=issues, before=before or "(start of the scene)",
                                                    passage=old, after=after or "(end of the scene)", pov=cfg.book.pov, tense=cfg.book.tense)}]
         new = ask_until_valid(ctx, f"{label} revise paragraph {idx + 1}", "writer", msgs, valid,
-                              {"max_tokens": int(word_count(old) * 2.2) + 200}, strip_preamble=False).strip()
+                              {"max_tokens": int(word_count(old) * 3) + 300}, strip_preamble=False).strip()
         paras[idx] = new
         result.applied.append({"paragraph": idx, "mode": "rewrite", "flags": [f.code for f in group], "before": old[:200], "after": new[:200]})
 
@@ -194,7 +194,7 @@ def _insert_passages(ctx, result: Revision, obligations: list[Flag], label: str)
                                                    pov=cfg.book.pov, tense=cfg.book.tense, count=str(len(spans)))
                  + (f"\n\nThe author says: {flag.instruction}" if flag.instruction else "")}]
         try:
-            reply = ask_until_valid(ctx, f"{label} insert a passage", "writer", msgs, valid, {"max_tokens": 500}, strip_preamble=False)
+            reply = ask_until_valid(ctx, f"{label} insert a passage", "writer", msgs, valid, {"max_tokens": 1000}, strip_preamble=False)
         except Exception as e:  # the writer could not produce one: the flag stays for the author
             result.unfixed.append(flag)
             result.applied.append({"mode": "insert-failed", "flags": [flag.code], "error": str(e)[:200]})
