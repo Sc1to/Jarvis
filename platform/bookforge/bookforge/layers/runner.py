@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from .. import vcs
+from .. import cancel, steering
 from ..constants import CHECKPOINT_REVIEW_FILES, LAYER_ORDER
 from ..errors import BookforgeError
 from ..llm import LLMClient
@@ -44,12 +45,12 @@ Handler = Callable[[StepContext], StepResult]
 class RunSummary:
     ran: list[str] = field(default_factory=list)
     notes: dict[str, str] = field(default_factory=dict)  # layer -> what the handler reported
-    stopped: str = "complete"  # complete | until | checkpoint | not_implemented | failed
+    stopped: str = "complete"  # complete | until | checkpoint | cancelled | not_implemented | failed
     detail: str = ""
 
     @property
     def exit_code(self) -> int:
-        return {"complete": 0, "until": 0, "checkpoint": 0, "not_implemented": 2, "failed": 1}[self.stopped]
+        return {"complete": 0, "until": 0, "checkpoint": 0, "cancelled": 0, "not_implemented": 2, "failed": 1}[self.stopped]
 
 
 def review_files(project: Project, checkpoint: str) -> list[str]:
@@ -112,8 +113,14 @@ def run(
             return summary
 
         try:
+            cancel.check()
             result = handler(StepContext(project=project, layer=layer, llm=llm, web=web))
             files = [str(project.resolve(f).relative_to(project.root.resolve())) for f in result.files]
+        except cancel.Cancelled:  # stopped by the author: not a failure; what is done stays, the rest runs again next time
+            project.save_state()
+            summary.stopped = "cancelled"
+            summary.detail = f"stopped at your request during '{layer}'; what was finished is kept, run again to continue"
+            return summary
         except Exception as e:  # a failed layer is flagged, never a crash mid-run
             log.exception("layer %s failed", layer)
             project.state.set_layer_status(layer, "flagged", note=str(e))
@@ -148,6 +155,7 @@ def run(
             return summary
 
         project.state.set_layer_status(layer, "accepted", note=result.note or None)
+        steering.clear(project, layer)  # the author's note for a rewrite has done its work
         _update_checkpoints(project)
         project.save_state()
         summary.ran.append(layer)

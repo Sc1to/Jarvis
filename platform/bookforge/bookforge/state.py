@@ -37,6 +37,7 @@ class BookState(BaseModel):
     schema_version: int = STATE_SCHEMA_VERSION
     book: str
     created: str
+    title: str = ""  # what the author calls the book; the id (b1, b2) never changes
     layers: dict[str, Item]
     items: dict[str, Item] = {}  # per-chapter / per-scene records, added from milestone 14.5
     checkpoints: dict[str, Checkpoint]

@@ -50,7 +50,7 @@ def finish(job):
 # ── series and books ────────────────────────────────────────────────────────
 
 def test_series_are_listed_with_their_books():
-    assert data(client.get("/api/series")) == [{"name": "series", "books": ["b1"], "busy": None}]
+    assert data(client.get("/api/series")) == [{"name": "series", "books": ["b1"], "titles": {"b1": ""}, "busy": None}]
 
 
 def test_a_series_can_be_created_once(tmp_path, monkeypatch):
@@ -561,3 +561,61 @@ def test_needs_are_listed_and_decided(book):
     assert data(client.post(f"{B}/needs/b1-n001", json={"rule": "Silent and cold."}))["status"] == "proposed"
     error(client.post(f"{B}/needs/b1-n001", json={"action": "maybe"}), 422)
     error(client.post(f"{B}/needs/b1-n099", json={"action": "approve"}), 400)
+
+
+# ── books, titles, renaming, redo, editing, stopping ────────────────────────
+
+def test_a_book_can_be_added_titled_and_listed():
+    made = data(client.post("/api/series/series/books", json={"title": "The Second", "brief": "Anna returns."}), 201)
+    assert made == {"book": "b2", "title": "The Second"}
+    listed = data(client.get("/api/series"))[0]
+    assert listed["books"] == ["b1", "b2"] and listed["titles"]["b2"] == "The Second"
+    assert data(client.put(f"{B}/title", json={"title": "  First  Book "})) == {"title": "First Book"}
+    assert data(client.get("/api/series"))[0]["titles"]["b1"] == "First Book"
+    error(client.post("/api/series/series/books", json={"title": "x", "brief": " "}), 400)
+    error(client.put(f"{B}/title", json={"title": ""}), 400)
+
+
+def test_a_series_can_be_renamed():
+    assert data(client.post("/api/series/series/rename", json={"name": "renamed-series"})) == {"name": "renamed-series"}
+    assert [s["name"] for s in data(client.get("/api/series"))] == ["renamed-series"]
+    error(client.post("/api/series/series/rename", json={"name": "x"}), 404)  # the old name is gone
+    error(client.post("/api/series/renamed-series/rename", json={"name": "Bad Name"}), 400)
+
+
+def test_redo_shows_what_it_resets_and_does_it():
+    plan = data(client.get(f"{B}/redo/book_north_star"))
+    assert plan["layer"] == "book_north_star" and isinstance(plan["also_resets"], list)
+    error(client.get(f"{B}/redo/prose"), 400)
+    out = data(client.post(f"{B}/redo", json={"layer": "scenes", "note": "more action"}))
+    assert out["layer"] == "scenes" and out["note"] is True
+    error(client.post(f"{B}/redo", json={"layer": "nonsense"}), 400)
+
+
+def test_a_document_can_be_edited_and_a_bad_edit_is_refused():
+    docs = {d["key"]: d for d in data(client.get(f"{B}/documents"))}
+    assert docs["premise"]["editable"] is True and docs["book_brief"]["key"] == "book_brief"
+    assert data(client.put(f"{B}/documents/premise", json={"text": "A new premise."})) == {"key": "premise", "saved": True}
+    assert data(client.get(f"{B}/documents/premise"))["text"].startswith("A new premise.")
+    error(client.put(f"{B}/documents/premise", json={"text": "  "}), 400)
+    error(client.put(f"{B}/documents/nope", json={"text": "x"}), 404)
+    bad = error(client.put(f"{B}/documents/series_north_star", json={"text": "# Not a north star\n\nJust words."}), 400)
+    assert "missing the section" in bad["detail"]
+
+
+def test_a_running_job_can_be_stopped_through_the_api(book):
+    import threading
+    from bookforge import cancel
+    release = threading.Event()
+
+    def work():
+        for _ in range(300):
+            cancel.check()  # what the model client does before every call
+            release.wait(0.01)
+        return {}
+
+    job = api.jobs.start(book.root, "series", "b1", "run", {}, work)
+    assert data(client.post(f"{B}/jobs/{job.id}/cancel"))["cancel_requested"] is True
+    api.jobs.wait(job.id, 5)
+    assert data(client.get(f"{B}/jobs/{job.id}"))["status"] == "cancelled"
+    error(client.post(f"{B}/jobs/{job.id}/cancel"), 400)  # nothing running any more

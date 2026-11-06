@@ -16,10 +16,11 @@ from ..bible import store
 from ..bible.models import Act, Chapter, Constants, Track
 from ..bible.positions import parse_position
 from ..bible.store import dump_yaml, to_plain
-from .. import review_notes
+from .. import review_notes, steering
 from ..bible.validate import (
     merge_constants, parse_acts, parse_cast, parse_chapters, parse_scenes, validate_bible,
 )
+from ..constants import REDO_NOTE
 from ..errors import LayerError
 from ..prompts import render
 from ..qc.plan_review import review_plan
@@ -135,10 +136,14 @@ def get_piece(
     return result
 
 
+_TEMPLATE_LAYER = {"acts": "acts", "cast": "acts", "chapters": "chapters", "scenes": "scenes"}  # which layer's author note applies
+
+
 def _messages(project, template: str, **slots) -> list[dict]:
     values = {**prompt_values(project), **slots}
+    note = steering.addendum(project, _TEMPLATE_LAYER.get(template, template))
     return [{"role": "system", "content": render("system", project.root, **values)},
-            {"role": "user", "content": render(template, project.root, **values)}]
+            {"role": "user", "content": render(template, project.root, **values) + note}]
 
 
 def _fact_ids(project) -> set[str]:
@@ -218,7 +223,7 @@ def chapters(ctx: StepContext) -> StepResult:
     out = store.chapters_path(project)
     files = [store.rel(project, out)]
 
-    if out.exists() and out.read_text(encoding="utf-8").strip():
+    if project.state.layers["chapters"].note != REDO_NOTE and out.exists() and out.read_text(encoding="utf-8").strip():
         problems = validate_chapters_file(project)
         if problems:
             raise LayerError("existing chapters.yaml is not acceptable: " + "; ".join(problems[:6])
@@ -307,7 +312,7 @@ def scenes(ctx: StepContext) -> StepResult:
     project = ctx.project
     out = store.scenes_path(project)
     files = [store.rel(project, out)]
-    if out.exists() and out.read_text(encoding="utf-8").strip():
+    if project.state.layers["scenes"].note != REDO_NOTE and out.exists() and out.read_text(encoding="utf-8").strip():
         problems = validate_scenes_file(project)
         if problems:
             raise LayerError("existing scenes.yaml is not acceptable: " + "; ".join(problems[:6])

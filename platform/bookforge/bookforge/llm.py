@@ -14,6 +14,7 @@ from typing import Callable, Protocol, Sequence
 
 import httpx
 
+from . import cancel
 from .calllog import CallLog
 from .config import Config, ModelEndpoint
 from .errors import BookforgeError
@@ -105,6 +106,7 @@ class HttpLLMClient:
         self._sleep = sleep
 
     def complete(self, role: str, messages: Messages, **options) -> str:
+        cancel.check()  # the author stopped the job: stop before asking the model again
         endpoint = self._models.get(role)
         if endpoint is None:
             raise LLMError(f"unknown model role '{role}' (expected 'writer' or 'critic')")

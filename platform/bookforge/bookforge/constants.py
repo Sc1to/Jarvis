@@ -31,3 +31,6 @@ CHECKPOINT_REVIEW_FILES = {
     "structure": ("books/{book}/acts.yaml", "books/{book}/chapters.yaml", "books/{book}/scenes.yaml",
                   "bible/constants.yaml", "bible/tracks.yaml", "bible/timeline.yaml", "books/{book}/research/needs.md"),
 }
+
+
+REDO_NOTE = "redo"  # the note on a layer the author asked to have written again: it must not be skipped as already there

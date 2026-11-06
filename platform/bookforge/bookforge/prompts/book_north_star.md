@@ -1,6 +1,6 @@
 Write the NORTH STAR FOR BOOK {book_id}. It is the one-page statement of what is specific to this book within the series. It must agree with the series north star; narrow it, do not contradict it.
 
-## Author's premise
+## This book's brief (the author's premise for the series, if the book has none of its own)
 
 {premise}
 

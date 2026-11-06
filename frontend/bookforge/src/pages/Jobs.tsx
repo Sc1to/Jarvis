@@ -3,7 +3,7 @@ import { useApi } from '../lib/hooks'
 import type { Job } from '../lib/types'
 import { Empty, ErrorBanner, Loading, fmtTime } from '../components/ui'
 
-const TONE: Record<string, string> = { done: 'bg-emerald-100 text-emerald-800', failed: 'bg-red-100 text-red-800', running: 'bg-sky-100 text-sky-800', interrupted: 'bg-amber-100 text-amber-900' }
+const TONE: Record<string, string> = { done: 'bg-emerald-100 text-emerald-800', failed: 'bg-red-100 text-red-800', running: 'bg-sky-100 text-sky-800', interrupted: 'bg-amber-100 text-amber-900', cancelled: 'bg-slate-200 text-slate-700' }
 
 export default function Jobs({ series, book }: { series: string; book: string }) {
   const jobs = useApi<Job[]>(`${bookPath(series, book)}/jobs`, 10000)

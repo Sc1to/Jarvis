@@ -132,3 +132,39 @@ def test_doctor_warns_about_uncommitted_changes(project):
 def test_doctor_without_a_series(tmp_path):
     result = runner.invoke(app, ["doctor", "--offline"])
     assert result.exit_code == 0 and "series_state" not in result.output
+
+
+# ── add-book, title, rename-series, redo ────────────────────────────────────
+
+def test_add_book_title_and_rename_series_commands(tmp_path):
+    from typer.testing import CliRunner
+    from bookforge import cli as _cli
+    runner = CliRunner()
+    premise = tmp_path / "p.md"
+    premise.write_text("A clerk finds a ledger.\n")
+    series = tmp_path / "s"
+    assert runner.invoke(_cli.app, ["new", str(series), "--premise", str(premise)]).exit_code == 0
+    added = runner.invoke(_cli.app, ["add-book", str(series), "--title", "The Second", "--brief", "Anna returns."])
+    assert added.exit_code == 0 and "added book b2 'The Second'" in added.output
+    assert runner.invoke(_cli.app, ["add-book", str(series), "--title", "Third", "--brief-file", str(tmp_path / "missing.md")]).exit_code == 1
+    assert runner.invoke(_cli.app, ["add-book", str(series), "--title", "Third"]).exit_code == 1  # no brief
+    titled = runner.invoke(_cli.app, ["title", str(series), "The First", "--book", "b1"])
+    assert titled.exit_code == 0 and "'The First'" in titled.output
+    moved = runner.invoke(_cli.app, ["rename-series", str(series), "new-name"])
+    assert moved.exit_code == 0 and (tmp_path / "new-name" / "premise.md").exists() and not series.exists()
+    assert runner.invoke(_cli.app, ["rename-series", str(tmp_path / "new-name"), "Bad Name"]).exit_code == 1
+
+
+def test_redo_command(tmp_path):
+    from typer.testing import CliRunner
+    from bookforge import cli as _cli, ops
+    from bookforge.project import Project
+    runner = CliRunner()
+    p = Project.create(tmp_path / "s", "A clerk finds a ledger.\n")
+    p.state.set_layer_status("synopsis", "accepted")
+    p.save_state()
+    refused = runner.invoke(_cli.app, ["redo", str(p.root), "prose"])
+    assert refused.exit_code == 1 and "only planning layers" in refused.output
+    done = runner.invoke(_cli.app, ["redo", str(p.root), "synopsis", "--note", "shorter"])
+    assert done.exit_code == 0 and "reset: synopsis" in done.output and "your note will be used" in done.output
+    assert Project.open(p.root).state.layers["synopsis"].status == "pending"
