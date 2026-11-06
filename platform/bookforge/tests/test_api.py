@@ -636,3 +636,23 @@ def test_a_finding_of_a_flagged_scene_can_be_dismissed_instructed_and_cleared_th
     assert data(client.post(f"{base}/findings", json={"question": FACT, "action": "clear"})) == {"dismissed": [], "instructions": {}}
     error(client.post(f"{base}/findings", json={"question": "Nope", "action": "dismiss"}), 400)
     error(client.post(f"{base}/findings", json={"question": FACT, "action": "instruct", "text": ""}), 400)
+
+
+def test_the_status_of_a_running_job_carries_what_it_is_doing(book):
+    import threading
+    from bookforge import activity
+    working, release = threading.Event(), threading.Event()
+
+    def work():
+        activity.set(layer="prose", scene="b1.ch02.s1", step="writing drafts")
+        working.set()
+        release.wait(5)
+        return {}
+
+    job = api.jobs.start(book.root, "series", "b1", "run", {}, work)
+    assert working.wait(5)
+    status = data(client.get(f"{B}/status"))
+    assert status["job"]["status"] == "running"
+    assert status["job"]["activity"] == {"layer": "prose", "scene": "b1.ch02.s1", "step": "writing drafts"}
+    release.set()
+    api.jobs.wait(job.id, 5)

@@ -14,7 +14,7 @@ from typing import Callable, Protocol, Sequence
 
 import httpx
 
-from . import cancel
+from . import activity, cancel
 from .calllog import CallLog
 from .config import Config, ModelEndpoint
 from .errors import BookforgeError
@@ -195,9 +195,14 @@ class HttpLLMClient:
             record["extra_body"] = endpoint.extra_body
         started = time.monotonic()
         last: Exception | None = None
+        label = next((m["content"] for m in reversed(msgs) if m.get("role") == "user"), "")
         for attempt in range(1, self._attempts + 1):
             try:
-                data = self._post(url, body, endpoint)
+                activity.call_started(role, str(label))
+                try:
+                    data = self._post(url, body, endpoint)
+                finally:
+                    activity.call_finished()
                 text, finish, usage = self._parse(data, role)
             except _Retryable as e:
                 last = e

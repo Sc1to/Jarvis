@@ -38,6 +38,7 @@ answers 409 (reads are always allowed). The model clients come from `make_llm` /
 import json
 import logging
 import re
+from datetime import datetime, timezone
 from dataclasses import asdict
 from pathlib import Path
 from typing import Callable
@@ -336,6 +337,7 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
             "checkpoints": {n: state.checkpoints[n].status for n in CHECKPOINTS},
             "scenes": {"total": len(ids), **counts},
             "title": project.state.title,
+            "server_time": datetime.now(timezone.utc).isoformat(timespec="seconds"),  # so the page can time a call without trusting its own clock
             "pending_changes": sum(c.status == "pending" for c in change_requests.list_requests(project)),
             "pending_needs": len(waiting_decisions(project)),
             "manuscript": assembly.manuscript_path(project).exists(),

@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api, bookPath, post } from '../lib/api'
 import { useAction, useApi } from '../lib/hooks'
-import type { BookStatus } from '../lib/types'
+import type { BookStatus, JobActivity } from '../lib/types'
 import { href } from '../lib/route'
 import { Button, Card, Dot, ErrorBanner, StatusBadge, fmtTime } from '../components/ui'
 
@@ -47,6 +47,35 @@ function RedoPanel({ base, layer, onDone, onClose, locked }: { base: string; lay
   )
 }
 
+const seconds = (ms: number) => Math.max(0, Math.round(ms / 1000))
+const label = (s?: string | null) => (s ?? '').replace(/_/g, ' ')
+
+/** What the running job is doing now. Times come from the server's clock (`server_time` of the last poll), not from this device's. */
+function ActivityPanel({ activity, serverTime }: { activity?: JobActivity; serverTime?: string }) {
+  const [, tick] = useState(0)
+  useEffect(() => { const t = setInterval(() => tick((n) => n + 1), 1000); return () => clearInterval(t) }, [])
+  const received = useRef({ at: Date.now(), server: serverTime })
+  if (received.current.server !== serverTime) received.current = { at: Date.now(), server: serverTime }
+  const serverNow = serverTime ? Date.parse(serverTime) + (Date.now() - received.current.at) : Date.now()
+  const a = activity ?? {}
+  if (!a.layer && !a.calls) return <p className="mt-2 text-sm text-slate-600">Starting…</p>
+  const waiting = a.call_started ? seconds(serverNow - Date.parse(a.call_started)) : null
+  const idle = !a.call_started && a.last_call_finished ? seconds(serverNow - Date.parse(a.last_call_finished)) : null
+  return (
+    <div className="mt-2 space-y-1 text-sm text-slate-700" aria-live="polite">
+      <p><span className="text-slate-500">Working on:</span> {[label(a.layer), a.scene, a.step].filter(Boolean).join(' · ') || '…'}</p>
+      <p className="text-xs text-slate-600">Model calls this run: {a.calls ?? 0}{a.scenes_done !== undefined ? ` · scenes finished this run: ${a.scenes_done}` : ''}</p>
+      {waiting !== null && (
+        <p className="break-words text-xs text-slate-600">Waiting for the model for {waiting} s{a.call_label ? `: “${a.call_label}”` : ''}</p>
+      )}
+      {idle !== null && <p className="text-xs text-slate-600">Last model call finished {idle} s ago.</p>}
+      {waiting !== null && waiting > 180 && (
+        <p className="text-xs text-amber-800">A scene draft usually takes 70 to 90 seconds on this model, so this one is slow. Stop is above if you want to end it.</p>
+      )}
+    </div>
+  )
+}
+
 export default function Overview({ series, book, status, reload }: { series: string; book: string; status: BookStatus; reload: () => void }) {
   const act = useAction()
   const [until, setUntil] = useState('')
@@ -66,6 +95,7 @@ export default function Overview({ series, book, status, reload }: { series: str
       {status.job && (
         <Card title={`${status.job.kind} ${status.job.status}`} tone={busy ? undefined : 'warn'}>
           <p className="text-sm text-slate-700">Started {fmtTime(status.job.started)}. {busy && 'Updating every few seconds; the page can be closed, the run continues.'}</p>
+          {busy && <ActivityPanel activity={status.job.activity} serverTime={status.server_time} />}
           {busy && (
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <Button kind="danger" disabled={act.busy || status.job.cancel_requested}

@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from . import cancel
+from . import activity, cancel
 from .errors import BookforgeError
 
 log = logging.getLogger("platform_bookforge.jobs")
@@ -36,6 +36,7 @@ class Job:
     kind: str  # run | stale-fix | bench
     status: str = "running"  # running | done | failed | interrupted | cancelled
     cancel_requested: bool = False  # the author asked it to stop; it stops at its next model call
+    activity: dict = field(default_factory=dict)  # what it is doing now: layer, scene, step, model calls (see activity.py)
     started: str = field(default_factory=_now)
     finished: str | None = None
     params: dict = field(default_factory=dict)
@@ -92,6 +93,7 @@ class JobManager:
     def _run(self, root: Path, job: Job, fn: Callable[[], dict]) -> None:
         stop = self._stops.get(job.id)
         cancel.bind(stop)
+        activity.bind(job.activity)
         try:
             result = fn()
             job.result, job.status = result, ("cancelled" if stop is not None and stop.is_set() else "done")
@@ -102,6 +104,7 @@ class JobManager:
             job.error, job.status = str(e) or e.__class__.__name__, "failed"
         finally:
             cancel.bind(None)
+            activity.bind(None)
             job.finished = _now()
             self._save(root, job)
             with self._lock:

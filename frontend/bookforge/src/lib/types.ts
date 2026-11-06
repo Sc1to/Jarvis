@@ -2,16 +2,24 @@ export type Status = 'pending' | 'drafted' | 'checked' | 'accepted' | 'stale' | 
 
 export interface Layer { name: string; status: Status; version: number; note: string | null; checkpoint: string | null }
 
+/** What a running job is doing now (filled in by the pipeline; see platform/bookforge/bookforge/activity.py). */
+export interface JobActivity {
+  layer?: string | null; scene?: string | null; step?: string | null
+  calls?: number; scenes_done?: number
+  call_started?: string; call_label?: string; call_role?: string; last_call_finished?: string
+}
+
 export interface Job {
   id: string; series: string; book: string; kind: string
   status: 'running' | 'done' | 'failed' | 'interrupted' | 'cancelled'
   cancel_requested: boolean
+  activity?: JobActivity
   started: string; finished: string | null
   params: Record<string, unknown>; result: Record<string, any> | null; error: string | null
 }
 
 export interface BookStatus {
-  series: string; book: string; title: string
+  series: string; book: string; title: string; server_time?: string
   layers: Layer[]
   checkpoints: Record<string, 'pending' | 'waiting' | 'approved'>
   scenes: Record<string, number> & { total: number }

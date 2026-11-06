@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from .. import vcs
-from .. import cancel, steering
+from .. import activity, cancel, steering
 from ..constants import CHECKPOINT_REVIEW_FILES, LAYER_ORDER
 from ..errors import BookforgeError
 from ..llm import LLMClient
@@ -114,6 +114,7 @@ def run(
 
         try:
             cancel.check()
+            activity.set(layer=layer, scene=None, step=None)
             result = handler(StepContext(project=project, layer=layer, llm=llm, web=web))
             files = [str(project.resolve(f).relative_to(project.root.resolve())) for f in result.files]
         except cancel.Cancelled:  # stopped by the author: not a failure; what is done stays, the rest runs again next time
