@@ -159,6 +159,38 @@ def research_test_cmd(
     raise typer.Exit(0 if attempt.facts else 1)
 
 
+@app.command("research-eval")
+def research_eval_cmd(
+    path: Path = PathArg,
+    document: str = typer.Option("premise.md", "--document", help="Propose the needs from this file (relative to the series, or a full path): the premise, a north star, the synopsis"),
+    recorded: bool = typer.Option(False, "--recorded", help="Run the lookup needs already recorded for the series and book instead of proposing new ones"),
+    max_questions: int = typer.Option(8, "--max", help="At most this many needs"),
+    audit: bool = typer.Option(True, "--audit/--no-audit", help="Audit each kept claim against its quote with a separate model call"),
+    book: str = BookOpt,
+) -> None:
+    """Judge the whole research stage: propose or take a story's needs, run every lookup, audit the claims. Stores nothing."""
+    from .layers.runner import StepContext
+    from .realism import realism_setting
+    from .research import evaluate
+    from .research.probe import source_of
+    try:
+        project = Project.open(path, book)
+        doc_path = Path(document) if Path(document).is_absolute() else project.root / document
+        try:
+            text = doc_path.read_text(encoding="utf-8")
+        except OSError:
+            raise BookforgeError(f"cannot read {doc_path} (use --document to name the file the needs come from)") from None
+        web = build_web_client(project)
+        ctx = StepContext(project=project, layer="synopsis", llm=build_client(project), web=web)
+        questions = evaluate.recorded_questions(project) if recorded else evaluate.propose(ctx, text, max_questions)
+        rows = evaluate.evaluate(ctx, web, questions[:max_questions], text, audit)
+    except BookforgeError as e:
+        _fail(e)
+    for line in evaluate.describe(rows, source_of(web), realism_setting(project), "recorded needs" if recorded else document):
+        typer.echo(line)
+    raise typer.Exit(0 if evaluate.bar_met(rows) else 1)
+
+
 @app.command("delete")
 def delete_cmd(
     path: Path = PathArg,
