@@ -36,6 +36,7 @@ def describe(attempt: Attempt, q: Question, source: str, show_pages: bool = Fals
         cut = f", the {p.excerpt_chars} most relevant characters shown to the model" if p.excerpt_chars < p.chars else ""
         lines.append(f"page {p.url}\n  {p.chars} characters{cut}")
         lines.append(f"  the model reported {p.model_facts} fact(s): {p.quote_rejected} dropped (quote not on the page), "
+                     f"{p.support_rejected} dropped (claim says more than its quote), "
                      f"{p.fit_rejected} dropped (does not fit the question and setting), {len(p.kept)} kept")
         for f in p.kept:
             lines.append(f"    + {f['claim']}\n      quote: \"{f['quote']}\"")

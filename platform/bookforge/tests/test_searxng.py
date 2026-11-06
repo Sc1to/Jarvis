@@ -261,7 +261,7 @@ def test_the_describe_output_names_results_pages_and_the_verdict(project):
 
 
 def test_the_research_test_command(project, monkeypatch):
-    (project.root / "config.yaml").write_text("research:\n  model_pick: false\n")
+    (project.root / "config.yaml").write_text("research:\n  model_pick: false\n  check_support: false\n")
     web = scripted_web()
     monkeypatch.setattr(cli, "build_client", lambda p: reader(p))
     monkeypatch.setattr(cli, "build_web_client", lambda p: web)
@@ -308,7 +308,7 @@ def test_a_page_that_comes_back_empty_does_not_use_up_a_page_slot(project):
     llm = RuleLLM([("Source page:", json.dumps({"facts": []}))])
     attempt = answer_question(make_ctx(project, llm, web), web, Question("customs", "q", False, ""), "story", set())
     assert [(p.url.split("/")[2], bool(p.error)) for p in attempt.pages] == [("x.example", True), ("y.example", False), ("z.example", False)]
-    assert "no readable text" in attempt.pages[0].error and attempt.reason.startswith("page https://x.example/empty failed")
+    assert "no readable text" in attempt.pages[0].error and "1 page(s) could not be read (x.example: no readable text" in attempt.reason
 
 
 def test_reading_stops_once_enough_facts_are_kept(project):
@@ -333,7 +333,7 @@ def test_a_dropped_fact_is_shown_with_the_checkers_reason(project):
     attempt = answer_question(make_ctx(project, llm, web), web, q, "story", set())
     [page] = attempt.pages
     assert [f["claim"] for f in page.kept] == ["Fractures are common."]
-    assert page.dropped == [{"claim": "Most heal in six weeks.", "quote": "heal in six weeks", "why": "a modern figure, not the 1880s"}]
+    assert page.dropped == [{"claim": "Most heal in six weeks.", "quote": "heal in six weeks", "why": "a modern figure, not the 1880s", "kind": "fit"}]
     text = "\n".join(probe_mod.describe(attempt, q, "searxng"))
     assert "- dropped: Most heal in six weeks." in text and "why: a modern figure, not the 1880s" in text and "reading order" in text
 
@@ -468,7 +468,7 @@ def test_show_pages_prints_what_the_model_saw_and_said(project):
 
 
 def test_the_research_test_command_shows_pages_on_request(project, monkeypatch):
-    (project.root / "config.yaml").write_text("research:\n  model_pick: false\n")
+    (project.root / "config.yaml").write_text("research:\n  model_pick: false\n  check_support: false\n")
     monkeypatch.setattr(cli, "build_client", lambda p: reader(p))
     monkeypatch.setattr(cli, "build_web_client", lambda p: scripted_web())
     out = CliRunner().invoke(cli.app, ["research-test", str(project.root), "What did customs clerks do?", "--query", "customs clerk 1880s", "--show-pages"])
@@ -493,3 +493,92 @@ def test_a_claim_the_check_finds_unsupported_is_dropped_with_its_reason(project)
     llm = RuleLLM([("Source page:", facts), ("Which of these facts directly answer", drop)])
     attempt = answer_question(make_ctx(project, llm, web), web, Question("What did a clerk do?", "q", False, "England, 1880s"), "story", set())
     assert not attempt.facts and attempt.pages[0].dropped[0]["why"] == "claim says clerk, quote says Comptroller"
+
+
+# ── skipped sites, honest failure reasons, the claim audit in the pipeline ──
+
+import pytest as _pytest  # noqa: E402
+
+
+@_pytest.mark.parametrize("url", [
+    "https://www.jstor.org/stable/179261", "https://freepages.rootsweb.com/~x/genealogy/a.htm", "https://sova.si.edu/record/nmah.ac.1358",
+    "https://en.wikipedia.org/wiki/Category:1880s_missing_person_cases", "https://en.wikipedia.org/wiki/File:Fog.jpg",
+    "https://en.wikipedia.org/wiki/Talk:Fog", "https://de.wikipedia.org/wiki/Spezial:Suche",
+])
+def test_paywalls_archives_and_wikipedia_non_articles_are_skipped(url):
+    from bookforge.config import DEFAULT_SKIP_DOMAINS
+    if url.startswith("https://de.wikipedia.org"):
+        assert not skipped(url, DEFAULT_SKIP_DOMAINS)  # another language's namespace names are not guessed
+    else:
+        assert skipped(url, DEFAULT_SKIP_DOMAINS)
+
+
+def test_real_articles_are_not_skipped():
+    from bookforge.config import DEFAULT_SKIP_DOMAINS
+    for url in ("https://en.wikipedia.org/wiki/HM_Customs", "https://en.wikipedia.org/wiki/Vestry", "https://en.wikipedia.org/wiki/Fog_(disambiguation)",
+                "https://shorehambysea.com/custom-houses-cutters-officers/"):
+        assert not skipped(url, DEFAULT_SKIP_DOMAINS)
+
+
+def test_a_failed_question_says_what_happened_to_every_page(project):
+    good, empty, down = "https://g.example/a", "https://e.example/b", "https://d.example/c"
+    web = FakeWebClient(searches={"q": "r"}, pages={good: PAGE_C, empty: ""},  # `down` is not in pages: the fetch raises
+                        links={"q": [{"text": "G", "href": good}, {"text": "E", "href": empty}, {"text": "D", "href": down}]})
+    llm = RuleLLM([("Source page:", json.dumps({"facts": []}))])
+    attempt = answer_question(make_ctx(project, llm, web), web, Question("q", "q", False, ""), "story", set())
+    assert attempt.reason.startswith("no supported facts in the 1 page(s) read; 2 page(s) could not be read (")
+    assert "e.example: no readable text" in attempt.reason and "d.example:" in attempt.reason
+
+
+def test_when_no_page_could_be_read_it_says_so(project):
+    web = FakeWebClient(searches={"q": "r"}, pages={"https://e.example/b": ""}, links={"q": [{"text": "E", "href": "https://e.example/b"}]})
+    attempt = answer_question(make_ctx(project, RuleLLM([]), web), web, Question("q", "q", False, ""), "story", set())
+    assert attempt.reason.startswith("no page could be read; 1 page(s) could not be read (e.example: no readable text")
+
+
+AUDIT_BAD = ("Audit the facts below", json.dumps({"unsupported": [{"n": 1, "why": "claim says clerk, quote is about the comptroller"}]}))
+
+
+def _audited_attempt(project, audit, on=True):
+    project.config.research.check_support = on
+    page = "Next was the Comptroller who was responsible for the financial accounting at the port."
+    web = FakeWebClient(searches={"q": "r"}, pages={"https://x.example/p": page}, links={"q": [{"text": "X", "href": "https://x.example/p"}]})
+    facts = json.dumps({"facts": [{"claim": "A customs clerk managed the accounts.", "quote": "the Comptroller who was responsible for the financial accounting"}]})
+    llm = RuleLLM([("Source page:", facts), audit, ("Which of these facts directly answer", json.dumps({"keep": [1]}))])
+    q = Question("What did a clerk do?", "q", False, "England, 1880s")
+    return answer_question(make_ctx(project, llm, web), web, q, "story", set()), llm
+
+
+def test_the_pipeline_drops_a_claim_its_quote_does_not_support(project):
+    attempt, llm = _audited_attempt(project, AUDIT_BAD)
+    [page] = attempt.pages
+    assert not attempt.facts and page.support_rejected == 1 and page.kept == []
+    assert page.dropped[0]["kind"] == "support" and page.dropped[0]["why"].startswith("claim says more than its quote: claim says clerk")
+    assert "claim(s) said more than their quote" in attempt.reason
+    assert not llm.calls_matching("Which of these facts directly answer")  # nothing left for the relevance check
+    text = "\n".join(probe_mod.describe(attempt, Question("q", "q", False, ""), "searxng"))
+    assert "1 dropped (claim says more than its quote)" in text
+
+
+def test_a_clean_audit_keeps_the_fact_and_the_audit_can_be_switched_off(project):
+    attempt, llm = _audited_attempt(project, ("Audit the facts below", json.dumps({"unsupported": []})))
+    assert len(attempt.facts) == 1 and len(llm.calls_matching("Audit the facts below")) == 1
+    off, llm_off = _audited_attempt(project, AUDIT_BAD, on=False)
+    assert len(off.facts) == 1 and not llm_off.calls_matching("Audit the facts below")
+
+
+def test_an_audit_that_cannot_be_done_keeps_the_facts(project):
+    from bookforge.errors import BookforgeError
+
+    def offline(messages):
+        raise BookforgeError("model offline")
+
+    attempt, _ = _audited_attempt(project, ("Audit the facts below", offline))
+    assert len(attempt.facts) == 1 and attempt.pages[0].support_rejected == 0
+
+
+def test_the_question_prompt_asks_for_institutions_and_practices_and_for_inventions_as_such():
+    from bookforge.prompts import render
+    text = render("research_questions", None, layer_focus="f", document="d", max_questions="5", research_notes="n", language="en", realism="r")
+    assert "Broaden a narrow question to the institution or practice around it" in text
+    assert "that is \"invent\"" in text

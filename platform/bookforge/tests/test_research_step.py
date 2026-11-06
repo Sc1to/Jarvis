@@ -161,7 +161,7 @@ def test_a_failing_page_is_skipped_and_the_next_one_used(project):
 
 
 def test_pages_per_question_is_respected(project):
-    (project.root / "config.yaml").write_text("research:\n  pages_per_question: 1\n  model_pick: false\n")
+    (project.root / "config.yaml").write_text("research:\n  pages_per_question: 1\n  model_pick: false\n  check_support: false\n")
     from bookforge.project import Project
     p = Project.open(project.root)
     three = web(links={"clavicle healing": [ddg(URL_A), ddg(URL_B)], "sling history": [ddg(URL_B)]})
@@ -315,7 +315,7 @@ def test_list_articles_are_read_last(project):
     w = web(links=links, pages={page_list: PAGE_A, page_real: PAGE_A}, searches={"clavicle healing": "results"})
     llm = RuleLLM([GOOD_RULES[0], (f"Source page: {page_real}", facts(("Fine.", "Most clavicle fractures heal in six weeks"))),
                    (f"Source page: {page_list}", facts()), CHECK_ALL])
-    (project.root / "config.yaml").write_text("research:\n  pages_per_question: 1\n  model_pick: false\n")
+    (project.root / "config.yaml").write_text("research:\n  pages_per_question: 1\n  model_pick: false\n  check_support: false\n")
     from bookforge.project import Project
     run(Project.open(project.root), llm, w)
     assert [f.url for f in stores_for(project)["series"].facts()] == [page_real]

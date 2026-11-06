@@ -1,6 +1,6 @@
 import asyncio
 
-from tools.web_tool import MAX_LINKS, MIN_TEXT_CHARS, POLL_MS, POLL_STEP_MS, WebTool, _clean_links, _is_blocked, _page_text
+from tools.web_tool import MAX_LINKS, MIN_TEXT_CHARS, NAVIGATION_RETRIES, POLL_MS, POLL_STEP_MS, WebTool, _clean_links, _evaluate, _is_blocked, _page_text
 
 
 # ── Blocking logic (pure Python, no Playwright needed) ────────────────────────
@@ -79,19 +79,26 @@ def test_clean_links_caps_count_and_size():
 class FakePage:
     """A page whose text is whatever `texts` gives on each read (the last one repeats). Records the waits."""
 
-    def __init__(self, texts, idle_raises=False):
+    def __init__(self, texts, idle_raises=False, destroyed=0):
         self.texts, self.idle_raises = list(texts), idle_raises
+        self.destroyed = destroyed  # the first this-many reads fail as if the page navigated away under us
+        self.states = []
         self.reads = 0
         self.idle_waits = 0
         self.sleeps = []
 
     async def evaluate(self, js):
+        if self.destroyed > 0:
+            self.destroyed -= 1
+            raise RuntimeError("Page.evaluate: Execution context was destroyed, most likely because of a navigation")
         text = self.texts[min(self.reads, len(self.texts) - 1)]
         self.reads += 1
         return text
 
     async def wait_for_load_state(self, state, timeout):
-        assert state == "networkidle"
+        self.states.append(state)
+        if state != "networkidle":
+            return
         self.idle_waits += 1
         if self.idle_raises:
             raise TimeoutError("never went idle")
@@ -136,3 +143,32 @@ def test_a_page_that_never_goes_quiet_does_not_stop_the_read():
 def test_whitespace_alone_does_not_count_as_text():
     page = FakePage(["   \n\n  ", FULL])
     assert asyncio.run(_page_text(page)) == FULL and page.idle_waits == 1
+
+
+# ── A page that redirects itself while it is read ─────────────────────────────
+
+def test_a_page_that_navigates_under_us_is_read_again_once_it_has_loaded():
+    page = FakePage([FULL], destroyed=2)
+    assert asyncio.run(_page_text(page)) == FULL
+    assert page.states[:2] == ["domcontentloaded", "domcontentloaded"] and page.reads == 1
+
+
+def test_a_page_that_keeps_navigating_gives_up_with_the_original_error():
+    import pytest
+    page = FakePage([FULL], destroyed=NAVIGATION_RETRIES + 5)
+    with pytest.raises(RuntimeError, match="Execution context was destroyed"):
+        asyncio.run(_evaluate(page, "x"))
+    assert len(page.states) == NAVIGATION_RETRIES
+
+
+def test_other_script_errors_are_not_retried():
+    import pytest
+
+    class Broken(FakePage):
+        async def evaluate(self, js):
+            raise RuntimeError("Target closed")
+
+    page = Broken([FULL])
+    with pytest.raises(RuntimeError, match="Target closed"):
+        asyncio.run(_evaluate(page, "x"))
+    assert page.states == []

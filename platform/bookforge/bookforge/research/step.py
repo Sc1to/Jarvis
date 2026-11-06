@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 from ..errors import BookforgeError
 from ..prompts import render
 from .hits import Hit, search_hits
+from .wikipedia import wiki_title
 from ..realism import realism_setting
 from .notes import LOOKUP_STANCES, STANCES, QuestionRecord, normalize_question, notes_for_prompt, stores_for
 
@@ -32,6 +33,8 @@ STORY_EXCERPT_CHARS = 1500
 MAX_CONTEXT_CHARS = 200
 MAX_RULE_CHARS = 500
 MAX_REASON_CHARS = 200
+# Wikipedia pages that are not articles (listings, files, discussion) never answer a question.
+WIKI_NON_ARTICLE = frozenset("category file image talk special template help wikipedia portal user draft module mediawiki book".split())
 MIN_PAGE_CHARS = 40  # a page with less text than this is a failed fetch (script-only or blocked: it came back empty), not an answer
 LIST_TITLE_PREFIXES = ("list of", "lists of", "index of", "outline of", "timeline of")
 WINDOW_CHARS = 1500  # a long page is cut into windows this size; the ones that mention the question are read
@@ -89,14 +92,15 @@ def quote_in_page(quote: str, page_text: str) -> bool:
     return _norm_text(quote) in _norm_text(page_text)
 
 
-def generate_questions(ctx, already_answered: set[str], focus: str, document: str, max_questions: int) -> list[Question]:
+def generate_questions(ctx, already_answered: set[str], focus: str, document: str, max_questions: int,
+                       realism: str | None = None) -> list[Question]:
     cfg = ctx.project.config
     prompt = render(
         "research_questions", ctx.project.root,
         layer_focus=focus, document=document[:DOCUMENT_CHARS], max_questions=str(max_questions),
         research_notes=notes_for_prompt(ctx.project, cfg.research.notes_max_chars),
         language=cfg.book.language,
-        realism=realism_setting(ctx.project) or "not stated: take it from the premise and the genre",
+        realism=(realism if realism is not None else realism_setting(ctx.project)) or "not stated: take it from the premise and the genre",
     )
     reply = ctx.llm.complete(
         cfg.layers[ctx.layer].model,
@@ -255,7 +259,10 @@ def pick_hits(ctx, question: str, setting: str, hits: list[Hit], count: int) -> 
 
 def skipped(url: str, skip_domains: list[str]) -> bool:
     host = (urlparse(url).hostname or "").lower()
-    return any(host == d or host.endswith("." + d) for d in skip_domains)
+    if any(host == d or host.endswith("." + d) for d in skip_domains):
+        return True
+    parsed = wiki_title(url)
+    return bool(parsed and ":" in parsed[1] and parsed[1].split(":", 1)[0].strip().casefold() in WIKI_NON_ARTICLE)
 
 
 def diversify(hits: list[Hit]) -> list[Hit]:
@@ -266,6 +273,31 @@ def diversify(hits: list[Hit]) -> list[Hit]:
         (rest if host in seen else firsts).append(h)
         seen.add(host)
     return firsts + rest
+
+
+def audit_claims(ctx, facts: list[dict]) -> list[dict]:
+    """The facts whose claim is not supported by its quote, each with the reason. Raises BookforgeError if the model cannot be asked.
+
+    A separate, narrow question works better than one criterion among several in the relevance check: that check let a claim
+    through that said steamers could not ply at 8 am when its quote said later in the day.
+    """
+    if not facts:
+        return []
+    listing = "\n".join(f"{n}. claim: {f['claim']}\n   quote: \"{f['quote']}\"" for n, f in enumerate(facts, 1))
+    reply = ctx.llm.complete(
+        ctx.project.config.research.notes_model,
+        [{"role": "system", "content": render("research_system", ctx.project.root)},
+         {"role": "user", "content": render("research_audit", ctx.project.root, facts=listing)}],
+        max_tokens=400,
+    )
+    data = parse_json_object(reply) or {}
+    flagged = data.get("unsupported") if isinstance(data.get("unsupported"), list) else []
+    out = []
+    for item in flagged:
+        n = item.get("n") if isinstance(item, dict) else None
+        if isinstance(n, int) and not isinstance(n, bool) and 1 <= n <= len(facts):
+            out.append({**facts[n - 1], "why": " ".join(str(item.get("why", "")).split())[:200] or "no reason given"})
+    return out
 
 
 def extract_facts(ctx, question: str, url: str, page_text: str, context: str = "", story: str = "",
@@ -302,10 +334,26 @@ def extract_facts(ctx, question: str, url: str, page_text: str, context: str = "
                 stats["quote_rejected"] += 1
             continue
         facts.append({"claim": claim, "quote": quote})
-    if not cfg.research.check_relevance:
-        return facts, 0
     dropped_facts: list[dict] = []
-    kept = check_facts(ctx, question, context, story, facts, dropped_facts)
+    if cfg.research.check_support and facts:
+        try:
+            bad = audit_claims(ctx, facts)
+        except BookforgeError as e:  # the audit could not be done: keep the facts, as before the audit existed
+            log.warning("could not audit the claims from %s (%s); keeping them", url, e)
+            bad = []
+        gone = {(b["claim"], b["quote"]) for b in bad}
+        if gone:
+            dropped_facts += [{"claim": b["claim"], "quote": b["quote"], "why": "claim says more than its quote: " + b["why"], "kind": "support"} for b in bad]
+            facts = [f for f in facts if (f["claim"], f["quote"]) not in gone]
+            if stats is not None:
+                stats["support_rejected"] = len(bad)
+    if not cfg.research.check_relevance:
+        if stats is not None:
+            stats["dropped_facts"] = dropped_facts
+        return facts, 0
+    fit_dropped: list[dict] = []
+    kept = check_facts(ctx, question, context, story, facts, fit_dropped)
+    dropped_facts += [{**d, "kind": "fit"} for d in fit_dropped]
     if stats is not None:
         stats["dropped_facts"] = dropped_facts
     if len(kept) < len(facts):
@@ -326,6 +374,7 @@ class PageTrace:
     model_facts: int = 0  # facts the model reported
     quote_rejected: int = 0  # of those, dropped because the quote is not on the page
     fit_rejected: int = 0  # dropped because they do not fit the question and the setting
+    support_rejected: int = 0  # dropped because the claim says more than its quote
     kept: list[dict] = field(default_factory=list)
     dropped: list[dict] = field(default_factory=list)  # facts the relevance check dropped, each with its reason
     error: str = ""
@@ -350,6 +399,7 @@ def answer_question(ctx, web, q: Question, document: str, seen_urls: set[str]) -
     cfg = ctx.project.config.research
     attempt = Attempt()
     rejected = 0
+    unsupported = 0
     try:
         found = search_hits(web, q.query, cfg.results_per_question)
         attempt.hits = found
@@ -390,21 +440,34 @@ def answer_question(ctx, web, q: Question, document: str, seen_urls: set[str]) -
                 trace.excerpt_chars, trace.model_facts, trace.quote_rejected = (stats.get("excerpt_chars", 0), stats.get("model_facts", 0),
                                                                                 stats.get("quote_rejected", 0))
                 trace.fit_rejected, trace.kept, trace.dropped = dropped, found_facts, stats.get("dropped_facts", [])
+                trace.support_rejected = stats.get("support_rejected", 0)
                 trace.shown, trace.reply = stats.get("shown", ""), stats.get("reply", "")
                 rejected += dropped
+                unsupported += trace.support_rejected
             except BookforgeError as e:
                 log.warning("%s: page %s skipped: %s", ctx.layer, hit.url, e)
                 trace.error = str(e)
-                attempt.reason = attempt.reason or f"page {hit.url} failed: {e}"
                 attempt.pages.append(trace)
                 continue
             attempt.pages.append(trace)
             attempt.facts += [(hit, f) for f in found_facts]
         if not attempt.facts and not attempt.reason:
             read = len([p for p in attempt.pages if not p.error])
-            failed = len(attempt.pages) - read
-            attempt.reason = (f"{rejected} fact(s) found but none fit the question and the story's setting" if rejected
-                              else f"no supported facts in the {read} page(s) read" + (f" ({failed} more had no readable text)" if failed else ""))
+            failed = [p for p in attempt.pages if p.error]
+            if rejected or unsupported:
+                parts = []
+                if rejected:
+                    parts.append(f"{rejected} fact(s) found but none fit the question and the story's setting")
+                if unsupported:
+                    parts.append(f"{unsupported} claim(s) said more than their quote")
+                attempt.reason = "; ".join(parts)
+            elif read:
+                attempt.reason = f"no supported facts in the {read} page(s) read"
+            else:
+                attempt.reason = "no page could be read"
+            if failed:
+                why = "; ".join(f"{urlparse(p.url).hostname or p.url}: {p.error[:80]}" for p in failed[:3])
+                attempt.reason += f"; {len(failed)} page(s) could not be read ({why})"
     except BookforgeError as e:
         attempt.reason = str(e)
     return attempt

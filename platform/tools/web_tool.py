@@ -29,9 +29,27 @@ _LINKS_JS = (
 _BLOCKED_DOMAINS = frozenset(["google-analytics.com", "doubleclick.net", "facebook.net", "ads.twitter.com"])
 
 
+NAVIGATION_RETRIES = 3
+
+
+async def _evaluate(page, js):
+    """Run a script in the page. A page that redirects itself while we read it destroys the script's context
+    ("Execution context was destroyed, most likely because of a navigation"): wait for the new page to load, then read again."""
+    for attempt in range(NAVIGATION_RETRIES + 1):
+        try:
+            return await page.evaluate(js)
+        except Exception as e:
+            if "Execution context was destroyed" not in str(e) or attempt == NAVIGATION_RETRIES:
+                raise
+            try:
+                await page.wait_for_load_state("domcontentloaded", timeout=SETTLE_MS)
+            except Exception:  # still loading: try reading anyway
+                pass
+
+
 async def _page_text(page) -> str:
     """The visible text of the page; for a nearly empty one, after waiting for scripts to fill it in (bounded)."""
-    text = await page.evaluate(_TEXT_JS)
+    text = await _evaluate(page, _TEXT_JS)
     if len(text.strip()) >= MIN_TEXT_CHARS:
         return text
     try:
@@ -40,7 +58,7 @@ async def _page_text(page) -> str:
         pass
     waited = 0
     while True:
-        text = await page.evaluate(_TEXT_JS)
+        text = await _evaluate(page, _TEXT_JS)
         if len(text.strip()) >= MIN_TEXT_CHARS or waited >= POLL_MS:
             return text
         await page.wait_for_timeout(POLL_STEP_MS)
@@ -156,7 +174,7 @@ class WebTool(Tool):
                 ))
                 await page.goto(url, timeout=TIMEOUT_MS, wait_until="domcontentloaded")
                 text = await _page_text(page)
-                links = _clean_links(await page.evaluate(_LINKS_JS))
+                links = _clean_links(await _evaluate(page, _LINKS_JS))
                 return ToolResult(
                     success=True, output=text[:50_000],
                     metadata={"url": url, "chars": len(text), "links": links},

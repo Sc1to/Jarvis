@@ -23,7 +23,8 @@ def isolated_env(tmp_path, monkeypatch):
 @pytest.fixture
 def project(tmp_path) -> Project:
     project = Project.create(tmp_path / "series", "A clerk finds a ledger that predicts deaths.\n")
-    project.config.research.model_pick = False  # tests that exercise the model's pick turn it on
+    project.config.research.model_pick = False  # tests that exercise the model's pick or the claim audit turn them on
+    project.config.research.check_support = False
     return project
 
 
@@ -70,6 +71,8 @@ class RuleLLM:
         for marker, reply in self.rules:
             if marker in first:
                 return reply(messages) if callable(reply) else reply
+        if "Audit the facts below" in first:  # the claim audit: clean unless a test scripts something else
+            return '{"unsupported": []}'
         raise AssertionError(f"no rule matches this prompt: {first[:120]!r}")
 
     def calls_matching(self, marker):

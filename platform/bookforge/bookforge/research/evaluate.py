@@ -11,10 +11,9 @@ Run it on premises from different eras and places: tuning against one setting pr
 from dataclasses import dataclass, field
 
 from ..errors import BookforgeError
-from ..prompts import render
 from ..realism import realism_setting
 from .notes import LOOKUP_STANCES, stores_for
-from .step import Attempt, Question, answer_question, generate_questions, parse_json_object
+from .step import Attempt, Question, answer_question, audit_claims, generate_questions
 
 BAR = 0.5  # the share of lookups that should come back answered (the author's stated bar)
 EVAL_FOCUS = "Everything this story needs to know about the real world or decide about its own world, before planning begins."
@@ -24,7 +23,8 @@ EVAL_FOCUS = "Everything this story needs to know about the real world or decide
 class Row:
     question: Question
     attempt: Attempt | None = None  # None for an invention: nothing is looked up
-    unsupported: list[dict] = field(default_factory=list)  # kept facts whose claim says more than its quote, with why
+    unsupported: list[dict] = field(default_factory=list)  # KEPT facts that the separate audit says go beyond their quote, with why
+    caught: list[dict] = field(default_factory=list)  # facts the pipeline's own audit dropped for going beyond their quote, with why
     audit_error: str = ""
 
     @property
@@ -34,27 +34,6 @@ class Row:
     @property
     def answered(self) -> bool:
         return bool(self.attempt and self.attempt.facts)
-
-
-def audit_claims(ctx, facts: list[dict]) -> list[dict]:
-    """The facts whose claim is not supported by its quote, each with the reason. Raises BookforgeError if the model cannot be asked."""
-    if not facts:
-        return []
-    listing = "\n".join(f"{n}. claim: {f['claim']}\n   quote: \"{f['quote']}\"" for n, f in enumerate(facts, 1))
-    reply = ctx.llm.complete(
-        ctx.project.config.research.notes_model,
-        [{"role": "system", "content": render("research_system", ctx.project.root)},
-         {"role": "user", "content": render("research_audit", ctx.project.root, facts=listing)}],
-        max_tokens=400,
-    )
-    data = parse_json_object(reply) or {}
-    flagged = data.get("unsupported") if isinstance(data.get("unsupported"), list) else []
-    out = []
-    for item in flagged:
-        n = item.get("n") if isinstance(item, dict) else None
-        if isinstance(n, int) and not isinstance(n, bool) and 1 <= n <= len(facts):
-            out.append({**facts[n - 1], "why": " ".join(str(item.get("why", "")).split())[:200] or "no reason given"})
-    return out
 
 
 def recorded_questions(project) -> list[Question]:
@@ -67,8 +46,9 @@ def recorded_questions(project) -> list[Question]:
     return out
 
 
-def propose(ctx, document: str, max_questions: int) -> list[Question]:
-    return generate_questions(ctx, set(), EVAL_FOCUS, document, max_questions)
+def propose(ctx, document: str, max_questions: int, realism: str | None = None) -> list[Question]:
+    """The needs the model proposes for a story, optionally under a realism setting you give instead of the series' own."""
+    return generate_questions(ctx, set(), EVAL_FOCUS, document, max_questions, realism)
 
 
 def evaluate(ctx, web, questions: list[Question], document: str, audit: bool = True) -> list[Row]:
@@ -78,7 +58,9 @@ def evaluate(ctx, web, questions: list[Question], document: str, audit: bool = T
         row = Row(q)
         if row.lookup:
             row.attempt = answer_question(ctx, web, q, document, seen_urls)
-            if audit and row.attempt.facts:
+            row.caught = [d for p in row.attempt.pages for d in p.dropped if d.get("kind") == "support"]
+            # The pipeline's own audit has already dropped what it found. A second audit here is only independent when that one is off.
+            if audit and row.attempt.facts and not ctx.project.config.research.check_support:
                 try:
                     row.unsupported = audit_claims(ctx, [f for _, f in row.attempt.facts])
                 except BookforgeError as e:
@@ -92,11 +74,12 @@ def summarize(rows: list[Row]) -> dict:
     answered = sum(1 for r in lookups if r.answered)
     facts = sum(len(r.attempt.facts) for r in lookups if r.attempt)
     unsupported = sum(len(r.unsupported) for r in lookups)
+    caught = sum(len(r.caught) for r in lookups)
     stances: dict[str, int] = {}
     for r in rows:
         stances[r.question.stance] = stances.get(r.question.stance, 0) + 1
     return {"needs": len(rows), "stances": stances, "lookups": len(lookups), "answered": answered, "facts": facts,
-            "unsupported": unsupported, "audit_errors": sum(1 for r in lookups if r.audit_error),
+            "unsupported": unsupported, "caught": caught, "audit_errors": sum(1 for r in lookups if r.audit_error),
             "share": (answered / len(lookups)) if lookups else None,
             "decisions": sum(1 for r in rows if r.question.stance != "ground" and r.question.rule)}
 
@@ -123,6 +106,8 @@ def describe(rows: list[Row], source: str, realism: str, document_name: str) -> 
             lines.append(f"{'':<12} {'':<18} reason: {r.attempt.reason}")
         for hit, f in (r.attempt.facts if r.attempt else []):
             lines.append(f"{'':<12} {'':<18} + {f['claim']}  [{hit.url}]")
+        for bad in r.caught:
+            lines.append(f"{'':<12} {'':<18} x dropped by the audit: {bad['claim']}\n{'':<12} {'':<18}   {bad['why']}")
         for bad in r.unsupported:
             lines.append(f"{'':<12} {'':<18} ! UNSUPPORTED: {bad['claim']}\n{'':<12} {'':<18}   {bad['why']}")
         if r.audit_error:
@@ -134,7 +119,7 @@ def describe(rows: list[Row], source: str, realism: str, document_name: str) -> 
     if s["lookups"]:
         lines.append(f"  lookups answered: {s['answered']}/{s['lookups']} ({s['share']:.0%}); the bar is {BAR:.0%}: "
                      + ("MET" if s["share"] >= BAR else "MISSED"))
-        lines.append(f"  facts kept: {s['facts']}; claims their quote does not support: {s['unsupported']}"
+        lines.append(f"  facts kept: {s['facts']}; claims their quote does not support: {s['unsupported']} kept, {s['caught']} caught and dropped"
                      + (f" ({s['audit_errors']} audit(s) failed)" if s["audit_errors"] else ""))
     else:
         lines.append("  no lookups proposed")

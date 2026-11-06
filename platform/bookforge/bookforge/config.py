@@ -88,7 +88,9 @@ def _default_layers() -> dict[str, LayerSettings]:
 DEFAULT_SKIP_DOMAINS = [
     "facebook.com", "instagram.com", "tiktok.com", "pinterest.com", "twitter.com", "x.com", "youtube.com", "youtu.be",
     "amazon.com", "ebay.com", "etsy.com", "reddit.com", "quora.com",
-]  # no readable text, shopping, or answers nobody checked
+    "jstor.org", "researchgate.net", "academia.edu", "newspapers.com", "ancestry.com", "ancestry.co.uk", "findagrave.com",
+    "rootsweb.com", "sova.si.edu",
+]  # no readable text, shopping, paywalls and archive records, or answers nobody checked
 
 
 class Research(_Strict):
@@ -111,6 +113,7 @@ class Research(_Strict):
     skip_domains: list[str] = Field(default_factory=lambda: list(DEFAULT_SKIP_DOMAINS))  # results from these sites are not read
     notes_model: Literal["writer", "critic"] = "writer"  # reads pages and extracts facts
     check_relevance: bool = True  # a second look: drop facts that do not answer the question for the story's time and place
+    check_support: bool = True  # an audit: drop a fact whose claim says more than its quote (one small call per page with facts)
     notes_max_chars: int = Field(6000, gt=0)  # research notes included in a prompt
     page_max_chars: int = Field(12000, gt=0)  # page text given to the model (the parts of a long page that mention the question)
     scene_questions: int = Field(2, ge=0)  # questions researched per chapter before its scenes are planned (0 = none)

@@ -45,8 +45,9 @@ research:
   pages_per_question: 5                # pages read per question, at most (a page with no readable text does not count)
   facts_per_question: 3                # stop reading pages for a question once this many facts are kept...
   sources_per_question: 2              # ...and they come from at least this many different pages
+  check_support: true                  # drop a fact whose claim says more than its quote (one small call per page with facts)
   model_pick: true                     # the notes model chooses which results to read from titles and excerpts (one small call per question)
-  skip_domains: [facebook.com, instagram.com, tiktok.com, pinterest.com, twitter.com, x.com, youtube.com, youtu.be, amazon.com, ebay.com, etsy.com, reddit.com, quora.com]
+  skip_domains: [facebook.com, instagram.com, tiktok.com, pinterest.com, twitter.com, x.com, youtube.com, youtu.be, amazon.com, ebay.com, etsy.com, reddit.com, quora.com, jstor.org, researchgate.net, academia.edu, newspapers.com, ancestry.com, ancestry.co.uk, findagrave.com, rootsweb.com, sova.si.edu]
   notes_model: writer                  # reads pages and extracts facts
   check_relevance: true                # drop facts that do not fit the question and the story's time and place
   notes_max_chars: 6000                # research notes included in a prompt
