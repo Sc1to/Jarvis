@@ -91,7 +91,7 @@ def test_recorded_needs_are_taken_from_the_stores(project):
 
 
 def test_the_command_prints_the_table_and_exits_by_the_bar(project, monkeypatch):
-    (project.root / "config.yaml").write_text("research:\n  model_pick: false\n")
+    (project.root / "config.yaml").write_text("research:\n  model_pick: false\n  check_support: false\n")
     llm = RuleLLM(eval_rules(GROUND, INVENT))
     monkeypatch.setattr(cli, "build_client", lambda p: llm)
     monkeypatch.setattr(cli, "build_web_client", lambda p: web())
@@ -123,8 +123,32 @@ def test_the_command_can_read_another_document_and_refuses_a_missing_one(project
 
 def test_the_command_can_run_recorded_needs(project, monkeypatch):
     run(project, RuleLLM([asking(GROUND), (f"Source page: {URL_A}", facts(PAGE_FACT)), CHECK_ALL]), web())
-    (project.root / "config.yaml").write_text("research:\n  model_pick: false\n")
+    (project.root / "config.yaml").write_text("research:\n  model_pick: false\n  check_support: false\n")
     monkeypatch.setattr(cli, "build_client", lambda p: RuleLLM([(f"Source page: {URL_A}", facts(PAGE_FACT)), CHECK_ALL, CLEAN]))
     monkeypatch.setattr(cli, "build_web_client", lambda p: web())
     out = CliRunner().invoke(cli.app, ["research-eval", str(project.root), "--recorded"])
     assert out.exit_code == 0 and "needs from: recorded needs" in out.output and "lookups answered: 1/1" in out.output
+
+
+def test_the_pipeline_audit_catches_are_reported_and_a_second_audit_is_not_run(project):
+    project.config.research.check_support = True
+    bad = ("Audit the facts below", json.dumps({"unsupported": [{"n": 1, "why": "claim says clerk, quote says Comptroller"}]}))
+    rows = evaluate_items(project, [GROUND], audit=bad)
+    assert [c["why"] for c in rows[0].caught][0].endswith("claim says clerk, quote says Comptroller")
+    assert rows[0].unsupported == [] and not rows[0].answered
+    text = "\n".join(evaluate.describe(rows, "s", "", "d"))
+    assert "x dropped by the audit" in text and "0 kept, 1 caught and dropped" in text
+
+
+def test_realism_given_on_the_command_line_reaches_the_proposal_and_the_output(project, monkeypatch):
+    seen = []
+
+    def spy(messages):
+        seen.append(messages[-1]["content"])
+        return json.dumps({"questions": []})
+
+    monkeypatch.setattr(cli, "build_client", lambda p: RuleLLM([("Decide what the author needs", spy)]))
+    monkeypatch.setattr(cli, "build_web_client", lambda p: web())
+    out = CliRunner().invoke(cli.app, ["research-eval", str(project.root), "--realism", "Hard SF: physics must hold."])
+    assert out.exit_code == 0 and "realism: Hard SF: physics must hold." in out.output
+    assert "Hard SF: physics must hold." in seen[0]

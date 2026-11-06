@@ -165,6 +165,7 @@ def research_eval_cmd(
     document: str = typer.Option("premise.md", "--document", help="Propose the needs from this file (relative to the series, or a full path): the premise, a north star, the synopsis"),
     recorded: bool = typer.Option(False, "--recorded", help="Run the lookup needs already recorded for the series and book instead of proposing new ones"),
     max_questions: int = typer.Option(8, "--max", help="At most this many needs"),
+    realism: Optional[str] = typer.Option(None, "--realism", help="Propose the needs under this realism setting instead of the series' own, e.g. 'Hard SF: physics must hold'"),
     audit: bool = typer.Option(True, "--audit/--no-audit", help="Audit each kept claim against its quote with a separate model call"),
     book: str = BookOpt,
 ) -> None:
@@ -182,11 +183,11 @@ def research_eval_cmd(
             raise BookforgeError(f"cannot read {doc_path} (use --document to name the file the needs come from)") from None
         web = build_web_client(project)
         ctx = StepContext(project=project, layer="synopsis", llm=build_client(project), web=web)
-        questions = evaluate.recorded_questions(project) if recorded else evaluate.propose(ctx, text, max_questions)
+        questions = evaluate.recorded_questions(project) if recorded else evaluate.propose(ctx, text, max_questions, realism)
         rows = evaluate.evaluate(ctx, web, questions[:max_questions], text, audit)
     except BookforgeError as e:
         _fail(e)
-    for line in evaluate.describe(rows, source_of(web), realism_setting(project), "recorded needs" if recorded else document):
+    for line in evaluate.describe(rows, source_of(web), realism if realism is not None else realism_setting(project), "recorded needs" if recorded else document):
         typer.echo(line)
     raise typer.Exit(0 if evaluate.bar_met(rows) else 1)
 
