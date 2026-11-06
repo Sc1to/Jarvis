@@ -21,7 +21,7 @@ from ..bible.models import Scene
 from ..errors import BookforgeError
 from ..research.notes import approved_decisions, stores_for
 from . import scene_notes
-from .decide import Answer, Question, ask_questions
+from .decide import Answer, Question, ask_questions, confirm_contradiction
 
 
 @dataclass(frozen=True)
@@ -40,6 +40,8 @@ class Flag:
     p: float
     fixable: bool
     rule: str | None = None  # a hard_constraint rule from the rules panel
+    fact_says: str = ""  # the second check: the value the fact states
+    text_says: str = ""  # ... and the value the passage states
 
     def message(self) -> str:
         if self.kind == "obligation":
@@ -111,6 +113,19 @@ def _judge(q: Question, a: Answer, threshold: float) -> tuple[Flag | None, dict 
     return None, None
 
 
+def _confirm(ctx, flag: Flag, what: str, text: str, threshold: float, scene_id: str) -> tuple[Flag | None, dict | None]:
+    """Second, narrow call: only a conflict confirmed on the fact and the quoted paragraph stays a flag. A failed call keeps it."""
+    try:
+        c = confirm_contradiction(ctx, scene_id, what, flag.question, flag.evidence, text)
+    except BookforgeError:
+        return flag, None
+    flag.fact_says, flag.text_says = c.fact_says, c.text_says
+    if c.conflict and c.confidence > threshold:
+        return flag, None
+    return None, {"question": flag.question, "answer": "yes", "relation": "contradicts", "confidence": flag.confidence,
+                  "evidence": flag.evidence, "rule": flag.rule, "confirmed": False, "fact_says": c.fact_says, "text_says": c.text_says}
+
+
 def check_continuity(ctx, scene: Scene, scenes: list[Scene], text: str, what: str = "scene") -> ContinuityReport:
     project = ctx.project
     questions, _ = build_questions(project, scene, scenes)
@@ -125,6 +140,8 @@ def check_continuity(ctx, scene: Scene, scenes: list[Scene], text: str, what: st
         return report
     for q, a in zip(questions, answers):
         flag, unsure = _judge(q, a, cfg.continuity_flag_threshold)
+        if flag and flag.kind == "contradiction" and cfg.confirm_contradictions:
+            flag, unsure = _confirm(ctx, flag, what, text, cfg.continuity_flag_threshold, scene.id)
         if flag:
             report.flags.append(flag)
         if unsure:

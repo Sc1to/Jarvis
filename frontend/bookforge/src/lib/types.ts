@@ -71,7 +71,7 @@ export interface Review {
   chosen?: string; source?: string; blocking?: string[]
   judge?: { wins: Record<string, number>; pairs: { a: string; b: string; run1: string; run2: string; winner: string | null }[]; error?: string | null } | null
   critic?: { scores: Record<string, number>; weakest?: { criterion: string; quote: string; issue: string }[]; error?: string | null } | null
-  continuity?: { questions: number; flags: { question: string; evidence: string; confidence?: number }[]; unsure: { question: string; answer: string; confidence: number; evidence?: string }[] } | null
+  continuity?: { questions: number; flags: { question: string; evidence: string; confidence?: number; fact_says?: string; text_says?: string }[]; unsure: { question: string; answer: string; confidence: number; evidence?: string; confirmed?: boolean; fact_says?: string; text_says?: string }[] } | null
   rounds?: { round: number; mechanical_blocking: string[]; continuity_flags: string[]; critic_lowest: number | null; revisions: { mode: string; before: string; after?: string }[] }[]
   mechanical?: Record<string, { score: number; issues: { severity: string; message: string }[] }>
   extraction?: { gaps: { track: string; planned: string; observed: string }[] }

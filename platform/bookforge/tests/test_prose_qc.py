@@ -13,7 +13,7 @@ from bookforge.project import Project
 from bookforge.state import load_state
 from conftest import RuleLLM
 from prose_fakes import prose
-from qc_fakes import CONTINUITY, CRITIC, EXTRACT, INSERT, JUDGE, REVISE, continuity, critic, extractor, inserter, judge, reviser
+from qc_fakes import CONFIRM, CONTINUITY, CRITIC, EXTRACT, INSERT, JUDGE, REVISE, continuity, critic, extractor, inserter, judge, reviser
 from structure_fakes import SMALL_CONFIG, ready, rules
 from test_prose import BANNED, SCENES, SUMMARY, good, prose_rules
 
@@ -45,7 +45,7 @@ def qc_rules(**kw):
 
 
 KINDS = (("draft", "Write the scene described below"), ("judge", JUDGE), ("continuity", CONTINUITY), ("critic", CRITIC),
-         ("summary", "Summarise the scene below"), ("extract", EXTRACT), ("revise", REVISE), ("insert", INSERT))
+         ("summary", "Summarise the scene below"), ("extract", EXTRACT), ("revise", REVISE), ("insert", INSERT), ("confirm", CONFIRM))
 
 
 def kinds(llm):

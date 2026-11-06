@@ -97,8 +97,8 @@ function Compare({ detail }: { detail: SceneDetail }) {
 }
 
 /** One finding of the continuity check, with what you can do about it. Applied the next time the scene is run. */
-function FindingRow({ question, evidence, tone, notes, scenePath, locked, onDone }: {
-  question: string; evidence?: string; tone: 'flag' | 'unsure'; notes: SceneFindings; scenePath: string; locked: boolean; onDone: () => void
+function FindingRow({ question, evidence, compared, tone, notes, scenePath, locked, onDone }: {
+  question: string; evidence?: string; compared?: string; tone: 'flag' | 'unsure'; notes: SceneFindings; scenePath: string; locked: boolean; onDone: () => void
 }) {
   const act = useAction()
   const [text, setText] = useState(notes.instructions[question] ?? '')
@@ -111,6 +111,7 @@ function FindingRow({ question, evidence, tone, notes, scenePath, locked, onDone
     <li className="space-y-2 rounded-md border border-slate-200 p-2">
       <p className={tone === 'flag' ? 'text-red-800' : 'text-slate-600'}>{tone === 'flag' ? 'Flag' : 'Unsure'}: {question}</p>
       {evidence && <blockquote className="border-l-4 border-slate-300 pl-2 text-xs italic text-slate-600">“{evidence}”</blockquote>}
+      {compared && <p className="text-xs text-slate-600">{compared}</p>}
       {dismissed ? (
         <p className="flex flex-wrap items-center gap-2 text-xs text-slate-600">Dismissed as a false alarm: not asked about again for this scene.
           <Button disabled={act.busy || locked} onClick={() => send('clear')}>Undo</Button></p>
@@ -166,8 +167,8 @@ function ReviewPanel({ review, findings, scenePath, locked, onDone }: { review: 
             <p className="mb-2 text-xs text-slate-600">What you say here is used the next time you press Run: the flagged scene is first revised with it, and a finding you call a false alarm is not asked about again for this scene.</p>
           )}
           <ul className="space-y-2 text-sm">
-            {review.continuity.flags.map((f) => <FindingRow key={f.question} question={f.question} evidence={f.evidence} tone="flag" notes={findings} scenePath={scenePath} locked={locked} onDone={onDone} />)}
-            {review.continuity.unsure.map((u) => <FindingRow key={u.question} question={`${u.question}`} evidence={u.evidence} tone="unsure" notes={findings} scenePath={scenePath} locked={locked} onDone={onDone} />)}
+            {review.continuity.flags.map((f) => <FindingRow key={f.question} question={f.question} evidence={f.evidence} compared={f.fact_says || f.text_says ? `Fact says: ${f.fact_says || '—'} · Passage says: ${f.text_says || '—'}` : undefined} tone="flag" notes={findings} scenePath={scenePath} locked={locked} onDone={onDone} />)}
+            {review.continuity.unsure.map((u) => <FindingRow key={u.question} question={`${u.question}`} evidence={u.evidence} compared={u.confirmed === false ? `Second check did not confirm. Fact says: ${u.fact_says || '—'} · Passage says: ${u.text_says || '—'}` : undefined} tone="unsure" notes={findings} scenePath={scenePath} locked={locked} onDone={onDone} />)}
           </ul>
         </Card>
       )}

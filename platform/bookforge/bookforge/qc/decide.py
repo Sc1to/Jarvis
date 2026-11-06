@@ -78,3 +78,37 @@ def ask_questions(ctx, label: str, what: str, text: str, questions: list[Questio
             out.append(Answer(q.id, a["relation"] in YES, float(a["confidence"]), evidence,
                               bool(evidence) and quote_in_page(evidence, text), a["relation"]))
     return out
+
+
+@dataclass
+class Confirmation:
+    conflict: bool
+    fact_says: str
+    text_says: str
+    confidence: float
+
+
+def _passage_around(text: str, quote: str) -> str:
+    """The paragraph of `text` that holds the quoted words (the quote itself if no paragraph does)."""
+    for para in text.split("\n\n"):
+        if quote and quote_in_page(quote, para):
+            return para.strip()
+    return quote
+
+
+def _check_confirmation(data: dict) -> list[str]:
+    problems = []
+    if not isinstance(data.get("conflict"), bool):
+        problems.append("'conflict' must be true or false")
+    c = data.get("confidence")
+    if isinstance(c, bool) or not isinstance(c, (int, float)) or not 0 <= c <= 1:
+        problems.append("'confidence' must be a number from 0.0 to 1.0")
+    return problems
+
+
+def confirm_contradiction(ctx, label: str, what: str, fact: str, evidence: str, text: str) -> Confirmation:
+    """Second opinion on one flagged contradiction: only the fact and the paragraph with the quoted words go to the model."""
+    data = ask_json(ctx, f"{label} confirm", "critic", "continuity_confirm", _check_confirmation, max_tokens=400,
+                    what=what, fact=fact, passage=_passage_around(text, evidence), quote=evidence)
+    return Confirmation(bool(data["conflict"]), " ".join(str(data.get("fact_says") or "").split()),
+                        " ".join(str(data.get("text_says") or "").split()), float(data["confidence"]))
