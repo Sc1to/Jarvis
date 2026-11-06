@@ -55,7 +55,7 @@ from .jobs import BusyError, JobManager
 from .llm import build_client
 from .project import BOOK_ID_RE, Project
 from .research.search import build_web_client
-from .research.notes import stores_for
+from .research.notes import stores_for, waiting_decisions
 from .state import Item
 
 log = logging.getLogger("platform_bookforge.api")
@@ -272,6 +272,7 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
             "checkpoints": {n: state.checkpoints[n].status for n in CHECKPOINTS},
             "scenes": {"total": len(ids), **counts},
             "pending_changes": sum(c.status == "pending" for c in change_requests.list_requests(project)),
+            "pending_needs": len(waiting_decisions(project)),
             "manuscript": assembly.manuscript_path(project).exists(),
             "job": busy.to_dict() if busy else None,
         })

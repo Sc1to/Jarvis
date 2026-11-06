@@ -71,6 +71,7 @@ export default function Overview({ series, book, status, reload }: { series: str
         <p className="mt-2 text-sm text-slate-700">
           {s.total ? ['accepted', 'flagged', 'stale', 'drafted', 'checked', 'pending'].filter((k) => s[k]).map((k) => `${s[k]} ${k}`).join(', ') : 'No scenes planned yet.'}
         </p>
+        {status.pending_needs > 0 && <p className="mt-1 text-sm text-amber-800">{status.pending_needs} decision(s) about the story's world waiting in the inbox.</p>}
         {status.pending_changes > 0 && <p className="mt-1 text-sm text-amber-800">{status.pending_changes} change request(s) waiting in the inbox.</p>}
       </Card>
 

@@ -27,7 +27,7 @@ export default function Book({ route }: { route: Route }) {
 
   if (status.error && !s) return <div className="space-y-3"><ErrorBanner message={status.error} /><a href="#/" className="text-sm underline">All series</a></div>
   if (!s) return <Loading />
-  const inboxCount = s.pending_changes + Object.values(s.checkpoints).filter((v) => v === 'waiting').length
+  const inboxCount = s.pending_changes + (s.pending_needs ?? 0) + Object.values(s.checkpoints).filter((v) => v === 'waiting').length
 
   return (
     <div className="space-y-3">
