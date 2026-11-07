@@ -18,7 +18,7 @@ from ..bible.positions import parse_position
 from ..bible.store import dump_yaml, to_plain
 from .. import review_notes, steering
 from ..bible.validate import (
-    merge_constants, parse_acts, parse_cast, parse_chapters, parse_scenes, validate_bible,
+    add_entities, merge_constants, parse_acts, parse_cast, parse_chapters, parse_scenes, validate_bible,
 )
 from ..constants import REDO_NOTE
 from ..errors import LayerError
@@ -262,6 +262,7 @@ def _build_chapters(ctx: StepContext, files: list[str]) -> str:
 
     tracks = store.load_tracks(project)
     done: list[Chapter] = []
+    adopted: list[str] = []
     first = 1
     for act in act_list:
         last = first + act.chapter_count - 1
@@ -278,6 +279,9 @@ def _build_chapters(ctx: StepContext, files: list[str]) -> str:
             review=_reviewer(ctx, f"chapters {act.id}", f"chapters of {act.id}", dump_yaml(to_plain(act)), tracks_digest(tracks), stars),
         )
         done += bundle.chapters
+        if bundle.new_entities:  # places the planner needed that the cast did not list: they join the cast
+            adopted += [e.id for e in bundle.new_entities if e.id not in {x.id for x in constants.entities}]
+            constants = add_entities(constants, bundle.new_entities)
         tracks = store.upsert_plan(tracks, bundle.tracks)
         first = last + 1
 
@@ -290,7 +294,10 @@ def _build_chapters(ctx: StepContext, files: list[str]) -> str:
         raise LayerError("the assembled chapters do not hold together: " + "; ".join(problems[:6]))
     _clean_work(project, "chapters")
     files += ["bible/constants.yaml", "bible/tracks.yaml"]
-    return f"{len(done)} chapters, {len(constants.entities)} entities, {len(tracks)} tracks"
+    if adopted:
+        log.info("chapters: %d place(s) added to the cast: %s", len(adopted), ", ".join(adopted))
+    return (f"{len(done)} chapters, {len(constants.entities)} entities, {len(tracks)} tracks"
+            + (f"; added to the cast because chapters used them: {', '.join(adopted)}" if adopted else ""))
 
 
 def _ch(project, n: int) -> str:
@@ -336,6 +343,7 @@ def _build_scenes(ctx: StepContext, files: list[str]) -> str:
     tracks = store.load_tracks(project)
     stars = _north_stars(project)
     scenes_all, timeline_all = [], []
+    adopted: list[str] = []
     prev_day: int | None = None
     prev_when = "none: this is the first scene of the book"
     research_files: list[str] = []
@@ -373,6 +381,9 @@ def _build_scenes(ctx: StepContext, files: list[str]) -> str:
             review=_reviewer(ctx, f"scenes {chapter.id}", f"scenes of {chapter.id}",
                              dump_yaml(to_plain(chapter)), tracks_in_chapter_digest(tracks, project.book, ch_num), stars),
         )
+        if bundle.new_entities:  # places the planner needed that the cast did not list: they join the cast
+            adopted += [e.id for e in bundle.new_entities if e.id not in {x.id for x in constants.entities}]
+            constants = add_entities(constants, bundle.new_entities)
         scenes_all += bundle.scenes
         timeline_all += bundle.timeline
         tracks = bundle.tracks_after
@@ -385,6 +396,9 @@ def _build_scenes(ctx: StepContext, files: list[str]) -> str:
     kept = [t for t in store.load_timeline(project) if parse_position(t.id).book != project.book]
     store.save_timeline(project, kept + timeline_all)
     store.save_tracks(project, tracks)
+    if adopted:
+        store.save_constants(project, constants)
+        log.info("scenes: %d place(s) added to the cast: %s", len(adopted), ", ".join(adopted))
     store.save_scenes(project, scenes_all)
     problems = validate_scenes_file(project)
     if problems:
@@ -392,4 +406,7 @@ def _build_scenes(ctx: StepContext, files: list[str]) -> str:
         raise LayerError("the assembled scenes do not hold together: " + "; ".join(problems[:6]))
     _clean_work(project, "scenes")
     files += ["bible/timeline.yaml", "bible/tracks.yaml"] + sorted(set(research_files))
-    return f"{len(scenes_all)} scenes in {len(ch_list)} chapters, {len(tracks)} tracks"
+    if adopted:
+        files.append("bible/constants.yaml")
+    return (f"{len(scenes_all)} scenes in {len(ch_list)} chapters, {len(tracks)} tracks"
+            + (f"; added to the cast because scenes used them: {', '.join(adopted)}" if adopted else ""))
