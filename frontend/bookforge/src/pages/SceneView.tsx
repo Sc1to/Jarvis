@@ -1,8 +1,8 @@
 import { Fragment, useState, type ReactNode } from 'react'
-import { bookPath, post } from '../lib/api'
+import { bookPath, del, post } from '../lib/api'
 import { useAction, useApi } from '../lib/hooks'
 import { href } from '../lib/route'
-import type { BookStatus, Review, SceneDetail, SceneFindings } from '../lib/types'
+import type { BookStatus, CriticReview, SceneDetail, SceneFindings } from '../lib/types'
 import { Button, Card, Empty, ErrorBanner, Loading, StatusBadge } from '../components/ui'
 import { ChangeDiff } from './Inbox'
 
@@ -135,13 +135,114 @@ function FindingRow({ question, evidence, compared, tone, notes, scenePath, lock
   )
 }
 
-function ReviewPanel({ review, findings, scenePath, locked, onDone }: { review: Review | null; findings: SceneFindings; scenePath: string; locked: boolean; onDone: () => void }) {
+const VERDICTS: Record<string, { label: string; cls: string }> = {
+  shown: { label: 'shown', cls: 'bg-emerald-100 text-emerald-800' },
+  thin: { label: 'thin', cls: 'bg-amber-100 text-amber-800' },
+  missing: { label: 'missing', cls: 'bg-red-100 text-red-800' },
+  out_of_order: { label: 'out of order', cls: 'bg-red-100 text-red-800' },
+}
+
+/** Why the critic marked the scene down, with everything it based that on, and the choice to accept the scene anyway. */
+function CriticWhy({ detail, scenePath, locked, onDone }: { detail: SceneDetail; scenePath: string; locked: boolean; onDone: () => void }) {
+  const act = useAction()
+  const [note, setNote] = useState('')
+  const [showText, setShowText] = useState(false)
+  const review = detail.review
+  const critic = review?.critic
+  const minimum = detail.critic_min_score ?? 3
+  const waiver = detail.findings?.critic_waived
+  if (!review || !critic || critic.error || !critic.scores) return null
+  const low = Object.entries(critic.scores).filter(([, v]) => v < minimum).map(([c]) => c)
+  if (!low.length && !waiver) return null
+  const label = (c: string) => c.replace(/_/g, ' ')
+  const others = (review.blocking ?? []).filter((b) => !b.startsWith('the critic scored'))
+  const quotes = critic.weakest?.map((w) => w.quote) ?? []
+  const verdicts = new Map((critic.beats ?? []).map((b) => [b.beat, b]))
+  const first: CriticReview | null | undefined = review.rewrote_with_critic_notes ? review.first_attempt_critic : null
+  const send = async (accept: boolean) => {
+    const ok = accept
+      ? window.confirm(`Accept this scene as written?\n\n${(waiver?.criteria ?? low).map((c) => `${label(c)} ${critic.scores[c]}`).join(', ')} stay below the minimum of ${minimum}. The text is kept; it is still checked for continuity and the rules.`)
+      : true
+    if (ok && (await act.run(() => (accept ? post(`${scenePath}/accept-critic`, { note }) : del(`${scenePath}/accept-critic`))))) onDone()
+  }
+  return (
+    <Card title={waiver ? 'The critic marked this down, and you accepted it' : 'Why the critic marked this down'} tone="warn">
+      <div className="space-y-4">
+        <div>
+          <Scores scores={critic.scores} />
+          <p className="mt-2 text-sm text-amber-900">Minimum score is {minimum}. Below it: {low.length ? low.map((c) => `${label(c)} (${critic.scores[c]})`).join(', ') : 'none now'}.</p>
+          {first && <p className="mt-1 text-xs text-slate-600">This is the second attempt. Before the scene was written again the critic gave: {Object.entries(first.scores).map(([c, v]) => `${label(c)} ${v}`).join(', ')}.</p>}
+        </div>
+        {low.map((c) => detail.rubric?.[c] && (
+          <p key={c} className="text-sm"><span className="font-medium">{label(c)} asks:</span> <span className="text-slate-700">{detail.rubric[c]}</span></p>
+        ))}
+        <div>
+          <h3 className="mb-1 text-sm font-medium">The planned beats, and what the critic found for each</h3>
+          <ol className="space-y-1.5 text-sm">
+            {detail.plan.beats.map((b, i) => {
+              const v = verdicts.get(i + 1)
+              return (
+                <li key={i} className="rounded-md border border-slate-200 bg-white p-2">
+                  <div className="flex flex-wrap items-start gap-2">
+                    <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{i + 1}. {b}</span>
+                    {v && <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs ${VERDICTS[v.verdict]?.cls ?? ''}`}>{VERDICTS[v.verdict]?.label ?? v.verdict}</span>}
+                  </div>
+                  {v?.note && <p className="mt-1 text-xs text-slate-600">{v.note}</p>}
+                </li>
+              )
+            })}
+          </ol>
+          {!verdicts.size && <p className="mt-1 text-xs text-slate-500">The critic gave no verdict per beat for this attempt (it was reviewed before that was asked). Read the beats against the text below.</p>}
+        </div>
+        <div className="space-y-2">
+          <h3 className="text-sm font-medium">The lines the critic quoted</h3>
+          {critic.weakest?.map((w, i) => (
+            <blockquote key={i} className="border-l-4 border-amber-400 pl-3 text-sm">
+              <span className="italic">“{w.quote}”</span>
+              <span className="mt-0.5 block text-xs text-slate-700">{label(w.criterion)}: {w.issue}</span>
+            </blockquote>
+          ))}
+          <p className="text-xs text-slate-600">The critic quotes only three lines. A low score can have causes it did not quote, so read the scene before accepting it.</p>
+          <Button onClick={() => setShowText((s) => !s)}>{showText ? 'Hide the scene' : 'Read the scene with these lines marked'}</Button>
+          {showText && detail.text && <div className="rounded-md border border-slate-200 bg-white p-3"><Prose text={detail.text} quotes={quotes} /></div>}
+        </div>
+        <ErrorBanner message={act.error} onClose={act.clear} />
+        {waiver ? (
+          <div className="space-y-1 rounded-md bg-white p-2 text-sm">
+            <p>Accepted as written: {waiver.criteria.map((c) => `${label(c)} ${waiver.scores[c]}`).join(', ')} stay below the minimum.{waiver.note && <> Your note: “{waiver.note}”</>}</p>
+            {detail.status === 'flagged' && <p className="text-xs text-slate-600">The scene is accepted the next time you press Run. The text is kept, not written again.</p>}
+            <Button disabled={act.busy || locked} onClick={() => send(false)}>Take this back</Button>
+          </div>
+        ) : others.length > 0 ? (
+          <div className="rounded-md bg-white p-2 text-sm">
+            <p className="font-medium">This scene cannot be accepted yet. These still have to be fixed:</p>
+            <ul className="list-disc pl-5">{others.map((o) => <li key={o}>{o}</li>)}</ul>
+          </div>
+        ) : detail.status === 'flagged' ? (
+          <div className="space-y-2 rounded-md bg-white p-2">
+            <label className="block text-xs font-medium text-slate-700">Why is this fine as it is? (optional)
+              <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} disabled={act.busy || locked}
+                placeholder="For example: the debt only needs to exist; it does not need to be hereditary here."
+                className="mt-1 block w-full rounded-md border border-slate-300 p-2 text-sm font-normal" />
+            </label>
+            <Button kind="primary" disabled={act.busy || locked} onClick={() => send(true)}>Accept as written</Button>
+          </div>
+        ) : null}
+      </div>
+    </Card>
+  )
+}
+
+function ReviewPanel({ detail, scenePath, locked, onDone }: { detail: SceneDetail; scenePath: string; locked: boolean; onDone: () => void }) {
+  const review = detail.review
+  const findings: SceneFindings = detail.findings ?? { dismissed: [], instructions: {} }
   if (!review) return <Empty>No review yet: this scene has not been written.</Empty>
   return (
     <div className="space-y-3">
       {review.blocking?.length ? (
         <Card title="Needs you" tone="warn"><ul className="list-disc space-y-1 pl-5 text-sm">{review.blocking.map((b) => <li key={b}>{b}</li>)}</ul></Card>
       ) : null}
+      <CriticWhy detail={detail} scenePath={scenePath} locked={locked} onDone={onDone} />
       {review.rounds?.length ? (
         <Card title="Revision rounds">
           <ul className="space-y-3 text-sm">
@@ -187,11 +288,12 @@ function ReviewPanel({ review, findings, scenePath, locked, onDone }: { review: 
 export default function SceneView({ series, book, id, status, reload }: { series: string; book: string; id: string; status: BookStatus; reload: () => void }) {
   const base = bookPath(series, book)
   const d = useApi<SceneDetail>(`${base}/scenes/${encodeURIComponent(id)}`)
-  const [view, setView] = useState<'text' | 'compare' | 'review' | 'plan'>('text')
+  const [view, setView] = useState<'text' | 'compare' | 'review' | 'plan' | null>(null)
   if (d.error) return <div className="space-y-3"><ErrorBanner message={d.error} /><a className="text-sm underline" href={href({ series, book, tab: 'tree' })}>Back to the tree</a></div>
   if (!d.data) return <Loading />
   const x = d.data
-  const views: [typeof view, string][] = [['text', 'Text'], ['compare', 'Compare'], ['review', 'Review'], ['plan', 'Plan']]
+  const current = view ?? (x.status === 'flagged' ? 'review' : 'text') // a flagged scene opens on why it was flagged
+  const views: ['text' | 'compare' | 'review' | 'plan', string][] = [['text', 'Text'], ['compare', 'Compare'], ['review', 'Review'], ['plan', 'Plan']]
   return (
     <div className="space-y-3">
       <div>
@@ -204,19 +306,19 @@ export default function SceneView({ series, book, id, status, reload }: { series
       </div>
       <div role="tablist" className="flex gap-1 overflow-x-auto">
         {views.map(([k, label]) => (
-          <button key={k} role="tab" aria-selected={view === k} onClick={() => setView(k)}
-            className={`min-h-10 shrink-0 rounded-md px-3 text-sm ${view === k ? 'bg-slate-900 text-white' : 'border border-slate-300 bg-white'}`}>{label}</button>
+          <button key={k} role="tab" aria-selected={current === k} onClick={() => setView(k)}
+            className={`min-h-10 shrink-0 rounded-md px-3 text-sm ${current === k ? 'bg-slate-900 text-white' : 'border border-slate-300 bg-white'}`}>{label}</button>
         ))}
       </div>
-      {view === 'text' && (
+      {current === 'text' && (
         <div className="space-y-3">
           {x.text ? <Card><Prose text={x.text} /></Card> : <Empty>This scene has not been written yet.</Empty>}
           {x.summary && <Card title="Summary used for later scenes"><p className="text-sm text-slate-700">{x.summary}</p></Card>}
         </div>
       )}
-      {view === 'compare' && <Compare detail={x} />}
-      {view === 'review' && <ReviewPanel review={x.review} findings={x.findings ?? { dismissed: [], instructions: {} }} scenePath={`${base}/scenes/${encodeURIComponent(id)}`} locked={status.job?.status === 'running'} onDone={d.reload} />}
-      {view === 'plan' && (
+      {current === 'compare' && <Compare detail={x} />}
+      {current === 'review' && <ReviewPanel detail={x} scenePath={`${base}/scenes/${encodeURIComponent(id)}`} locked={status.job?.status === 'running'} onDone={d.reload} />}
+      {current === 'plan' && (
         <div className="space-y-3">
           <Card title="Plan">
             <p className="text-sm">{x.plan.purpose}</p>
@@ -232,7 +334,7 @@ export default function SceneView({ series, book, id, status, reload }: { series
           )}
         </div>
       )}
-      {view !== 'plan' && <Button onClick={d.reload}>Refresh</Button>}
+      {current !== 'plan' && <Button onClick={d.reload}>Refresh</Button>}
     </div>
   )
 }

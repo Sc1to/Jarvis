@@ -58,7 +58,7 @@ from .jobs import BusyError, JobManager
 from .llm import build_client
 from .project import BOOK_ID_RE, SERIES_NAME_RE, Project
 from .research.search import build_web_client
-from .qc import scene_notes
+from .qc import critic as critic_mod, scene_notes
 from .research.notes import stores_for, waiting_decisions
 from .state import Item
 
@@ -171,6 +171,10 @@ class RedoBody(BaseModel):
     layer: str
     note: str = ""
     cascade: bool = False
+
+
+class AcceptBody(BaseModel):
+    note: str = ""
 
 
 class FindingBody(BaseModel):
@@ -395,9 +399,24 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
             "text": scenefiles.best_text(project, scene_id), "summary": scenefiles.read(scenefiles.summary_path(project, scene_id)),
             "review": review,
             "findings": scene_notes.read(project, scene_id),
+            "critic_min_score": project.config.qc.critic_min_score,
+            "rubric": {c: critic_mod.rubric_line(project, c) for c in critic_mod.CRITERIA},
             "drafts": {p.stem: p.read_text(encoding="utf-8") for p in sorted(scenefiles.scene_dir(project, scene_id).glob("draft-*.md"))},
             "change_requests": [c.model_dump() for c in change_requests.list_requests(project) if c.proposed_by == scene_id],
         })
+
+    @router.post("/series/{series}/books/{book}/scenes/{scene_id}/accept-critic")
+    def accept_critic(series: str, book: str, scene_id: str, body: AcceptBody):
+        project = open_project(series, book)
+        require_idle(series)
+        return ok(ops.accept_critic(project, scene_id, body.note))
+
+    @router.delete("/series/{series}/books/{book}/scenes/{scene_id}/accept-critic")
+    def undo_accept_critic(series: str, book: str, scene_id: str):
+        project = open_project(series, book)
+        require_idle(series)
+        ops.undo_accept_critic(project, scene_id)
+        return ok({"scene": scene_id, "accepted": False})
 
     @router.post("/series/{series}/books/{book}/scenes/{scene_id}/findings")
     def scene_finding(series: str, book: str, scene_id: str, body: FindingBody):

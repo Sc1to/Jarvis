@@ -34,6 +34,7 @@ class CriticReport:
     scores: dict[str, int] = field(default_factory=dict)
     weakest: list[Weak] = field(default_factory=list)
     error: str | None = None  # the critique could not be obtained; it does not block the scene
+    beats: list[dict] = field(default_factory=list)  # per planned beat: {beat: 1-based number, verdict: shown|thin|missing|out_of_order, note}
 
     @property
     def lowest(self) -> int:
@@ -44,7 +45,7 @@ class CriticReport:
 
     def to_dict(self) -> dict:
         return {"scores": self.scores, "lowest": self.lowest if self.scores else None, "error": self.error,
-                "weakest": [vars(w) for w in self.weakest]}
+                "weakest": [vars(w) for w in self.weakest], "beats": self.beats}
 
 
 def rubric_line(project, criterion: str) -> str:
@@ -83,6 +84,21 @@ def _check(scene_text: str):
     return check
 
 
+BEAT_VERDICTS = ("shown", "thin", "missing", "out_of_order")
+
+
+def clean_beats(raw, count: int) -> list[dict]:
+    """The critic's per-beat verdicts, keeping only well-formed ones (they are an explanation, never a reason to ask again)."""
+    out = []
+    for b in raw if isinstance(raw, list) else []:
+        if not isinstance(b, dict) or isinstance(b.get("beat"), bool) or not isinstance(b.get("beat"), int):
+            continue
+        verdict = str(b.get("verdict", "")).strip().lower().replace(" ", "_")
+        if 1 <= b["beat"] <= count and verdict in BEAT_VERDICTS:
+            out.append({"beat": b["beat"], "verdict": verdict, "note": " ".join(str(b.get("note", "")).split())[:300]})
+    return sorted(out, key=lambda x: x["beat"])
+
+
 def run_critic(ctx, scene: Scene, text: str) -> CriticReport:
     project = ctx.project
     try:
@@ -92,8 +108,9 @@ def run_critic(ctx, scene: Scene, text: str) -> CriticReport:
                         voice=voice_excerpt(project), text=text, rules=rules.prose_rules_text(project, scene) or "(none)")
     except BookforgeError as e:
         return CriticReport(error=str(e))
+    beats = clean_beats(data.get("beats"), len(scene.beats))
     weakest = [Weak(w["criterion"], " ".join(w["quote"].split()), str(w["issue"]).strip()) for w in data["weakest"]]
-    return CriticReport(scores={c: data["scores"][c] for c in CRITERIA}, weakest=weakest)
+    return CriticReport(scores={c: data["scores"][c] for c in CRITERIA}, weakest=weakest, beats=beats)
 
 
 def critic_flags(project, report: CriticReport) -> list[Flag]:

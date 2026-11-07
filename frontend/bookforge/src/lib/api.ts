@@ -25,4 +25,5 @@ export async function api<T>(path: string, init?: { method?: string; body?: unkn
 
 export const post = <T>(path: string, body?: unknown) => api<T>(path, { method: 'POST', body: body ?? {} })
 
+export const del = <T>(path: string) => api<T>(path, { method: 'DELETE' })
 export const bookPath = (series: string, book: string) => `/series/${encodeURIComponent(series)}/books/${encodeURIComponent(book)}`

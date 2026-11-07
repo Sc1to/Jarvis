@@ -3,6 +3,9 @@
 Stored per scene in `findings.json` next to its text. A finding is identified by the question the continuity check asked
 ("the scene contradicts a fixed fact: <fact>"), which is the same wording every time for the same fact. A dismissed finding is
 not asked about again for that scene; an instruction is added to the problem when that finding is revised.
+
+The author may also accept a scene the critic scored below the minimum ("waive" the critic for that scene): the saved text is kept,
+the mechanical and continuity checks still apply, and the critic's scores are kept in the waiver for the record.
 """
 
 import json
@@ -18,20 +21,22 @@ def path(project: Project, scene_id: str):
 
 
 def read(project: Project, scene_id: str) -> dict:
-    """{"dismissed": [question, ...], "instructions": {question: text}}; empty when the author has said nothing."""
+    """{"dismissed": [question, ...], "instructions": {question: text}, "critic_waived": {...} | None}; empty when the author has said nothing."""
     try:
         data = json.loads(path(project, scene_id).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         data = {}
     dismissed = data.get("dismissed") if isinstance(data, dict) else None
     instructions = data.get("instructions") if isinstance(data, dict) else None
+    waived = data.get("critic_waived") if isinstance(data, dict) else None
     return {"dismissed": [str(q) for q in dismissed] if isinstance(dismissed, list) else [],
-            "instructions": {str(k): str(v) for k, v in instructions.items()} if isinstance(instructions, dict) else {}}
+            "instructions": {str(k): str(v) for k, v in instructions.items()} if isinstance(instructions, dict) else {},
+            "critic_waived": waived if isinstance(waived, dict) else None}
 
 
 def _save(project: Project, scene_id: str, notes: dict) -> None:
     p = path(project, scene_id)
-    if not notes["dismissed"] and not notes["instructions"]:
+    if not notes["dismissed"] and not notes["instructions"] and not notes.get("critic_waived"):
         p.unlink(missing_ok=True)
         return
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -61,4 +66,17 @@ def clear(project: Project, scene_id: str, question: str) -> None:
     notes = read(project, scene_id)
     notes["dismissed"] = [q for q in notes["dismissed"] if q != question]
     notes["instructions"].pop(question, None)
+    _save(project, scene_id, notes)
+
+
+def waive_critic(project: Project, scene_id: str, criteria: list[str], scores: dict, note: str) -> None:
+    """Accept the scene as written although the critic scored `criteria` below the minimum."""
+    notes = read(project, scene_id)
+    notes["critic_waived"] = {"criteria": list(criteria), "scores": dict(scores), "note": " ".join(note.split())[:INSTRUCTION_MAX]}
+    _save(project, scene_id, notes)
+
+
+def unwaive_critic(project: Project, scene_id: str) -> None:
+    notes = read(project, scene_id)
+    notes["critic_waived"] = None
     _save(project, scene_id, notes)

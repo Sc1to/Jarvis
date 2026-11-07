@@ -61,17 +61,25 @@ export interface SceneDetail {
   text: string | null; summary: string | null
   review: Review | null
   findings: SceneFindings
+  critic_min_score?: number
+  rubric?: Record<string, string>
   drafts: Record<string, string>
   change_requests: ChangeRequest[]
 }
 
 /** What the author said about this scene's findings: false alarms and instructions for the writer. */
-export interface SceneFindings { dismissed: string[]; instructions: Record<string, string> }
+export interface CriticWaiver { criteria: string[]; scores: Record<string, number>; note: string }
+export interface SceneFindings { dismissed: string[]; instructions: Record<string, string>; critic_waived?: CriticWaiver | null }
+
+export interface CriticReview { scores: Record<string, number>; weakest?: { criterion: string; quote: string; issue: string }[]; beats?: { beat: number; verdict: 'shown' | 'thin' | 'missing' | 'out_of_order'; note: string }[]; error?: string | null }
 
 export interface Review {
   chosen?: string; source?: string; blocking?: string[]
   judge?: { wins: Record<string, number>; pairs: { a: string; b: string; run1: string; run2: string; winner: string | null }[]; error?: string | null } | null
-  critic?: { scores: Record<string, number>; weakest?: { criterion: string; quote: string; issue: string }[]; error?: string | null } | null
+  critic?: CriticReview | null
+  first_attempt_critic?: CriticReview | null
+  rewrote_with_critic_notes?: boolean
+  critic_waived?: CriticWaiver | null
   continuity?: { questions: number; flags: { question: string; evidence: string; confidence?: number; fact_says?: string; text_says?: string }[]; unsure: { question: string; answer: string; confidence: number; evidence?: string; confirmed?: boolean; fact_says?: string; text_says?: string }[] } | null
   rounds?: { round: number; mechanical_blocking: string[]; continuity_flags: string[]; critic_lowest: number | null; revisions: { mode: string; before: string; after?: string }[] }[]
   mechanical?: Record<string, { score: number; issues: { severity: string; message: string }[] }>

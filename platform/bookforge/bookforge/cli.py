@@ -154,6 +154,27 @@ def finding_cmd(
     typer.echo(f"{scene}: {len(notes['dismissed'])} dismissed, {len(notes['instructions'])} instruction(s); applied the next time it runs")
 
 
+@app.command("accept-scene")
+def accept_scene_cmd(
+    path: Path = PathArg,
+    scene: str = typer.Argument(..., help="The flagged scene, like b1.ch07.s2"),
+    note: str = typer.Option("", "--note", help="Why you accept it"),
+    undo: bool = typer.Option(False, "--undo", help="Take the acceptance back; the critic is asked again"),
+    book: str = BookOpt,
+) -> None:
+    """Accept a scene the critic scored below the minimum, as written. Read `status`/the review first: it shows why it was flagged."""
+    try:
+        project = Project.open(path, book)
+        if undo:
+            ops.undo_accept_critic(project, scene)
+            typer.echo(f"{scene}: acceptance taken back")
+            return
+        waiver = ops.accept_critic(project, scene, note)
+    except BookforgeError as e:
+        _fail(e)
+    typer.echo(f"{scene}: accepted as written ({', '.join(waiver['criteria'])} stay below the minimum); applied the next time it runs")
+
+
 @app.command("add-book")
 def add_book_cmd(
     path: Path = PathArg,

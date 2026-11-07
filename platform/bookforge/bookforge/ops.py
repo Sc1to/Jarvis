@@ -17,7 +17,7 @@ from .layers import HANDLERS
 from .layers.runner import RunSummary, StepContext, run as run_layers
 from .llm import LLMClient
 from .project import Project
-from .state import Checkpoint
+from .state import Checkpoint, Item
 from .research.search import WebClient
 
 log = logging.getLogger("platform_bookforge.ops")
@@ -242,6 +242,51 @@ def decide_finding(project: Project, scene_id: str, question: str, action: str, 
     if project.config.git.commit_each_step:
         vcs.commit(project.root, f"{scene_id}: you {'cleared a note on' if action == 'clear' else action + 'ed'} a finding", [scenefiles.scene_dir(project, scene_id)])
     return scene_notes.read(project, scene_id)
+
+
+def _flagged_review(project: Project, scene_id: str) -> dict:
+    from . import scenefiles
+    scenes = bible_store.load_scenes(project) if bible_store.scenes_path(project).exists() else []
+    if not any(s.id == scene_id for s in scenes):
+        raise BookforgeError(f"'{scene_id}' is not a scene of this book")
+    raw = scenefiles.read(scenefiles.review_path(project, scene_id))
+    try:
+        return json.loads(raw) if raw else {}
+    except ValueError:
+        return {}
+
+
+def accept_critic(project: Project, scene_id: str, note: str = "") -> dict:
+    """Accept a flagged scene as written although the critic scored it below the minimum.
+
+    Only for a scene whose reasons are all the critic's: a mechanical or continuity problem still has to be fixed. The text is
+    kept as it is; the next run checks it mechanically and for continuity (not with the critic again) and carries on with the
+    summary and extraction. Returns the waiver.
+    """
+    from .qc import scene_notes
+    if project.state.items.get(scene_id, Item()).status != "flagged":
+        raise BookforgeError(f"{scene_id} is not flagged")
+    review = _flagged_review(project, scene_id)
+    minimum = project.config.qc.critic_min_score
+    critic = review.get("critic") or {}
+    scores = {c: v for c, v in (critic.get("scores") or {}).items() if isinstance(v, int)}
+    low = [c for c, v in scores.items() if v < minimum]
+    if not low:
+        raise BookforgeError("the critic did not score this scene below the minimum; there is nothing to accept")
+    others = [b for b in review.get("blocking") or [] if not b.startswith("the critic scored")]
+    if others:
+        raise BookforgeError("these have to be fixed first, accepting only covers the critic's score: " + "; ".join(others))
+    scene_notes.waive_critic(project, scene_id, low, scores, note)
+    if project.config.git.commit_each_step:
+        from . import scenefiles
+        vcs.commit(project.root, f"{scene_id}: you accepted the scene as written ({', '.join(low)} stay below {minimum})", [scenefiles.scene_dir(project, scene_id)])
+    return scene_notes.read(project, scene_id)["critic_waived"]
+
+
+def undo_accept_critic(project: Project, scene_id: str) -> None:
+    from .qc import scene_notes
+    _flagged_review(project, scene_id)
+    scene_notes.unwaive_critic(project, scene_id)
 
 
 # ── writing a planning layer again ────────────────────────────────────────────

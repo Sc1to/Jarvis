@@ -111,7 +111,8 @@ def settle_scene(ctx, scene: Scene, scenes: list[Scene], drafts: dict[str, str],
                     "judge": judge, "rounds": []}
 
     critic: CriticReport | None = None
-    critic_given_up = False
+    waiver = scene_notes.read(ctx.project, scene.id).get("critic_waived")
+    critic_given_up = bool(waiver)  # the author accepted the scene as written: the critic is not asked again
     advised: list[str] = []  # whole-scene criteria that call for writing the scene again (see WHOLE_SCENE)
     continuity: ContinuityReport | None = None
     report = drafts_reports[chosen]
@@ -142,7 +143,7 @@ def settle_scene(ctx, scene: Scene, scenes: list[Scene], drafts: dict[str, str],
             activity.set(step="the critic is reading it")
             saved = progress.get("critic", _sha(text))
             if saved is not None:
-                critic = CriticReport(saved["scores"], [Weak(**w) for w in saved.get("weakest", [])])
+                critic = CriticReport(saved["scores"], [Weak(**w) for w in saved.get("weakest", [])], beats=saved.get("beats", []))
             else:
                 critic = run_critic(ctx, scene, text)
                 if not critic.error and critic.scores:
@@ -186,4 +187,6 @@ def settle_scene(ctx, scene: Scene, scenes: list[Scene], drafts: dict[str, str],
                    "critic": critic.to_dict() if critic else None, "revised": text != drafts[chosen], "unresolved": reasons})
     if advised:
         review["rewrite_advised"] = advised
+    if waiver:
+        review["critic_waived"] = waiver
     return SceneQC(text=text, chosen=chosen, review=review, reasons=reasons)
