@@ -18,7 +18,7 @@ Everything lives under /api (Caddy strips /bookforge). Responses use the platfor
     GET  /api/series/{s}/books/{b}/manuscript         the assembled manuscript
     GET  /api/series/{s}/books/{b}/stale              what is out of date and why (changes nothing)
     GET  /api/series/{s}/books/{b}/changes            change requests
-    POST /api/series/{s}/books/{b}/changes/{id}/approve|reject
+    POST /api/series/{s}/books/{b}/changes/{id}/approve|reject|dismiss
     POST /api/series/{s}/books/{b}/approve/{checkpoint}
     POST /api/series/{s}/books/{b}/rewrite            {targets, force} scenes or a chapter to write again
     POST /api/series/{s}/books/{b}/assemble           {partial}
@@ -58,7 +58,7 @@ from .jobs import BusyError, JobManager
 from .llm import build_client
 from .project import BOOK_ID_RE, SERIES_NAME_RE, Project
 from .research.search import build_web_client
-from .qc import scene_notes
+from .qc import critic as critic_mod, scene_notes
 from .research.notes import stores_for, waiting_decisions
 from .state import Item
 
@@ -171,6 +171,10 @@ class RedoBody(BaseModel):
     layer: str
     note: str = ""
     cascade: bool = False
+
+
+class AcceptBody(BaseModel):
+    note: str = ""
 
 
 class FindingBody(BaseModel):
@@ -395,9 +399,24 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
             "text": scenefiles.best_text(project, scene_id), "summary": scenefiles.read(scenefiles.summary_path(project, scene_id)),
             "review": review,
             "findings": scene_notes.read(project, scene_id),
+            "critic_min_score": project.config.qc.critic_min_score,
+            "rubric": {c: critic_mod.rubric_line(project, c) for c in critic_mod.CRITERIA},
             "drafts": {p.stem: p.read_text(encoding="utf-8") for p in sorted(scenefiles.scene_dir(project, scene_id).glob("draft-*.md"))},
             "change_requests": [c.model_dump() for c in change_requests.list_requests(project) if c.proposed_by == scene_id],
         })
+
+    @router.post("/series/{series}/books/{book}/scenes/{scene_id}/accept-critic")
+    def accept_critic(series: str, book: str, scene_id: str, body: AcceptBody):
+        project = open_project(series, book)
+        require_idle(series)
+        return ok(ops.accept_critic(project, scene_id, body.note))
+
+    @router.delete("/series/{series}/books/{book}/scenes/{scene_id}/accept-critic")
+    def undo_accept_critic(series: str, book: str, scene_id: str):
+        project = open_project(series, book)
+        require_idle(series)
+        ops.undo_accept_critic(project, scene_id)
+        return ok({"scene": scene_id, "accepted": False})
 
     @router.post("/series/{series}/books/{book}/scenes/{scene_id}/findings")
     def scene_finding(series: str, book: str, scene_id: str, body: FindingBody):
@@ -491,11 +510,11 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
 
     @router.post("/series/{series}/books/{book}/changes/{cr_id}/{decision}")
     def decide(series: str, book: str, cr_id: str, decision: str):
-        if decision not in ("approve", "reject"):
-            raise HTTPException(404, "expected approve or reject")
+        if decision not in ("approve", "reject", "dismiss"):
+            raise HTTPException(404, "expected approve, reject or dismiss")
         project = open_project(series, book)
         require_idle(series)
-        return ok(ops.decide_change(project, cr_id, decision == "approve").model_dump())
+        return ok(ops.decide_change(project, cr_id, decision == "approve", dismiss=decision == "dismiss").model_dump())
 
     @router.post("/series/{series}/books/{book}/approve/{checkpoint}")
     def approve(series: str, book: str, checkpoint: str):

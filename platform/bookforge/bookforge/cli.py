@@ -154,6 +154,27 @@ def finding_cmd(
     typer.echo(f"{scene}: {len(notes['dismissed'])} dismissed, {len(notes['instructions'])} instruction(s); applied the next time it runs")
 
 
+@app.command("accept-scene")
+def accept_scene_cmd(
+    path: Path = PathArg,
+    scene: str = typer.Argument(..., help="The flagged scene, like b1.ch07.s2"),
+    note: str = typer.Option("", "--note", help="Why you accept it"),
+    undo: bool = typer.Option(False, "--undo", help="Take the acceptance back; the critic is asked again"),
+    book: str = BookOpt,
+) -> None:
+    """Accept a scene the critic scored below the minimum, as written. Read `status`/the review first: it shows why it was flagged."""
+    try:
+        project = Project.open(path, book)
+        if undo:
+            ops.undo_accept_critic(project, scene)
+            typer.echo(f"{scene}: acceptance taken back")
+            return
+        waiver = ops.accept_critic(project, scene, note)
+    except BookforgeError as e:
+        _fail(e)
+    typer.echo(f"{scene}: accepted as written ({', '.join(waiver['criteria'])} stay below the minimum); applied the next time it runs")
+
+
 @app.command("add-book")
 def add_book_cmd(
     path: Path = PathArg,
@@ -475,13 +496,14 @@ def changes_cmd(
     book: str = BookOpt,
     approve_id: Optional[str] = typer.Option(None, "--approve", help="Apply this change request to the plan"),
     reject_id: Optional[str] = typer.Option(None, "--reject", help="Keep the plan: the scene's prose will be patched to agree with it"),
+    dismiss_id: Optional[str] = typer.Option(None, "--dismiss", help="Keep both: the prose stays as written and the plan is not changed"),
 ) -> None:
-    """List change requests (the prose says something the plan does not); approve or reject one."""
+    """List change requests (the prose says something the plan does not); approve, reject or dismiss one."""
     try:
         project = Project.open(path, book)
         decided = None
-        if approve_id or reject_id:
-            decided = ops.decide_change(project, approve_id or reject_id, bool(approve_id))
+        if approve_id or reject_id or dismiss_id:
+            decided = ops.decide_change(project, approve_id or reject_id or dismiss_id, bool(approve_id), dismiss=bool(dismiss_id))
         requests = change_requests.list_requests(project)
     except BookforgeError as e:
         _fail(e)
@@ -489,6 +511,8 @@ def changes_cmd(
         typer.echo(f"{decided.id}: {decided.status}")
         if decided.status == "applied":
             typer.echo(f"{len(decided.affects)} scene(s) depend on it; run `stale --fix` to bring them up to date")
+        elif decided.status == "dismissed":
+            typer.echo("dismissed: the prose and the plan are both left as they are")
         else:
             typer.echo(f"the plan stands; run `stale --fix` to patch {decided.proposed_by} to agree with it")
     if not requests:

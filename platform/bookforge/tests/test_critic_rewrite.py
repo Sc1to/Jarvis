@@ -86,3 +86,57 @@ def test_the_critic_block_is_in_the_notes_only_when_a_score_is_below_the_minimum
     assert text.count("the critic scored") == 0  # the one-line reason is replaced by the detail
     fine = {"critic": {"scores": {"pacing": 3, "voice": 4}, "weakest": [weak]}}
     assert _problems_text(book, scene(book), fine) == ""
+
+
+# ── accepting a scene the critic scored low ──────────────────────────────────
+
+def critic_flagged(book):
+    llm = RuleLLM(qc_rules(critic=(CRITIC, critic([{"beats_covered": 1}] * 9)), revise=(REVISE, reviser({}))))
+    go(book, llm)
+    assert load_state(book.state_path).items[SID].status == "flagged"
+    return llm
+
+
+def test_a_scene_the_critic_scored_low_can_be_accepted_as_written_and_is_not_written_again(book):
+    from bookforge import ops, scenefiles
+    critic_flagged(book)
+    kept = scenefiles.best_text(book, SID)
+    waiver = ops.accept_critic(book, SID, "the debt is existing, not hereditary: fine")
+    assert waiver["criteria"] == ["beats_covered"] and waiver["scores"]["beats_covered"] == 1
+    llm = RuleLLM(qc_rules(critic=(CRITIC, critic([{"beats_covered": 1}] * 9)), revise=(REVISE, reviser({}))))
+    go(book, llm)
+    assert load_state(book.state_path).items[SID].status == "accepted"
+    assert not writes(llm)  # the scene was not written again
+    assert review(book)["critic"] is None  # and the critic was not asked about it again (it still reads the later scenes)
+    assert scenefiles.read(scenefiles.final_path(book, SID)).strip() == kept.strip()
+    assert review(book)["critic_waived"]["note"].startswith("the debt is existing")
+
+
+def test_accepting_is_refused_for_a_scene_that_is_not_flagged_or_has_other_problems(book):
+    import pytest
+    from bookforge import ops
+    from bookforge.errors import BookforgeError
+    from test_flagged_scenes import flag_the_scene
+    with pytest.raises(BookforgeError, match="not flagged"):
+        ops.accept_critic(book, SID)
+    flag_the_scene(book)  # flagged by a continuity contradiction, not by the critic
+    with pytest.raises(BookforgeError, match="nothing to accept"):
+        ops.accept_critic(book, SID)
+
+
+def test_an_acceptance_can_be_taken_back(book):
+    from bookforge import ops
+    from bookforge.qc import scene_notes
+    critic_flagged(book)
+    ops.accept_critic(book, SID)
+    assert scene_notes.read(book, SID)["critic_waived"]
+    ops.undo_accept_critic(book, SID)
+    assert scene_notes.read(book, SID)["critic_waived"] is None
+
+
+def test_the_critics_beat_verdicts_are_kept_only_when_well_formed():
+    from bookforge.qc.critic import clean_beats
+    raw = [{"beat": 2, "verdict": "Out of order", "note": "comes first"}, {"beat": 9, "verdict": "shown"}, {"beat": 1, "verdict": "maybe"},
+           {"beat": True, "verdict": "shown"}, "junk", {"beat": 1, "verdict": "missing", "note": " no  debt "}]
+    assert clean_beats(raw, 3) == [{"beat": 1, "verdict": "missing", "note": "no debt"}, {"beat": 2, "verdict": "out_of_order", "note": "comes first"}]
+    assert clean_beats(None, 3) == []

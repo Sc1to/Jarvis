@@ -237,7 +237,8 @@ def write_scene(ctx: StepContext, scene: Scene, scenes: list[Scene], drafts: int
         result = None
         # Revise what was written, with what was found, before throwing it away and starting again. Not when the critic said the scene as a
         # whole is the problem (a missing beat, uneven pacing): patching lines cannot fix that, only writing it again can.
-        if flagged_before and project.config.qc.revise_flagged and not (rewrite_ok and prior_review.get("rewrite_advised")):
+        waived = bool(scene_notes.read(project, sid).get("critic_waived"))  # accepted as written: keep the text, whatever the critic advised
+        if flagged_before and (project.config.qc.revise_flagged or waived) and (waived or not (rewrite_ok and prior_review.get("rewrite_advised"))):
             saved = scenefiles.best_text(project, sid)
             if saved and saved.strip():
                 _set_status(project, sid, "drafted")

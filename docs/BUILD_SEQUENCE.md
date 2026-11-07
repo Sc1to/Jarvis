@@ -1388,7 +1388,7 @@ At this point the core platform is:
 **Remaining phases after 12:**
 - Phase DEV — local dev environment and deployment tooling
 - Phase 13 — Trading system
-- Phase 14 — Bookforge (planned)
+- Phase 14 — Bookforge (14.0–14.13 built; awaiting a real-model run)
 - Voice interface for RE-agent (future)
 - Wake-on-LAN for always-on services (future)
 - Additional apps via agent creator (ongoing)
