@@ -238,21 +238,8 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
         return [s.id for s in store.load_scenes(project)] if store.scenes_path(project).exists() else []
 
     def start_job(series: str, book: str, kind: str, params: dict, fn: Callable[[], dict]) -> dict:
-        # The first job for a series after another series (or after a restart) starts on freshly loaded models: a model
-        # that stayed loaded answered one series with the other's story. Same series again: nothing to reset.
-        switched = jobs.last_series != series
-
-        def run_clean() -> dict:
-            if switched:
-                from .config import load_config
-                try:
-                    model_admin.unload_all(load_config(series_root(series)))
-                except Exception:  # a failed unload must not stop the run
-                    log.warning("could not unload models before the job", exc_info=True)
-            return fn()
-
         try:
-            job = jobs.start(series_root(series), series, book, kind, params, run_clean)
+            job = jobs.start(series_root(series), series, book, kind, params, fn)
         except BusyError as e:
             raise HTTPException(409, str(e)) from e
         return ok(job.to_dict())
