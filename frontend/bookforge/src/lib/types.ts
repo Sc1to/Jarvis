@@ -28,6 +28,7 @@ export interface BookStatus {
   pending_needs: number
   manuscript: boolean
   job: Job | null
+  resume_text?: string
 }
 
 export interface SeriesInfo { name: string; books: string[]; titles: Record<string, string>; busy: Job | null }

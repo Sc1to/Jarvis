@@ -24,6 +24,11 @@ def review_path(project: Project, scene_id: str) -> Path:
     return scene_dir(project, scene_id) / "review.json"
 
 
+def progress_path(project: Project, scene_id: str) -> Path:
+    """What the quality checks already passed for a scene that was interrupted; removed when the scene is settled."""
+    return scene_dir(project, scene_id) / "progress.json"
+
+
 def deps_path(project: Project, scene_id: str) -> Path:
     return scene_dir(project, scene_id) / "deps.yaml"
 

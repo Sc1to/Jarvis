@@ -116,6 +116,7 @@ def status(
             item = state.items.get(s.id)
             counts[item.status if item else "pending"] = counts.get(item.status if item else "pending", 0) + 1
         typer.echo(f"\nProse: {len(scenes)} scenes: " + ", ".join(f"{n} {k}" for k, n in sorted(counts.items())))
+    typer.echo("\n" + ops.resume_text(ops.resume_point(project)))
     typer.echo("\nCheckpoints")
     for name in CHECKPOINTS:
         typer.echo(f"  {name:<18} {state.checkpoints[name].status}")

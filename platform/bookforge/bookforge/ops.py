@@ -37,6 +37,39 @@ class PipelineOutcome:
     report_error: str | None = None
 
 
+def resume_point(project: Project) -> dict | None:
+    """Where the next Run continues, for the status line: the first layer that is not accepted and, in the prose layer, the scene it
+    starts with (an interrupted scene first, then scenes still to do, flagged ones last; see layers.prose.order_for_run)."""
+    from .layers.prose import order_for_run
+    for layer in LAYER_ORDER:
+        if project.state.layers[layer].status == "accepted":
+            continue
+        if layer != "prose" or not bible_store.scenes_path(project).exists():
+            return {"layer": layer, "scene": None, "reason": "next", "accepted": 0, "flagged": 0, "todo": 0, "total": 0}
+        scenes = bible_store.load_scenes(project)
+        chapters = bible_store.load_chapters(project)
+        status = {s.id: (project.state.items.get(s.id).status if project.state.items.get(s.id) else "pending") for s in scenes}
+        first = chapters[0].id if chapters else ""
+        order = [s for s in order_for_run(project, scenes, project.state.checkpoints["voice"].status == "approved", first)
+                 if status[s.id] not in ("accepted", "stale")]
+        nxt = order[0] if order else None
+        reason = {"drafted": "interrupted", "flagged": "flagged"}.get(status[nxt.id], "next") if nxt else "next"
+        n = lambda *k: sum(1 for v in status.values() if v in k)  # noqa: E731
+        return {"layer": layer, "scene": nxt.id if nxt else None, "reason": reason, "accepted": n("accepted"), "flagged": n("flagged"),
+                "todo": n("pending", "drafted", "checked"), "total": len(scenes)}
+    return None
+
+
+def resume_text(point: dict | None) -> str:
+    if not point:
+        return "Nothing left to run."
+    if point["scene"] is None:
+        return f"The next Run continues with the {point['layer']} layer."
+    why = {"interrupted": " (interrupted: its drafts are kept)", "flagged": " (flagged: only flagged scenes are left)"}.get(point["reason"], "")
+    return (f"The next Run continues at {point['scene']}{why}: {point['accepted']} of {point['total']} scenes accepted, "
+            f"{point['flagged']} flagged, {point['todo']} to do.")
+
+
 def run_pipeline(project: Project, llm: LLMClient | None, web: WebClient | None, until: str | None = None,
                  handlers: dict | None = None) -> PipelineOutcome:
     """Run the layers; if every one is accepted assemble the book; always write the morning report."""

@@ -264,7 +264,7 @@ def test_a_cancelled_handler_stops_the_run_without_flagging_the_layer(project):
         raise cancel.Cancelled()
 
     summary = run(project, FakeLLMClient({}), {**HANDLERS, "series_north_star": stops})
-    assert summary.stopped == "cancelled" and summary.exit_code == 0 and "stopped at your request" in summary.detail
+    assert summary.stopped == "cancelled" and summary.exit_code == 0 and "paused at your request" in summary.detail
     assert project.state.layers["series_north_star"].status == "pending"  # not flagged: it is simply done again next time
 
 

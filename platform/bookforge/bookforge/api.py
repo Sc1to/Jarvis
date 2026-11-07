@@ -343,6 +343,7 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
             "pending_needs": len(waiting_decisions(project)),
             "manuscript": assembly.manuscript_path(project).exists(),
             "job": busy.to_dict() if busy else None,
+            "resume": ops.resume_point(project), "resume_text": ops.resume_text(ops.resume_point(project)),
         })
 
     @router.get("/series/{series}/books/{book}/scenes")

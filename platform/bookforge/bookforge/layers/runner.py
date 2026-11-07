@@ -120,7 +120,7 @@ def run(
         except cancel.Cancelled:  # stopped by the author: not a failure; what is done stays, the rest runs again next time
             project.save_state()
             summary.stopped = "cancelled"
-            summary.detail = f"stopped at your request during '{layer}'; what was finished is kept, run again to continue"
+            summary.detail = f"paused at your request during '{layer}'; what was finished is kept (accepted scenes, drafts and passed checks), run again to continue"
             return summary
         except Exception as e:  # a failed layer is flagged, never a crash mid-run
             log.exception("layer %s failed", layer)

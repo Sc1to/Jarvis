@@ -120,7 +120,7 @@ function ActivityPanel({ activity, serverTime }: { activity?: JobActivity; serve
       )}
       {idle !== null && <p className="text-xs text-slate-600">Last model call finished {idle} s ago.</p>}
       {waiting !== null && waiting > 180 && (
-        <p className="text-xs text-amber-800">A scene draft usually takes 70 to 90 seconds on this model, so this one is slow. Stop is above if you want to end it.</p>
+        <p className="text-xs text-amber-800">A scene draft usually takes 70 to 90 seconds on this model, so this one is slow. Pause is above if you want to end it; the next Run continues from here.</p>
       )}
     </div>
   )
@@ -143,6 +143,7 @@ export default function Overview({ series, book, status, reload }: { series: str
     <div className="space-y-3">
       <ErrorBanner message={act.error} onClose={act.clear} />
 
+      {status.resume_text && !busy && <p className="rounded-md border border-slate-200 bg-white p-2 text-sm text-slate-700">{status.resume_text}</p>}
       {status.job && (
         <Card title={`${status.job.kind} ${status.job.status}`} tone={busy ? undefined : 'warn'}>
           <p className="text-sm text-slate-700">Started {fmtTime(status.job.started)}. {busy && 'Updating every few seconds; the page can be closed, the run continues.'}</p>
@@ -150,8 +151,8 @@ export default function Overview({ series, book, status, reload }: { series: str
           {busy && (
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <Button kind="danger" disabled={act.busy || status.job.cancel_requested}
-                onClick={() => window.confirm('Stop this job? It stops at the next model call; what is finished is kept and the rest is done on the next run.') && go(() => post(`${base}/jobs/${status.job!.id}/cancel`))}>
-                {status.job.cancel_requested ? 'Stopping…' : 'Stop'}
+                onClick={() => window.confirm('Pause this job? It pauses at the next model call; accepted scenes, drafts and passed checks are kept, and the next Run continues from there.') && go(() => post(`${base}/jobs/${status.job!.id}/cancel`))}>
+                {status.job.cancel_requested ? 'Pausing…' : 'Pause'}
               </Button>
               {status.job.cancel_requested && <span className="text-xs text-slate-600">It stops after the model call that is running now, which can take a minute.</span>}
             </div>

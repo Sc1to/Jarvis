@@ -31,7 +31,7 @@ from ..qc.extract import extract_observed, record_observed
 from ..qc.mechanical import CheckContext, check_scene, load_banned
 from ..qc import scene_notes
 from ..qc.critic import rubric_line
-from ..qc.scene import settle_scene
+from ..qc.scene import clear_progress, settle_scene
 from ..state import Item, now
 from .document import ask_until_valid, prompt_values, word_count
 from .runner import StepContext, StepResult
@@ -251,6 +251,7 @@ def write_scene(ctx: StepContext, scene: Scene, scenes: list[Scene], drafts: int
             if flagged_before:
                 for old in list(d.glob("draft-*.md")) + [scenefiles.revised_path(project, sid)]:
                     old.unlink(missing_ok=True)
+                clear_progress(project, sid)
             activity.set(step="writing drafts")
             texts = _write_drafts(ctx, scene, briefing.text() + problems_section, drafts, words)
             _set_status(project, sid, "drafted")
@@ -263,6 +264,7 @@ def write_scene(ctx: StepContext, scene: Scene, scenes: list[Scene], drafts: int
                 extra = {"rewrote_with_critic_notes": True, "first_attempt_critic": result.review.get("critic")}
                 for old in list(d.glob("draft-*.md")) + [scenefiles.revised_path(project, sid)]:
                     old.unlink(missing_ok=True)
+                clear_progress(project, sid)  # the checks belonged to the drafts that were thrown away
                 activity.set(step="writing the scene again with the critic's notes")
                 texts = _write_drafts(ctx, scene, briefing.text() + notes, drafts, words)
                 paths += [scenefiles.draft_path(project, sid, i) for i in range(1, len(texts) + 1)]
@@ -277,6 +279,7 @@ def write_scene(ctx: StepContext, scene: Scene, scenes: list[Scene], drafts: int
             scenefiles.revised_path(project, sid).write_text(text.rstrip() + "\n", encoding="utf-8")
             paths.append(scenefiles.revised_path(project, sid))
         review_file.write_text(json.dumps(review, indent=2, ensure_ascii=False), encoding="utf-8")
+        clear_progress(project, sid)
         _set_status(project, sid, "flagged", "; ".join(reasons)[:300])
         _commit(project, sid, "drafted, flagged", paths)
         return False, [scenefiles.rel(project, p) for p in paths if p.exists()]
@@ -295,9 +298,24 @@ def write_scene(ctx: StepContext, scene: Scene, scenes: list[Scene], drafts: int
     gaps, filed = record_extraction(ctx, scene, scenes, text, review, paths)
     review_file.write_text(json.dumps(review, indent=2, ensure_ascii=False), encoding="utf-8")
     note = f"{report.stats['words']} words, {len(report.warnings)} warning(s)" + (f", {gaps} gap(s) between plan and prose" if gaps else "") + (f" ({len(filed)} change request(s) filed, {sum(c.status == 'pending' for c in filed)} waiting for you)" if filed else "")
+    clear_progress(project, sid)
     _set_status(project, sid, "accepted", note)
     _commit(project, sid, "drafted, checked, accepted" if source == "written" else "adopted, checked, accepted", paths)
     return True, [scenefiles.rel(project, p) for p in paths if p.exists()]
+
+
+def order_for_run(project, scenes: list[Scene], voice_approved: bool, first_chapter: str) -> list[Scene]:
+    """The scenes a run goes through, in order. Scenes still to do come first (one that was interrupted, `drafted`, before the
+    untouched ones); flagged scenes are retried afterwards, so pausing a run does not send it back to a flagged scene at the start of
+    the book. `layers.prose.retry_flagged: inline` keeps plain book order."""
+    allowed = [s for s in scenes if voice_approved or s.chapter == first_chapter]
+    if project.config.layers["prose"].retry_flagged == "inline":
+        return allowed
+    status = {s.id: _item(project, s.id).status for s in allowed}
+    interrupted = [s for s in allowed if status[s.id] == "drafted"]
+    pending = [s for s in allowed if status[s.id] not in ("drafted", "flagged")]
+    flagged = [s for s in allowed if status[s.id] == "flagged"]
+    return interrupted + pending + flagged
 
 
 def prose(ctx: StepContext) -> StepResult:
@@ -319,9 +337,7 @@ def prose(ctx: StepContext) -> StepResult:
 
     done_now = 0
     stale: list[str] = []
-    for scene in scenes:
-        if voice != "approved" and scene.chapter != first_chapter:
-            break
+    for scene in order_for_run(project, scenes, voice == "approved", first_chapter):
         status = _item(project, scene.id).status
         if status == "accepted":
             continue
