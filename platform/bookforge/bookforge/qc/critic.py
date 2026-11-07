@@ -14,7 +14,7 @@ from ..bible.models import Scene
 from ..errors import BookforgeError
 from ..prompts import render
 from .revise import Flag
-from .support import ask_json, quote_in_page, scene_brief, voice_excerpt
+from .support import ask_json, qc_options, qc_role, quote_in_page, scene_brief, voice_excerpt
 
 CRITERIA = ("stakes", "voice", "show_dont_tell", "pacing", "dialogue", "beats_covered")
 # About the scene as a whole: three patched lines cannot fix a missing beat or uneven pacing, only writing the scene again can.
@@ -86,7 +86,8 @@ def _check(scene_text: str):
 def run_critic(ctx, scene: Scene, text: str) -> CriticReport:
     project = ctx.project
     try:
-        data = ask_json(ctx, f"{scene.id} critic", "critic", "critic", _check(text), max_tokens=900,
+        data = ask_json(ctx, f"{scene.id} critic", qc_role(project), "critic", _check(text), max_tokens=900,
+                        call_options=qc_options(project),
                         rubric=render("critic_rubric", project.root).strip(), brief=scene_brief(project, scene),
                         voice=voice_excerpt(project), text=text, rules=rules.prose_rules_text(project, scene) or "(none)")
     except BookforgeError as e:

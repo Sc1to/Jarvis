@@ -139,7 +139,7 @@ class HttpLLMClient:
         transport: httpx.BaseTransport | None = None,
         sleep: Callable[[float], None] = time.sleep,
     ):
-        self._models = {"writer": config.models.writer, "critic": config.models.critic}
+        self._models = {name: config.endpoint(name) for name in config.model_names()}
         self._log = call_log or CallLog(None)
         self._attempts = max(1, attempts)
         self._backoff = backoff_seconds
@@ -174,9 +174,9 @@ class HttpLLMClient:
         cancel.check()  # the author stopped the job: stop before asking the model again
         endpoint = self._models.get(role)
         if endpoint is None:
-            raise LLMError(f"unknown model role '{role}' (expected 'writer' or 'critic')")
+            raise LLMError(f"unknown model role '{role}' (expected one of: {', '.join(sorted(self._models))})")
         if not endpoint.model:
-            raise LLMError(f"models.{role}.model is not set in the config (see `c/coli status` for the id)")
+            raise LLMError(f"models.{role if role in ('writer', 'critic') else 'extra.' + role}.model is not set in the config (see `c/coli status` for the id)")
         unknown = set(options) - ALLOWED_OPTIONS
         if unknown:
             raise LLMError(f"unsupported option(s): {sorted(unknown)}")

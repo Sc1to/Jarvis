@@ -50,7 +50,7 @@ def extract_observed(ctx, scene: Scene, scenes: list[Scene], text: str) -> Extra
         return problems
 
     try:
-        data = ask_json(ctx, f"{scene.id} extraction", "writer", "extract", check, max_tokens=300 + 150 * len(states),
+        data = ask_json(ctx, f"{scene.id} extraction", "extraction", "extract", check, max_tokens=300 + 150 * len(states),
                         text=text, tracks=listing)
     except BookforgeError as e:
         return Extraction(error=str(e))

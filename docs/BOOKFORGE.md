@@ -82,7 +82,7 @@ The target machine is a Minisforum MS-S1 MAX: Ryzen AI Max+ 395 (16 cores), Rade
 | Planner and critic (big) | GLM-5.2 (`glm-5.2`) | 429 GB | About 1.8 tok/s on a 128 GB Ryzen AI Max+ 395, CPU only | Story bible, outline, critique, pairwise judging |
 | Optional prose upgrade | Qwen3.8-Flash-Next (`qwen38-flash-next`) | 186 GB | Not yet measured on this machine | Drafting, if Qwen3.6 prose feels flat |
 
-**Two servers, two ports.** Run the writer on port 8040 and the planner/critic on port 8041, each as its own `coli serve`. The writer takes roughly 20 GB of RAM, leaving the rest to the big model's expert cache. If both together run out of memory, run them one at a time: the pipeline groups calls by model so it only needs one loaded per stage.
+**Two servers, two ports.** Run the writer on port 8040 and the planner/critic on port 8041, each as its own `coli serve`. The writer takes roughly 20 GB of RAM, leaving the rest to the big model's expert cache. If both together run out of memory, run them one at a time. The planning layers run in stages, so the planner/critic model is only needed there. Inside the prose layer the pipeline alternates between roles for every scene (drafts, judge, continuity, critic, revisions, summary), so it does not group calls by model; `qc.model: writer` (the default) therefore answers the judge, continuity and critic checks with the writer model, and one model stays loaded for the whole prose layer. Set `qc.model: critic` only when both models are loaded at once.
 
 **Disk budget (4 TB):** Ubuntu and tools ~100 GB, the three models ~640 GB, projects and logs under 50 GB. Plenty of room left for a second big model later.
 
@@ -817,6 +817,22 @@ The UI is built in three levels, each usable on its own; v1 needs no UI code at 
 - Push notifications through the platform Web Push system when a checkpoint is reached or a run fails.
 
 - Model monitoring stays in colibri's own dashboard; bookforge links to it rather than rebuilding it.
+
+## Models: which model does what (Phase 14.14)
+
+**What runs.** The dashboard's *Models* tab (and `GET /api/models`) shows each backend and what it serves. Ollama: installed models (`/api/tags`) and the ones loaded now (`/api/ps`). Colibri: the one model it serves (`/v1/models`) and whether its engine is ready or still loading (`/health` answers 503 while it starts). It also shows the memory left (`/proc/meminfo`; the MS-S1 Max shares it with the GPU) and warns before an Ollama model is chosen that needs more than would be free (weights x 1.2 against free memory plus what would be unloaded).
+
+**Who uses which.** Names: `writer`, `critic`, `research` and `extraction` (the last two follow `models.assign`, default writer), plus any endpoint under `models.extra`. Every layer names one (`layers.<name>.model`), and so do the prose checks (`qc.model`, default writer) and the research notes (`research.notes_model`, default `research`). The page sets any of them; a layer can have its own model (for example a stronger one for the north stars) and be put back on its default.
+
+**Where choices are saved.** `<series>/models.local.yaml`, written only by bookforge and merged after `config.yaml` (an endpoint it names replaces the whole endpoint; extra request fields of an old backend are dropped when the backend changes). Only a model a configured backend lists can be chosen. A change is refused while a job is running.
+
+**Switching.** Ollama: the model a role leaves behind is unloaded (`keep_alive: 0`) unless another name uses it; the new one loads on its first request. Colibri is read-only here: its server runs one model fixed when its unit starts (`coli serve --model`; there is no load or unload API), so changing it means editing the unit and restarting it on the machine. Colibri's own `/models/use` restarts the process outside systemd and would fight the `platform-colibri-*` units, so bookforge does not use it. Starting and stopping units from the dashboard (`manage_service`) is still not built.
+
+**One model at a time.** The prose layer alternates between roles for every scene, so the checks run on the writer model (`qc.model: writer`) and one model stays loaded for the whole layer. For Ollama, `OLLAMA_MAX_LOADED_MODELS=1` also makes it unload on its own.
+
+**Dark mode.** Auto (follows the system), Light or Dark in the header; the choice is remembered (`localStorage`) and applied before first paint. The pages keep their Tailwind classes: `src/index.css` mirrors the slate scale and the amber, emerald, red and sky tints under `.dark`.
+
+Not built: `models.decide.url` still points at the critic's port, but colibri serves a decision model (GLiNER2.5-Decide) as a server of its own, so System One is probably not available on the critic; `doctor` does not check `models.extra` endpoints.
 
 ## Workbench: tuning bookforge
 

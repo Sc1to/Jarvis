@@ -3,7 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
     <title>Bookforge</title>
+    <script>
+      // Set the theme before the first paint so a dark page never flashes white (lib/theme.ts keeps it up to date).
+      (function () { try { var m = localStorage.getItem('bookforge-theme'); if (m === 'dark' || (m !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches)) document.documentElement.classList.add('dark') } catch (e) {} })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

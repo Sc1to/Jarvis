@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { disablePush, enablePush, pushState, type PushState } from './lib/push'
 import { useRoute } from './lib/route'
+import { useTheme, type ThemeMode } from './lib/theme'
 import Book from './pages/Book'
 import SeriesList from './pages/SeriesList'
 
@@ -22,6 +23,20 @@ function PushToggle() {
   )
 }
 
+const MODES: [ThemeMode, string][] = [['system', 'Auto'], ['light', 'Light'], ['dark', 'Dark']]
+
+function ThemeToggle() {
+  const [mode, setMode] = useTheme()
+  return (
+    <div role="radiogroup" aria-label="Theme" className="flex overflow-hidden rounded-md border border-slate-300">
+      {MODES.map(([m, label]) => (
+        <button key={m} type="button" role="radio" aria-checked={mode === m} onClick={() => setMode(m)}
+          className={`min-h-10 px-2.5 text-sm ${mode === m ? 'bg-slate-900 text-white' : 'bg-white text-slate-700'}`}>{label}</button>
+      ))}
+    </div>
+  )
+}
+
 export default function App() {
   const route = useRoute()
   return (
@@ -29,7 +44,7 @@ export default function App() {
       <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-2 px-3 py-2 sm:px-4">
           <a href="#/" className="text-base font-semibold">Bookforge</a>
-          <PushToggle />
+          <div className="flex items-center gap-2"><ThemeToggle /><PushToggle /></div>
         </div>
       </header>
       <main className="mx-auto max-w-5xl px-3 py-3 sm:px-4 sm:py-4">
