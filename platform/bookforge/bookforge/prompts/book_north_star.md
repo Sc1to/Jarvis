@@ -49,4 +49,4 @@ How this book ends: the change in the protagonist, what is resolved, and what st
 ## What it is not
 Four to six things this book must not do, including any that follow from the series north star.
 
-Fit on one page: about 350 to 450 words, never more than 600.
+Fit on one page: about 350 to 450 words, never more than 800.
