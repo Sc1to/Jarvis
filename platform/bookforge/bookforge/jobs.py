@@ -1,6 +1,7 @@
 """Background jobs for the HTTP service: a pipeline run takes hours, so a request starts it and returns.
 
-One job at a time per series (the series is one Git repository and one set of state files). A job's record
+One job at a time per series (the series is one Git repository and one set of state files), and one at a time
+overall, because every series uses the same model server and two series at once mixed up their stories. A job's record
 is saved to `books/<book>/logs/jobs/<id>.json` when it starts and again when it ends, so the history survives
 a restart; a record still saying `running` that this process does not know about is shown as `interrupted`.
 """
@@ -67,6 +68,13 @@ class JobManager:
             if series in self._active:
                 current = self._jobs[self._active[series]]
                 raise BusyError(f"series '{series}' is busy: {current.kind} job {current.id} is {current.status}")
+            if self._active:
+                # The models are one shared server. Found on a real run: with two series working at once, a reply for one
+                # series described the other series' story. So only one job runs at a time, whichever series it is for.
+                other_series, other_id = next(iter(self._active.items()))
+                other = self._jobs[other_id]
+                raise BusyError(f"another series is busy: {other.kind} job {other.id} in '{other_series}' is {other.status}; "
+                                "jobs run one at a time because they share the model server. Pause it or wait for it to finish.")
             job = Job(id=datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-") + secrets.token_hex(2),
                       series=series, book=book, kind=kind, params=params)
             self._jobs[job.id] = job
