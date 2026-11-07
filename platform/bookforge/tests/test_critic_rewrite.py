@@ -88,7 +88,7 @@ def test_the_critic_block_is_in_the_notes_only_when_a_score_is_below_the_minimum
     assert _problems_text(book, scene(book), fine) == ""
 
 
-# ── accepting a scene the critic scored low ──────────────────────────────────
+# ── accepting the reasons a scene is flagged ─────────────────────────────────
 
 def critic_flagged(book):
     llm = RuleLLM(qc_rules(critic=(CRITIC, critic([{"beats_covered": 1}] * 9)), revise=(REVISE, reviser({}))))
@@ -97,41 +97,91 @@ def critic_flagged(book):
     return llm
 
 
-def test_a_scene_the_critic_scored_low_can_be_accepted_as_written_and_is_not_written_again(book):
+def test_each_reason_a_scene_is_flagged_for_is_listed_on_its_own(book):
+    from bookforge import ops
+    critic_flagged(book)
+    reasons = ops.flag_reasons(book, SID)
+    assert [(r["key"], r["kind"], r["accepted"]) for r in reasons] == [("critic:beats_covered", "critic", False)]
+    assert reasons[0]["message"] == "the critic scored beats_covered 1 (minimum 3)"
+
+
+def test_a_reason_can_be_accepted_and_the_scene_is_kept_as_written_not_written_again(book):
     from bookforge import ops, scenefiles
     critic_flagged(book)
     kept = scenefiles.best_text(book, SID)
-    waiver = ops.accept_critic(book, SID, "the debt is existing, not hereditary: fine")
-    assert waiver["criteria"] == ["beats_covered"] and waiver["scores"]["beats_covered"] == 1
+    ops.accept_reason(book, SID, "critic:beats_covered", "the debt is existing, not hereditary: fine")
     llm = RuleLLM(qc_rules(critic=(CRITIC, critic([{"beats_covered": 1}] * 9)), revise=(REVISE, reviser({}))))
     go(book, llm)
     assert load_state(book.state_path).items[SID].status == "accepted"
     assert not writes(llm)  # the scene was not written again
-    assert review(book)["critic"] is None  # and the critic was not asked about it again (it still reads the later scenes)
     assert scenefiles.read(scenefiles.final_path(book, SID)).strip() == kept.strip()
-    assert review(book)["critic_waived"]["note"].startswith("the debt is existing")
+    r = review(book)
+    assert r["accepted_reasons"]["critic:beats_covered"]["note"].startswith("the debt is existing") and r["reason_items"] == []
 
 
-def test_accepting_is_refused_for_a_scene_that_is_not_flagged_or_has_other_problems(book):
+def test_accepting_one_reason_leaves_the_others_standing(book):
+    from bookforge import ops
+    from bookforge.qc import scene_notes
+    llm = RuleLLM(qc_rules(critic=(CRITIC, critic([{"beats_covered": 1, "dialogue": 1}] * 9)), revise=(REVISE, reviser({}))))
+    go(book, llm)
+    keys = [r["key"] for r in ops.flag_reasons(book, SID)]
+    assert keys == ["critic:dialogue", "critic:beats_covered"] or sorted(keys) == ["critic:beats_covered", "critic:dialogue"]
+    ops.accept_reason(book, SID, "critic:beats_covered")
+    go(book, RuleLLM(qc_rules(critic=(CRITIC, critic([{"beats_covered": 1, "dialogue": 1}] * 9)), revise=(REVISE, reviser({})))))
+    assert load_state(book.state_path).items[SID].status == "flagged"
+    assert [r["key"] for r in ops.flag_reasons(book, SID)] == ["critic:dialogue"]
+    assert list(scene_notes.read(book, SID)["accepted"]) == ["critic:beats_covered"]
+
+
+def test_accepting_is_refused_for_a_scene_that_is_not_flagged_or_for_a_reason_it_does_not_have(book):
     import pytest
     from bookforge import ops
     from bookforge.errors import BookforgeError
-    from test_flagged_scenes import flag_the_scene
     with pytest.raises(BookforgeError, match="not flagged"):
-        ops.accept_critic(book, SID)
-    flag_the_scene(book)  # flagged by a continuity contradiction, not by the critic
-    with pytest.raises(BookforgeError, match="nothing to accept"):
-        ops.accept_critic(book, SID)
+        ops.accept_reason(book, SID, "critic:beats_covered")
+    critic_flagged(book)
+    with pytest.raises(BookforgeError, match="not one of this scene's reasons"):
+        ops.accept_reason(book, SID, "critic:pacing")
 
 
 def test_an_acceptance_can_be_taken_back(book):
     from bookforge import ops
     from bookforge.qc import scene_notes
     critic_flagged(book)
-    ops.accept_critic(book, SID)
-    assert scene_notes.read(book, SID)["critic_waived"]
-    ops.undo_accept_critic(book, SID)
-    assert scene_notes.read(book, SID)["critic_waived"] is None
+    ops.accept_reason(book, SID, "critic:beats_covered")
+    assert scene_notes.read(book, SID)["accepted"]
+    ops.undo_accept_reason(book, SID, "critic:beats_covered")
+    assert scene_notes.read(book, SID)["accepted"] == {}
+
+
+def test_a_continuity_finding_can_be_accepted_like_any_other_reason(book):
+    from bookforge import ops, scenefiles
+    from test_flagged_scenes import FACT, flag_the_scene
+    flag_the_scene(book)
+    kept = scenefiles.best_text(book, SID)
+    [reason] = ops.flag_reasons(book, SID)
+    assert reason["kind"] == "continuity" and reason["key"] == f"continuity:{FACT}"
+    ops.accept_reason(book, SID, reason["key"], "she wears contacts")
+    from test_flagged_scenes import DRAFTS, FLAGS
+    from qc_fakes import REVISE, reviser
+    go(book, RuleLLM(qc_rules(overrides={SID: DRAFTS()}, continuity=FLAGS, revise=(REVISE, reviser({})))))
+    assert load_state(book.state_path).items[SID].status == "accepted"
+    assert scenefiles.read(scenefiles.final_path(book, SID)).strip() == kept.strip()
+
+
+def test_a_mechanical_problem_can_be_accepted_and_is_then_neither_revised_nor_blocking(book):
+    from bookforge import ops, scenefiles
+    from test_prose import BANNED, good
+    bad = good(SID, 1) + " " + BANNED
+    rules = lambda: qc_rules(overrides={SID: [bad, bad]}, revise=(REVISE, reviser({"unrelated": "x"})))  # noqa: E731  never fixes it
+    go(book, RuleLLM(rules()))
+    [reason] = [r for r in ops.flag_reasons(book, SID)]
+    assert reason["kind"] == "mechanical" and "banned phrase" in reason["message"]
+    ops.accept_reason(book, SID, reason["key"], "the phrase is a quotation")
+    log = []
+    go(book, RuleLLM(qc_rules(overrides={SID: [bad, bad]}, revise=(REVISE, reviser({" the ": " THE "}, log)))))
+    assert load_state(book.state_path).items[SID].status == "accepted" and not log  # nothing was revised for the accepted reason
+    assert BANNED in scenefiles.read(scenefiles.final_path(book, SID))
 
 
 def test_the_critics_beat_verdicts_are_kept_only_when_well_formed():

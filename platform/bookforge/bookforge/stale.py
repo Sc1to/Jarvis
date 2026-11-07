@@ -232,7 +232,7 @@ def accept_as_is(project: Project, sid: str) -> None:
 def _problems(ctx: StepContext, scene: Scene, scenes: list[Scene], text: str, st: SceneStale | None, mech) -> tuple[list[Flag], list[str], str | None]:
     """(passage flags, problems no passage can fix, why the continuity check could not run)."""
     cfg = ctx.project.config.qc
-    flags, unfixable = _mechanical_flags(check_scene(text, mech))
+    flags, unfixable = _mechanical_flags(check_scene(text, mech).blocking)
     error = None
     if (st is None or st.needs_continuity) and cfg.continuity_check:
         cont = check_continuity(ctx, scene, scenes, text, what="scene")

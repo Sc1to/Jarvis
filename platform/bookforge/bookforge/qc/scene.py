@@ -51,9 +51,9 @@ def _choose(ctx, scene: Scene, drafts: dict[str, str], reports: dict[str, Mechan
     return verdict.winner, {"candidates": candidates, "wins": verdict.wins, "pairs": verdict.pairs, "error": verdict.error}
 
 
-def _mechanical_flags(report: MechanicalReport) -> tuple[list[Flag], list[str]]:
+def _mechanical_flags(blocking: list) -> tuple[list[Flag], list[str]]:
     fixable, unfixed = [], []
-    for i in report.blocking:
+    for i in blocking:
         if i.code in FIXABLE_MECHANICAL and i.start is not None:
             fixable.append(Flag("mechanical", i.code, i.message, quote="", start=i.start, end=i.end))
         else:
@@ -111,17 +111,22 @@ def settle_scene(ctx, scene: Scene, scenes: list[Scene], drafts: dict[str, str],
                     "judge": judge, "rounds": []}
 
     critic: CriticReport | None = None
-    waiver = scene_notes.read(ctx.project, scene.id).get("critic_waived")
-    critic_given_up = bool(waiver)  # the author accepted the scene as written: the critic is not asked again
+    accepted = scene_notes.read(ctx.project, scene.id)["accepted"]  # reasons the author accepted: they neither block nor get revised
+    accepted_critic = {k.split(":", 1)[1] for k in accepted if k.startswith("critic:")}
+    critic_given_up = False
     advised: list[str] = []  # whole-scene criteria that call for writing the scene again (see WHOLE_SCENE)
     continuity: ContinuityReport | None = None
     report = drafts_reports[chosen]
+    open_blocking: list = []
+    open_flags: list = []
     unfixable: list[str] = []
     for r in range(cfg.max_revision_rounds + 1):
         report = check_scene(text, mech)
-        flags, unfixable = _mechanical_flags(report)
+        open_blocking = [i for i in report.blocking if scene_notes.mechanical_key(i) not in accepted]
+        flags, unfixable = _mechanical_flags(open_blocking)
         continuity = None
-        if not report.blocking and cfg.continuity_check:
+        open_flags = []
+        if not open_blocking and cfg.continuity_check:
             activity.set(step="checking continuity")
             text_key = _sha(text)
             clean = progress.get("continuity", text_key)
@@ -132,14 +137,15 @@ def settle_scene(ctx, scene: Scene, scenes: list[Scene], drafts: dict[str, str],
                 if not continuity.flags and not continuity.error:
                     progress.put("continuity", text_key, {"questions": continuity.questions, "unsure": continuity.unsure})
             instructions = scene_notes.read(ctx.project, scene.id)["instructions"]
-            for f in continuity.flags:
+            open_flags = [f for f in continuity.flags if scene_notes.continuity_key(f.question) not in accepted]
+            for f in open_flags:
                 if f.fixable:
                     flags.append(Flag("continuity", f.kind, f.message(), quote=f.evidence, fact=f.question,
                                       instruction=instructions.get(f.question, "")))
                 else:
                     unfixable.append(f.message())
-        cheap_ok = not report.blocking and not (continuity and continuity.flags)
-        if cheap_ok and cfg.critic_check and not critic_given_up and not advised and (critic is None or critic.needs_work(cfg.critic_min_score)):
+        cheap_ok = not open_blocking and not open_flags
+        if cheap_ok and cfg.critic_check and not critic_given_up and not advised and (critic is None or critic.needs_work(cfg.critic_min_score, accepted_critic)):
             activity.set(step="the critic is reading it")
             saved = progress.get("critic", _sha(text))
             if saved is not None:
@@ -150,16 +156,16 @@ def settle_scene(ctx, scene: Scene, scenes: list[Scene], drafts: dict[str, str],
                     progress.put("critic", _sha(text), critic.to_dict())
             if critic.error:
                 critic_given_up = True
-            elif critic.needs_work(cfg.critic_min_score):
-                whole = [c for c in WHOLE_SCENE if critic.scores.get(c, 5) < cfg.critic_min_score]
+            elif critic.needs_work(cfg.critic_min_score, accepted_critic):
+                whole = [c for c in WHOLE_SCENE if c in critic.low(cfg.critic_min_score, accepted_critic)]
                 if whole and can_rewrite and cfg.critic_rewrite:
                     # A missing beat or uneven pacing is not a problem of three lines. The caller writes the scene again with these
                     # notes, so patching its lines now would only spend time: record the advice and leave the critic's lines alone.
                     advised = whole
                 else:
-                    flags += critic_flags(ctx.project, critic)
-        record = {"round": r, "mechanical_blocking": [i.message for i in report.blocking],
-                  "continuity_flags": [f.message() for f in continuity.flags] if continuity else [],
+                    flags += critic_flags(ctx.project, critic, accepted_critic)
+        record = {"round": r, "mechanical_blocking": [i.message for i in open_blocking],
+                  "continuity_flags": [f.message() for f in open_flags],
                   "critic_lowest": critic.lowest if critic and critic.scores else None, "revisions": []}
         review["rounds"].append(record)
         if not flags or r == cfg.max_revision_rounds:
@@ -176,17 +182,23 @@ def settle_scene(ctx, scene: Scene, scenes: list[Scene], drafts: dict[str, str],
             break
         text = revision.text
 
-    reasons = [i.message for i in report.blocking] + unfixable
+    # What still stands in the way, one item per reason, so each can be accepted on its own (key, kind, message).
+    items = [{"key": scene_notes.mechanical_key(i), "kind": "mechanical", "message": i.message} for i in open_blocking]
+    items += [{"key": scene_notes.continuity_key(f.question), "kind": "continuity", "message": f.message()} for f in open_flags]
+    low = critic.low(cfg.critic_min_score, accepted_critic) if critic else []
+    items += [{"key": scene_notes.critic_key(c), "kind": "critic", "message": f"the critic scored {c} {critic.scores[c]} (minimum {cfg.critic_min_score})"} for c in low]
+    items = list({i["key"]: i for i in items}.values())  # the same phrase twice is one reason (accepting it covers both)
+    reasons = [i.message for i in open_blocking] + unfixable
     if continuity:
-        reasons += [f.message() for f in continuity.flags if f.message() not in reasons]
-    if critic and critic.needs_work(cfg.critic_min_score):
-        low = [c for c, v in critic.scores.items() if v < cfg.critic_min_score]
+        reasons += [f.message() for f in open_flags if f.message() not in reasons]
+    if low:
         reasons.append(f"the critic scored {', '.join(f'{c} {critic.scores[c]}' for c in low)} (minimum {cfg.critic_min_score})")
     reasons = list(dict.fromkeys(reasons))
     review.update({"final_mechanical": report.to_dict(), "continuity": continuity.to_dict() if continuity else None,
-                   "critic": critic.to_dict() if critic else None, "revised": text != drafts[chosen], "unresolved": reasons})
+                   "critic": critic.to_dict() if critic else None, "revised": text != drafts[chosen], "unresolved": reasons,
+                   "reason_items": items})
+    if accepted:
+        review["accepted_reasons"] = accepted
     if advised:
         review["rewrite_advised"] = advised
-    if waiver:
-        review["critic_waived"] = waiver
     return SceneQC(text=text, chosen=chosen, review=review, reasons=reasons)

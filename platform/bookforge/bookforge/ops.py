@@ -256,37 +256,47 @@ def _flagged_review(project: Project, scene_id: str) -> dict:
         return {}
 
 
-def accept_critic(project: Project, scene_id: str, note: str = "") -> dict:
-    """Accept a flagged scene as written although the critic scored it below the minimum.
+def flag_reasons(project: Project, scene_id: str) -> list[dict]:
+    """Every reason a flagged scene is flagged, each as {key, kind (mechanical|continuity|critic), message, accepted, note}.
 
-    Only for a scene whose reasons are all the critic's: a mechanical or continuity problem still has to be fixed. The text is
-    kept as it is; the next run checks it mechanically and for continuity (not with the critic again) and carries on with the
-    summary and extraction. Returns the waiver.
+    Each one can be accepted on its own; the scene goes on once every reason is fixed or accepted. A scene whose writer reply was
+    cut off has no text and so no reasons to accept."""
+    from .qc import scene_notes
+    review = _flagged_review(project, scene_id)
+    accepted = scene_notes.read(project, scene_id)["accepted"]
+    out = []
+    for item in review.get("reason_items") or []:
+        a = accepted.get(item["key"])
+        out.append({**item, "accepted": a is not None, "note": a["note"] if a else ""})
+    return out
+
+
+def accept_reason(project: Project, scene_id: str, key: str, note: str = "") -> dict:
+    """Accept one reason a scene is flagged: the text is kept as it is and this reason no longer blocks it.
+
+    Applied the next run: the other reasons are still revised or checked, and once none is left the scene is accepted (summary,
+    extraction). Returns the reason.
     """
+    from . import scenefiles
     from .qc import scene_notes
     if project.state.items.get(scene_id, Item()).status != "flagged":
         raise BookforgeError(f"{scene_id} is not flagged")
-    review = _flagged_review(project, scene_id)
-    minimum = project.config.qc.critic_min_score
-    critic = review.get("critic") or {}
-    scores = {c: v for c, v in (critic.get("scores") or {}).items() if isinstance(v, int)}
-    low = [c for c, v in scores.items() if v < minimum]
-    if not low:
-        raise BookforgeError("the critic did not score this scene below the minimum; there is nothing to accept")
-    others = [b for b in review.get("blocking") or [] if not b.startswith("the critic scored")]
-    if others:
-        raise BookforgeError("these have to be fixed first, accepting only covers the critic's score: " + "; ".join(others))
-    scene_notes.waive_critic(project, scene_id, low, scores, note)
+    reasons = flag_reasons(project, scene_id)
+    found = next((r for r in reasons if r["key"] == key), None)
+    if found is None:
+        if not reasons:
+            raise BookforgeError("this scene has no text to accept (see its note); run it again, or write the scene yourself")
+        raise BookforgeError("that is not one of this scene's reasons (see its review)")
+    scene_notes.accept(project, scene_id, key, found["message"], note)
     if project.config.git.commit_each_step:
-        from . import scenefiles
-        vcs.commit(project.root, f"{scene_id}: you accepted the scene as written ({', '.join(low)} stay below {minimum})", [scenefiles.scene_dir(project, scene_id)])
-    return scene_notes.read(project, scene_id)["critic_waived"]
+        vcs.commit(project.root, f"{scene_id}: you accepted a reason it was flagged: {found['message']}"[:200], [scenefiles.scene_dir(project, scene_id)])
+    return {**found, "accepted": True, "note": " ".join(note.split())}
 
 
-def undo_accept_critic(project: Project, scene_id: str) -> None:
+def undo_accept_reason(project: Project, scene_id: str, key: str) -> None:
     from .qc import scene_notes
     _flagged_review(project, scene_id)
-    scene_notes.unwaive_critic(project, scene_id)
+    scene_notes.unaccept(project, scene_id, key)
 
 
 # ── writing a planning layer again ────────────────────────────────────────────

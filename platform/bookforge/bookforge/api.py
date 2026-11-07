@@ -174,6 +174,7 @@ class RedoBody(BaseModel):
 
 
 class AcceptBody(BaseModel):
+    key: str
     note: str = ""
 
 
@@ -400,23 +401,24 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
             "review": review,
             "findings": scene_notes.read(project, scene_id),
             "critic_min_score": project.config.qc.critic_min_score,
+            "reasons": ops.flag_reasons(project, scene_id) if item.status == "flagged" else [],
             "rubric": {c: critic_mod.rubric_line(project, c) for c in critic_mod.CRITERIA},
             "drafts": {p.stem: p.read_text(encoding="utf-8") for p in sorted(scenefiles.scene_dir(project, scene_id).glob("draft-*.md"))},
             "change_requests": [c.model_dump() for c in change_requests.list_requests(project) if c.proposed_by == scene_id],
         })
 
-    @router.post("/series/{series}/books/{book}/scenes/{scene_id}/accept-critic")
-    def accept_critic(series: str, book: str, scene_id: str, body: AcceptBody):
+    @router.post("/series/{series}/books/{book}/scenes/{scene_id}/accept-reason")
+    def accept_reason(series: str, book: str, scene_id: str, body: AcceptBody):
         project = open_project(series, book)
         require_idle(series)
-        return ok(ops.accept_critic(project, scene_id, body.note))
+        return ok(ops.accept_reason(project, scene_id, body.key, body.note))
 
-    @router.delete("/series/{series}/books/{book}/scenes/{scene_id}/accept-critic")
-    def undo_accept_critic(series: str, book: str, scene_id: str):
+    @router.delete("/series/{series}/books/{book}/scenes/{scene_id}/accept-reason")
+    def undo_accept_reason(series: str, book: str, scene_id: str, key: str = Query(...)):
         project = open_project(series, book)
         require_idle(series)
-        ops.undo_accept_critic(project, scene_id)
-        return ok({"scene": scene_id, "accepted": False})
+        ops.undo_accept_reason(project, scene_id, key)
+        return ok({"scene": scene_id, "key": key, "accepted": False})
 
     @router.post("/series/{series}/books/{book}/scenes/{scene_id}/findings")
     def scene_finding(series: str, book: str, scene_id: str, body: FindingBody):

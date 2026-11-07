@@ -116,9 +116,9 @@ def test_notes_can_be_taken_back_and_are_kept_per_scene(book):
     flag_the_scene(book)
     ops.decide_finding(book, SID, FACT, "dismiss")
     assert scene_notes.path(book, SID).exists()
-    assert ops.decide_finding(book, SID, FACT, "clear") == {"dismissed": [], "instructions": {}, "critic_waived": None}
+    assert ops.decide_finding(book, SID, FACT, "clear") == {"dismissed": [], "instructions": {}, "accepted": {}}
     assert not scene_notes.path(book, SID).exists()
-    assert scene_notes.read(book, "b1.ch02.s1") == {"dismissed": [], "instructions": {}, "critic_waived": None}
+    assert scene_notes.read(book, "b1.ch02.s1") == {"dismissed": [], "instructions": {}, "accepted": {}}
 
 
 def test_a_finding_the_scene_does_not_have_is_refused(book):
