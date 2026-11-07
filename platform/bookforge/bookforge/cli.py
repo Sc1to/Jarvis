@@ -158,21 +158,32 @@ def finding_cmd(
 def accept_scene_cmd(
     path: Path = PathArg,
     scene: str = typer.Argument(..., help="The flagged scene, like b1.ch07.s2"),
+    reason: Optional[str] = typer.Option(None, "--reason", help="Accept this reason (its key, as listed without options); each reason is its own decision"),
+    all_reasons: bool = typer.Option(False, "--all", help="Accept every reason it is flagged for"),
     note: str = typer.Option("", "--note", help="Why you accept it"),
-    undo: bool = typer.Option(False, "--undo", help="Take the acceptance back; the critic is asked again"),
+    undo: bool = typer.Option(False, "--undo", help="Take the acceptance of --reason back"),
     book: str = BookOpt,
 ) -> None:
-    """Accept a scene the critic scored below the minimum, as written. Read `status`/the review first: it shows why it was flagged."""
+    """List why a scene is flagged (key, message); with --reason or --all accept the reasons you judge harmless, as written."""
     try:
         project = Project.open(path, book)
         if undo:
-            ops.undo_accept_critic(project, scene)
-            typer.echo(f"{scene}: acceptance taken back")
-            return
-        waiver = ops.accept_critic(project, scene, note)
+            if not reason:
+                raise BookforgeError("--undo needs --reason KEY")
+            ops.undo_accept_reason(project, scene, reason)
+        elif all_reasons or reason:
+            keys = [r["key"] for r in ops.flag_reasons(project, scene) if not r["accepted"]] if all_reasons else [reason]
+            for k in keys:
+                ops.accept_reason(project, scene, k, note)
+        reasons = ops.flag_reasons(project, scene)
     except BookforgeError as e:
         _fail(e)
-    typer.echo(f"{scene}: accepted as written ({', '.join(waiver['criteria'])} stay below the minimum); applied the next time it runs")
+    if not reasons:
+        typer.echo("no reasons to accept (the scene is not flagged for anything that has text to keep)")
+    for r in reasons:
+        typer.echo(f"[{'accepted' if r['accepted'] else 'open'}] {r['key']}\n    {r['message']}")
+    if reasons and all(r["accepted"] for r in reasons):
+        typer.echo("every reason is accepted: the scene is finished the next time it runs")
 
 
 @app.command("add-book")

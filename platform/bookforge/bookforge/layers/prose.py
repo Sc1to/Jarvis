@@ -181,7 +181,7 @@ def _problems_text(project, scene: Scene, review: dict) -> str:
     lines: list[str] = []
     for f in continuity.get("flags") or []:
         q = f.get("question", "")
-        if not q or q in notes["dismissed"]:
+        if not q or q in notes["dismissed"] or scene_notes.continuity_key(q) in notes["accepted"]:
             continue
         line = f"- It contradicted this fixed fact: {q}." + (f" (It said: \"{f['evidence']}\")" if f.get("evidence") else "")
         if notes["instructions"].get(q):
@@ -190,7 +190,8 @@ def _problems_text(project, scene: Scene, review: dict) -> str:
     # The critic: what it scored too low, what each criterion asks for, and the three lines it quoted with what is wrong with them.
     critic = review.get("critic") or {}
     minimum = project.config.qc.critic_min_score
-    low = {c: v for c, v in (critic.get("scores") or {}).items() if isinstance(v, int) and v < minimum}
+    low = {c: v for c, v in (critic.get("scores") or {}).items()
+           if isinstance(v, int) and v < minimum and scene_notes.critic_key(c) not in notes["accepted"]}
     if low:
         for c, v in low.items():
             lines.append(f"- The critic scored {c} {v} (minimum {minimum}): {rubric_line(project, c)}")
@@ -227,8 +228,13 @@ def write_scene(ctx: StepContext, scene: Scene, scenes: list[Scene], drafts: int
         # The author's own text: only the mechanical checks apply, and the file is never rewritten.
         text, source, reasons = adopted.strip(), "adopted", []
         report = check_scene(text, check_ctx)
-        review.update(source=source, chosen="final", mechanical={"final": report.to_dict()})
-        reasons = [i.message for i in report.blocking]
+        accepted = scene_notes.read(project, sid)["accepted"]
+        left = [i for i in report.blocking if scene_notes.mechanical_key(i) not in accepted]
+        review.update(source=source, chosen="final", mechanical={"final": report.to_dict()},
+                      reason_items=[{"key": scene_notes.mechanical_key(i), "kind": "mechanical", "message": i.message} for i in left])
+        if accepted:
+            review["accepted_reasons"] = accepted
+        reasons = [i.message for i in left]
     else:
         flagged_before = _item(project, sid).status == "flagged"
         prior_review = _saved_review(project, sid) if flagged_before else {}
@@ -237,8 +243,9 @@ def write_scene(ctx: StepContext, scene: Scene, scenes: list[Scene], drafts: int
         result = None
         # Revise what was written, with what was found, before throwing it away and starting again. Not when the critic said the scene as a
         # whole is the problem (a missing beat, uneven pacing): patching lines cannot fix that, only writing it again can.
-        waived = bool(scene_notes.read(project, sid).get("critic_waived"))  # accepted as written: keep the text, whatever the critic advised
-        if flagged_before and (project.config.qc.revise_flagged or waived) and (waived or not (rewrite_ok and prior_review.get("rewrite_advised"))):
+        accepted = scene_notes.read(project, sid)["accepted"]  # reasons the author accepted: keep the text, whatever the critic advised
+        advised_open = [c for c in prior_review.get("rewrite_advised") or [] if scene_notes.critic_key(c) not in accepted]
+        if flagged_before and (project.config.qc.revise_flagged or accepted) and (accepted or not (rewrite_ok and advised_open)):
             saved = scenefiles.best_text(project, sid)
             if saved and saved.strip():
                 _set_status(project, sid, "drafted")

@@ -40,8 +40,12 @@ class CriticReport:
     def lowest(self) -> int:
         return min(self.scores.values()) if self.scores else 5
 
-    def needs_work(self, minimum: int) -> bool:
-        return bool(self.scores) and self.lowest < minimum
+    def low(self, minimum: int, ignore=()) -> list[str]:
+        """The criteria scored under the minimum, except those the author accepted."""
+        return [c for c, v in self.scores.items() if v < minimum and c not in ignore]
+
+    def needs_work(self, minimum: int, ignore=()) -> bool:
+        return bool(self.low(minimum, ignore))
 
     def to_dict(self) -> dict:
         return {"scores": self.scores, "lowest": self.lowest if self.scores else None, "error": self.error,
@@ -113,8 +117,8 @@ def run_critic(ctx, scene: Scene, text: str) -> CriticReport:
     return CriticReport(scores={c: data["scores"][c] for c in CRITERIA}, weakest=weakest, beats=beats)
 
 
-def critic_flags(project, report: CriticReport) -> list[Flag]:
-    """The critic's three weakest lines as revision flags, each with the rubric line it falls under."""
+def critic_flags(project, report: CriticReport, ignore=()) -> list[Flag]:
+    """The critic's three weakest lines as revision flags, each with the rubric line it falls under (not for accepted criteria)."""
     return [Flag(source="critic", code=f"critic:{w.criterion}", criterion=w.criterion, quote=w.quote,
                  message=f"{w.issue} (criterion {w.criterion}: {rubric_line(project, w.criterion)})")
-            for w in report.weakest]
+            for w in report.weakest if w.criterion not in ignore]

@@ -2,7 +2,7 @@ import { Fragment, useState, type ReactNode } from 'react'
 import { bookPath, del, post } from '../lib/api'
 import { useAction, useApi } from '../lib/hooks'
 import { href } from '../lib/route'
-import type { BookStatus, CriticReview, SceneDetail, SceneFindings } from '../lib/types'
+import type { BookStatus, CriticReview, FlagReason, SceneDetail, SceneFindings } from '../lib/types'
 import { Button, Card, Empty, ErrorBanner, Loading, StatusBadge } from '../components/ui'
 import { ChangeDiff } from './Inbox'
 
@@ -142,35 +142,89 @@ const VERDICTS: Record<string, { label: string; cls: string }> = {
   out_of_order: { label: 'out of order', cls: 'bg-red-100 text-red-800' },
 }
 
-/** Why the critic marked the scene down, with everything it based that on, and the choice to accept the scene anyway. */
-function CriticWhy({ detail, scenePath, locked, onDone }: { detail: SceneDetail; scenePath: string; locked: boolean; onDone: () => void }) {
+/** Every reason a scene is flagged, each with its own decision: accept it as it is, or leave it to be fixed. */
+function ReasonsCard({ detail, scenePath, locked, onDone }: { detail: SceneDetail; scenePath: string; locked: boolean; onDone: () => void }) {
+  const reasons = detail.reasons ?? []
+  const [showText, setShowText] = useState(false)
+  const review = detail.review
+  if (!reasons.length) return null
+  const evidence = (r: FlagReason) => review?.continuity?.flags.find((f) => `continuity:${f.question}` === r.key)
+  const quotes = [
+    ...(review?.critic?.weakest?.map((w) => w.quote) ?? []),
+    ...reasons.filter((r) => r.kind === 'continuity').map((r) => evidence(r)?.evidence ?? '').filter(Boolean),
+  ]
+  const open = reasons.filter((r) => !r.accepted).length
+  return (
+    <Card title="Why this scene is flagged" tone="warn" right={<span className="text-xs text-slate-600">{open ? `${open} of ${reasons.length} still open` : 'all accepted'}</span>}>
+      <div className="space-y-3">
+        <p className="text-xs text-slate-600">Each reason is its own decision. Accepting one keeps the text as it is for that reason only; the others are still fixed or checked on the next Run.</p>
+        <ul className="space-y-2">{reasons.map((r) => <ReasonRow key={r.key} reason={r} found={evidence(r)} scenePath={scenePath} locked={locked || detail.status !== 'flagged'} onDone={onDone} />)}</ul>
+        {!open && detail.status === 'flagged' && <p className="text-sm text-emerald-800">Every reason is accepted: the scene is finished the next time you press Run. Its text is kept, not written again.</p>}
+        <div className="space-y-2">
+          <Button onClick={() => setShowText((v) => !v)}>{showText ? 'Hide the scene' : 'Read the scene with the quoted lines marked'}</Button>
+          {showText && detail.text && <div className="rounded-md border border-slate-200 bg-white p-3"><Prose text={detail.text} quotes={quotes} /></div>}
+          <p className="text-xs text-slate-600">The checks quote only a few lines. A low score or a finding can have causes they did not quote, so read the scene before accepting.</p>
+        </div>
+      </div>
+    </Card>
+  )
+}
+
+const KIND_LABEL: Record<string, string> = { mechanical: 'rule check', continuity: 'continuity', critic: 'critic' }
+
+function ReasonRow({ reason, found, scenePath, locked, onDone }: {
+  reason: FlagReason; found?: { evidence: string; fact_says?: string; text_says?: string }; scenePath: string; locked: boolean; onDone: () => void
+}) {
   const act = useAction()
   const [note, setNote] = useState('')
-  const [showText, setShowText] = useState(false)
+  const send = async (accept: boolean) => {
+    if (accept && !window.confirm(`Accept this reason?\n\n${reason.message}\n\nThe text is kept as it is.`)) return
+    const ok = await act.run(() => (accept ? post(`${scenePath}/accept-reason`, { key: reason.key, note }) : del(`${scenePath}/accept-reason?key=${encodeURIComponent(reason.key)}`)))
+    if (ok) onDone()
+  }
+  return (
+    <li className="space-y-2 rounded-md border border-slate-200 bg-white p-2">
+      <div className="flex flex-wrap items-start gap-2">
+        <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-700">{KIND_LABEL[reason.kind] ?? reason.kind}</span>
+        <p className="min-w-0 flex-1 text-sm [overflow-wrap:anywhere]">{reason.message}</p>
+        {reason.accepted && <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs text-emerald-800">accepted</span>}
+      </div>
+      {found?.evidence && <blockquote className="border-l-4 border-slate-300 pl-2 text-xs italic text-slate-600">“{found.evidence}”</blockquote>}
+      {found && (found.fact_says || found.text_says) && <p className="text-xs text-slate-600">Fact says: {found.fact_says || '—'} · Passage says: {found.text_says || '—'}</p>}
+      <ErrorBanner message={act.error} onClose={act.clear} />
+      {reason.accepted ? (
+        <p className="flex flex-wrap items-center gap-2 text-xs text-slate-600">{reason.note ? <>Your note: “{reason.note}”</> : 'Accepted as it is.'}
+          <Button disabled={act.busy || locked} onClick={() => send(false)}>Take this back</Button></p>
+      ) : (
+        <div className="space-y-2">
+          <label className="block text-xs font-medium text-slate-700">Why is this fine as it is? (optional)
+            <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} disabled={act.busy || locked}
+              className="mt-1 block w-full rounded-md border border-slate-300 p-2 text-sm font-normal" />
+          </label>
+          <Button kind="primary" disabled={act.busy || locked} onClick={() => send(true)}>Accept this reason</Button>
+        </div>
+      )}
+    </li>
+  )
+}
+
+/** What the critic based its scores on: the evidence for a critic reason. */
+function CriticEvidence({ detail }: { detail: SceneDetail }) {
   const review = detail.review
   const critic = review?.critic
   const minimum = detail.critic_min_score ?? 3
-  const waiver = detail.findings?.critic_waived
   if (!review || !critic || critic.error || !critic.scores) return null
   const low = Object.entries(critic.scores).filter(([, v]) => v < minimum).map(([c]) => c)
-  if (!low.length && !waiver) return null
+  if (!low.length) return null
   const label = (c: string) => c.replace(/_/g, ' ')
-  const others = (review.blocking ?? []).filter((b) => !b.startsWith('the critic scored'))
-  const quotes = critic.weakest?.map((w) => w.quote) ?? []
   const verdicts = new Map((critic.beats ?? []).map((b) => [b.beat, b]))
   const first: CriticReview | null | undefined = review.rewrote_with_critic_notes ? review.first_attempt_critic : null
-  const send = async (accept: boolean) => {
-    const ok = accept
-      ? window.confirm(`Accept this scene as written?\n\n${(waiver?.criteria ?? low).map((c) => `${label(c)} ${critic.scores[c]}`).join(', ')} stay below the minimum of ${minimum}. The text is kept; it is still checked for continuity and the rules.`)
-      : true
-    if (ok && (await act.run(() => (accept ? post(`${scenePath}/accept-critic`, { note }) : del(`${scenePath}/accept-critic`))))) onDone()
-  }
   return (
-    <Card title={waiver ? 'The critic marked this down, and you accepted it' : 'Why the critic marked this down'} tone="warn">
+    <Card title="The critic's evidence">
       <div className="space-y-4">
         <div>
           <Scores scores={critic.scores} />
-          <p className="mt-2 text-sm text-amber-900">Minimum score is {minimum}. Below it: {low.length ? low.map((c) => `${label(c)} (${critic.scores[c]})`).join(', ') : 'none now'}.</p>
+          <p className="mt-2 text-sm text-amber-900">Minimum score is {minimum}. Below it: {low.map((c) => `${label(c)} (${critic.scores[c]})`).join(', ')}.</p>
           {first && <p className="mt-1 text-xs text-slate-600">This is the second attempt. Before the scene was written again the critic gave: {Object.entries(first.scores).map(([c, v]) => `${label(c)} ${v}`).join(', ')}.</p>}
         </div>
         {low.map((c) => detail.rubric?.[c] && (
@@ -192,7 +246,7 @@ function CriticWhy({ detail, scenePath, locked, onDone }: { detail: SceneDetail;
               )
             })}
           </ol>
-          {!verdicts.size && <p className="mt-1 text-xs text-slate-500">The critic gave no verdict per beat for this attempt (it was reviewed before that was asked). Read the beats against the text below.</p>}
+          {!verdicts.size && <p className="mt-1 text-xs text-slate-500">The critic gave no verdict per beat for this attempt (it was reviewed before that was asked). Read the beats against the text.</p>}
         </div>
         <div className="space-y-2">
           <h3 className="text-sm font-medium">The lines the critic quoted</h3>
@@ -202,32 +256,7 @@ function CriticWhy({ detail, scenePath, locked, onDone }: { detail: SceneDetail;
               <span className="mt-0.5 block text-xs text-slate-700">{label(w.criterion)}: {w.issue}</span>
             </blockquote>
           ))}
-          <p className="text-xs text-slate-600">The critic quotes only three lines. A low score can have causes it did not quote, so read the scene before accepting it.</p>
-          <Button onClick={() => setShowText((s) => !s)}>{showText ? 'Hide the scene' : 'Read the scene with these lines marked'}</Button>
-          {showText && detail.text && <div className="rounded-md border border-slate-200 bg-white p-3"><Prose text={detail.text} quotes={quotes} /></div>}
         </div>
-        <ErrorBanner message={act.error} onClose={act.clear} />
-        {waiver ? (
-          <div className="space-y-1 rounded-md bg-white p-2 text-sm">
-            <p>Accepted as written: {waiver.criteria.map((c) => `${label(c)} ${waiver.scores[c]}`).join(', ')} stay below the minimum.{waiver.note && <> Your note: “{waiver.note}”</>}</p>
-            {detail.status === 'flagged' && <p className="text-xs text-slate-600">The scene is accepted the next time you press Run. The text is kept, not written again.</p>}
-            <Button disabled={act.busy || locked} onClick={() => send(false)}>Take this back</Button>
-          </div>
-        ) : others.length > 0 ? (
-          <div className="rounded-md bg-white p-2 text-sm">
-            <p className="font-medium">This scene cannot be accepted yet. These still have to be fixed:</p>
-            <ul className="list-disc pl-5">{others.map((o) => <li key={o}>{o}</li>)}</ul>
-          </div>
-        ) : detail.status === 'flagged' ? (
-          <div className="space-y-2 rounded-md bg-white p-2">
-            <label className="block text-xs font-medium text-slate-700">Why is this fine as it is? (optional)
-              <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} disabled={act.busy || locked}
-                placeholder="For example: the debt only needs to exist; it does not need to be hereditary here."
-                className="mt-1 block w-full rounded-md border border-slate-300 p-2 text-sm font-normal" />
-            </label>
-            <Button kind="primary" disabled={act.busy || locked} onClick={() => send(true)}>Accept as written</Button>
-          </div>
-        ) : null}
       </div>
     </Card>
   )
@@ -239,10 +268,11 @@ function ReviewPanel({ detail, scenePath, locked, onDone }: { detail: SceneDetai
   if (!review) return <Empty>No review yet: this scene has not been written.</Empty>
   return (
     <div className="space-y-3">
-      {review.blocking?.length ? (
+      {review.blocking?.length && !detail.reasons?.length ? (
         <Card title="Needs you" tone="warn"><ul className="list-disc space-y-1 pl-5 text-sm">{review.blocking.map((b) => <li key={b}>{b}</li>)}</ul></Card>
       ) : null}
-      <CriticWhy detail={detail} scenePath={scenePath} locked={locked} onDone={onDone} />
+      <ReasonsCard detail={detail} scenePath={scenePath} locked={locked} onDone={onDone} />
+      <CriticEvidence detail={detail} />
       {review.rounds?.length ? (
         <Card title="Revision rounds">
           <ul className="space-y-3 text-sm">
