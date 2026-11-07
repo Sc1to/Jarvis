@@ -285,5 +285,11 @@ class HttpLLMClient:
 
 
 def build_client(project) -> HttpLLMClient:
-    """The real client for a project, logging to books/<book>/logs/calls.jsonl."""
+    """The real client for a project, logging to books/<book>/logs/calls.jsonl.
+
+    Called when a run starts, from the service's job thread or the command line: if the models last served a different
+    series, they are unloaded first (see series_switch.py).
+    """
+    from .series_switch import flush_if_series_changed
+    flush_if_series_changed(project.root)
     return HttpLLMClient(project.config, CallLog(project.book_dir / "logs" / "calls.jsonl"))

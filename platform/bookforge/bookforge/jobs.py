@@ -56,7 +56,6 @@ class JobManager:
         self._active: dict[str, str] = {}  # series -> job id
         self._threads: dict[str, threading.Thread] = {}
         self._stops: dict[str, threading.Event] = {}
-        self.last_series: str | None = None  # the series of the most recent job started by this process
 
     def busy(self, series: str) -> Job | None:
         with self._lock:
@@ -80,7 +79,6 @@ class JobManager:
                       series=series, book=book, kind=kind, params=params)
             self._jobs[job.id] = job
             self._active[series] = job.id
-            self.last_series = series
             self._stops[job.id] = threading.Event()
         self._save(root, job)
         thread = threading.Thread(target=self._run, args=(root, job, fn), name=f"bookforge-{job.id}", daemon=True)
