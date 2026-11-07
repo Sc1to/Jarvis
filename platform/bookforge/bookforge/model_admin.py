@@ -260,6 +260,26 @@ def choose(series_root: Path, target: str, base_url: str | None, model: str | No
     return {**overview(new, transport), "notes": notes, "unloaded": unloaded}
 
 
+def unload_all(config: Config, transport: httpx.BaseTransport | None = None) -> list[str]:
+    """Unload every Ollama model this configuration uses, so the next request starts from a clean model.
+
+    Found on a real run: a model that stayed loaded between two series answered one series' request with the other
+    series' characters, although the prompt held none of them and nothing else was running. The same prompt sent to a
+    freshly loaded model gave the right answer.
+    """
+    pairs = {(config.endpoint(n).base_url, config.endpoint(n).model) for n in config.model_names()}
+    done: list[str] = []
+    for base_url, model in sorted(p for p in pairs if p[1] and backend_of(p[0]) == "ollama"):
+        try:
+            with httpx.Client(timeout=httpx.Timeout(PROBE_TIMEOUT), transport=transport) as client:
+                r = client.post(_root(base_url) + "/api/generate", json={"model": model, "keep_alive": 0})
+            if r.status_code == 200:
+                done.append(model)
+        except httpx.HTTPError as e:
+            log.warning("could not unload %s: %s", model, e)
+    return done
+
+
 def _unload_unused(before: dict, new: Config, transport: httpx.BaseTransport | None) -> list[str]:
     """Ollama keeps a model in memory for minutes after its last request: unload the ones no role uses any more."""
     in_use = {(new.endpoint(n).base_url, new.endpoint(n).model) for n in new.model_names()}

@@ -58,10 +58,13 @@ def ask_until_valid(
     text = clean_reply(ctx.llm.complete(role, messages, **options), strip_preamble)
     hard = validate(text)
     soft: list[str] = [] if hard or soft_validate is None else soft_validate(text)
+    kept: tuple[str, list[str]] | None = None  # the last reply that passed the hard checks, with the review's complaints about it
     for attempt in range(1, rounds + 1):
         problems = hard or soft
         if not problems:
             break
+        if not hard:
+            kept = (text, soft)
         log.info("%s: reply has %d problem(s); correction round %d/%d", label, len(problems), attempt, rounds)
         messages = messages + [
             {"role": "assistant", "content": text},
@@ -70,6 +73,12 @@ def ask_until_valid(
         text = clean_reply(ctx.llm.complete(role, messages, **options), strip_preamble)
         hard = validate(text)
         soft = [] if hard or soft_validate is None else soft_validate(text)
+    if hard and kept is not None:
+        # A correction that only answered the review's complaints broke a reply that was valid (seen: the model answered in the
+        # critic's JSON instead of the plan). A valid reply with open review notes is the author's call, not a failure.
+        log.info("%s: a correction made a valid reply invalid (%s); keeping the earlier reply", label, hard[0])
+        text, soft = kept
+        hard = []
     if hard:
         raise LayerError(f"{label} still has problems after {rounds} correction round(s): " + "; ".join(hard))
     if soft and soft_sink is not None:
