@@ -30,7 +30,7 @@ layers:                                # model used for the refine step; review 
   acts:              {model: critic, count: [3, 4], checkpoint: structure}
   chapters:          {model: critic, count: [25, 35], checkpoint: structure}
   scenes:            {model: critic, per_chapter: [2, 4], checkpoint: structure}
-  prose:             {model: writer, drafts: 2, words: [1500, 3000]}   # max_tokens: 5100 would set the most one draft may use (default: the longest words x 1.6 + 300)
+  prose:             {model: writer, drafts: 2, words: [1500, 3000]}   # retry_flagged: after (flagged scenes last) or inline (book order); max_tokens: 5100 would set the most one draft may use (default: the longest words x 1.6 + 300)
 
 research:
   enabled: true

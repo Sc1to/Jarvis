@@ -13,14 +13,16 @@ Warnings from the mechanical checks, hesitant continuity answers and critic scor
 in the review but never revised.
 """
 
+import hashlib
+import json
 from dataclasses import dataclass, field
 
-from .. import activity
+from .. import activity, scenefiles
 from ..bible.models import Scene
 from ..errors import LayerError
 from . import scene_notes
 from .continuity import ContinuityReport, check_continuity
-from .critic import WHOLE_SCENE, CriticReport, critic_flags, run_critic
+from .critic import WHOLE_SCENE, CriticReport, Weak, critic_flags, run_critic
 from .judge import choose_draft
 from .mechanical import CheckContext, MechanicalReport, all_banned, check_scene
 from .revise import Flag, revise_text
@@ -59,10 +61,51 @@ def _mechanical_flags(report: MechanicalReport) -> tuple[list[Flag], list[str]]:
     return fixable, unfixed
 
 
+def _sha(*parts: str) -> str:
+    return hashlib.sha256("\x00".join(p.strip() for p in parts).encode("utf-8")).hexdigest()[:16]  # a draft read back from its file differs only in whitespace
+
+
+class Progress:
+    """The expensive checks a scene already passed, kept in progress.json while the scene is being settled. A run that is paused or
+    fails therefore does not repeat the judge, a clean continuity check or a critique of the same text. Keys are hashes of the text."""
+
+    def __init__(self, project, scene_id: str):
+        self.path = scenefiles.progress_path(project, scene_id)
+        try:
+            self.data = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            self.data = {}
+        if not isinstance(self.data, dict):
+            self.data = {}
+
+    def get(self, kind: str, key: str):
+        entry = self.data.get(kind)
+        return entry.get(key) if isinstance(entry, dict) else None
+
+    def put(self, kind: str, key: str, value) -> None:
+        self.data.setdefault(kind, {})[key] = value
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.path.write_text(json.dumps(self.data, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass  # progress is an optimisation, never a reason to fail a scene
+
+
+def clear_progress(project, scene_id: str) -> None:
+    scenefiles.progress_path(project, scene_id).unlink(missing_ok=True)
+
+
 def settle_scene(ctx, scene: Scene, scenes: list[Scene], drafts: dict[str, str], mech: CheckContext, can_rewrite: bool = False) -> SceneQC:
     cfg = ctx.project.config.qc
     drafts_reports = {n: check_scene(t, mech) for n, t in drafts.items()}
-    chosen, judge = _choose(ctx, scene, drafts, drafts_reports)
+    progress = Progress(ctx.project, scene.id)
+    judge_key = _sha(*[f"{n}\x01{t}" for n, t in sorted(drafts.items())])
+    saved_choice = progress.get("judge", judge_key)
+    if saved_choice and saved_choice.get("chosen") in drafts:
+        chosen, judge = saved_choice["chosen"], saved_choice.get("judge")
+    else:
+        chosen, judge = _choose(ctx, scene, drafts, drafts_reports)
+        progress.put("judge", judge_key, {"chosen": chosen, "judge": judge})
     text = drafts[chosen]
     review: dict = {"chosen": chosen, "mechanical": {n: r.to_dict() for n, r in drafts_reports.items()},
                     "judge": judge, "rounds": []}
@@ -79,7 +122,14 @@ def settle_scene(ctx, scene: Scene, scenes: list[Scene], drafts: dict[str, str],
         continuity = None
         if not report.blocking and cfg.continuity_check:
             activity.set(step="checking continuity")
-            continuity = check_continuity(ctx, scene, scenes, text)
+            text_key = _sha(text)
+            clean = progress.get("continuity", text_key)
+            if clean is not None:
+                continuity = ContinuityReport(questions=clean.get("questions", 0), unsure=clean.get("unsure", []))
+            else:
+                continuity = check_continuity(ctx, scene, scenes, text)
+                if not continuity.flags and not continuity.error:
+                    progress.put("continuity", text_key, {"questions": continuity.questions, "unsure": continuity.unsure})
             instructions = scene_notes.read(ctx.project, scene.id)["instructions"]
             for f in continuity.flags:
                 if f.fixable:
@@ -90,7 +140,13 @@ def settle_scene(ctx, scene: Scene, scenes: list[Scene], drafts: dict[str, str],
         cheap_ok = not report.blocking and not (continuity and continuity.flags)
         if cheap_ok and cfg.critic_check and not critic_given_up and not advised and (critic is None or critic.needs_work(cfg.critic_min_score)):
             activity.set(step="the critic is reading it")
-            critic = run_critic(ctx, scene, text)
+            saved = progress.get("critic", _sha(text))
+            if saved is not None:
+                critic = CriticReport(saved["scores"], [Weak(**w) for w in saved.get("weakest", [])])
+            else:
+                critic = run_critic(ctx, scene, text)
+                if not critic.error and critic.scores:
+                    progress.put("critic", _sha(text), critic.to_dict())
             if critic.error:
                 critic_given_up = True
             elif critic.needs_work(cfg.critic_min_score):
