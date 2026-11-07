@@ -37,4 +37,4 @@ Where the series as a whole is heading and what kind of ending it earns. Do not 
 ## What it is not
 Four to six things this series must not become (clichés, genres, tones, plot moves to avoid).
 
-The whole document must fit on one page: about 350 to 450 words, never more than 600.
+The whole document must fit on one page: about 350 to 450 words, never more than 800.

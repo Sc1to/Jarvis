@@ -11,7 +11,7 @@ from .runner import StepContext, StepResult
 
 NORTH_STAR_SECTIONS = ("Premise", "Themes", "Emotional promise", "Tone", "Realism", "Ending direction", "What it is not")
 NORTH_STAR_MIN_WORDS = 150
-NORTH_STAR_MAX_WORDS = 600  # "one page"; the prompt asks for 350-450
+NORTH_STAR_MAX_WORDS = 800  # the prompt asks for 350-450; the cap leaves room
 SYNOPSIS_MIN_WORDS = 300
 SYNOPSIS_MAX_WORDS = 2500
 
@@ -65,14 +65,14 @@ def _ledger_text(ctx: StepContext) -> str:
 
 SERIES_NORTH_STAR = DocumentSpec(
     layer="series_north_star", prompt="series_north_star", out_path="north-star.md",
-    validate=validate_north_star, max_tokens=1500, strip_preamble=True,
+    validate=validate_north_star, max_tokens=2000, strip_preamble=True,
     slots=lambda ctx: {"premise": _read(ctx, "premise.md")},
     research_scope="series", research_focus="Broad background for the whole series: the genre, the era, and the world it is set in.",
 )
 
 BOOK_NORTH_STAR = DocumentSpec(
     layer="book_north_star", prompt="book_north_star", out_path="books/{book}/north-star.md",
-    validate=validate_north_star, max_tokens=1500, strip_preamble=True,
+    validate=validate_north_star, max_tokens=2000, strip_preamble=True,
     slots=lambda ctx: {
         "premise": book_brief(ctx.project),  # this book's own brief; the series premise if it has none
         "series_north_star": _read(ctx, "north-star.md"),

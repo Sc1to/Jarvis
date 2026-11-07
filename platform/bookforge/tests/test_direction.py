@@ -122,7 +122,7 @@ def test_calls_use_the_configured_roles_and_options(project):
     llm = FakeLLMClient(good_script())
     go(project, llm)
     assert [c["role"] for c in llm.calls] == ["critic", "critic", "critic"]
-    assert all(c["options"] == {"max_tokens": mt} for c, mt in zip(llm.calls, (1500, 1500, 4000)))
+    assert all(c["options"] == {"max_tokens": mt} for c, mt in zip(llm.calls, (2000, 2000, 4000)))
     system = llm.calls[0]["messages"][0]
     assert system["role"] == "system" and "English" in system["content"]
 
