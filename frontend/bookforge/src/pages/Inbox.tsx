@@ -8,8 +8,10 @@ import { Button, Card, Empty, ErrorBanner, Loading, Markdown } from '../componen
 export function ChangeDiff({ cr, series, book, onDone, locked }: { cr: ChangeRequest; series: string; book: string; onDone: () => void; locked: boolean }) {
   const act = useAction()
   const base = `${bookPath(series, book)}/changes/${cr.id}`
-  const decide = async (what: 'approve' | 'reject') => {
-    const msg = what === 'approve' ? 'Change the plan to match the prose?' : 'Keep the plan? The scene will be patched to agree with it.'
+  const decide = async (what: 'approve' | 'reject' | 'dismiss') => {
+    const msg = what === 'approve' ? 'Change the plan to match the prose?'
+      : what === 'dismiss' ? 'Leave both as they are? The prose stays and the plan is not changed.'
+      : 'Keep the plan? The scene will be patched to agree with it.'
     if (window.confirm(msg) && (await act.run(() => post(`${base}/${what}`)))) onDone()
   }
   return (
@@ -26,6 +28,7 @@ export function ChangeDiff({ cr, series, book, onDone, locked }: { cr: ChangeReq
         <div className="flex gap-2">
           <Button kind="primary" disabled={act.busy || locked} onClick={() => decide('approve')}>Approve (change the plan)</Button>
           <Button kind="danger" disabled={act.busy || locked} onClick={() => decide('reject')}>Reject (keep the plan)</Button>
+          <Button disabled={act.busy || locked} onClick={() => decide('dismiss')}>Dismiss (keep the prose, leave the plan)</Button>
         </div>
       ) : <p className="text-xs text-slate-500">{cr.status}{cr.decided_by ? ` by ${cr.decided_by}` : ''}{cr.fixed ? ', prose brought back in line' : ''}</p>}
     </div>

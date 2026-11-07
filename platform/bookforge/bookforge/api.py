@@ -18,7 +18,7 @@ Everything lives under /api (Caddy strips /bookforge). Responses use the platfor
     GET  /api/series/{s}/books/{b}/manuscript         the assembled manuscript
     GET  /api/series/{s}/books/{b}/stale              what is out of date and why (changes nothing)
     GET  /api/series/{s}/books/{b}/changes            change requests
-    POST /api/series/{s}/books/{b}/changes/{id}/approve|reject
+    POST /api/series/{s}/books/{b}/changes/{id}/approve|reject|dismiss
     POST /api/series/{s}/books/{b}/approve/{checkpoint}
     POST /api/series/{s}/books/{b}/rewrite            {targets, force} scenes or a chapter to write again
     POST /api/series/{s}/books/{b}/assemble           {partial}
@@ -491,11 +491,11 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
 
     @router.post("/series/{series}/books/{book}/changes/{cr_id}/{decision}")
     def decide(series: str, book: str, cr_id: str, decision: str):
-        if decision not in ("approve", "reject"):
-            raise HTTPException(404, "expected approve or reject")
+        if decision not in ("approve", "reject", "dismiss"):
+            raise HTTPException(404, "expected approve, reject or dismiss")
         project = open_project(series, book)
         require_idle(series)
-        return ok(ops.decide_change(project, cr_id, decision == "approve").model_dump())
+        return ok(ops.decide_change(project, cr_id, decision == "approve", dismiss=decision == "dismiss").model_dump())
 
     @router.post("/series/{series}/books/{book}/approve/{checkpoint}")
     def approve(series: str, book: str, checkpoint: str):

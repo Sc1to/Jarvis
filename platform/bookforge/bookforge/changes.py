@@ -5,7 +5,9 @@ the gap is filed as a change request in `books/<book>/change-requests/cr-NNNN.ya
 the track, what the plan says, what the prose shows, and the scenes the change would touch. Approving it adds
 a plan entry to the track from that scene on (the track's version goes up), which marks the scenes that
 depend on the track stale. Rejecting it means the plan stands and the scene's prose has to follow it: the
-scene is then listed as stale until `stale --fix` has patched the passage.
+scene is then listed as stale until `stale --fix` has patched the passage. Dismissing it means the difference is
+not worth a decision: the prose stays as written, the plan stays as planned, and nothing is marked stale. (The request
+is kept, so the same scene and track are not proposed again.)
 
 A request whose affected scenes are all in the proposing scene's chapter is applied at once when
 `qc.critic_may_accept` is `within_chapter` (the default). Anything that reaches another chapter waits for you.
@@ -27,7 +29,7 @@ from .state import now
 
 log = logging.getLogger("platform_bookforge.changes")
 
-Status = Literal["pending", "applied", "rejected"]
+Status = Literal["pending", "applied", "rejected", "dismissed"]
 MAX_VALUE_CHARS = 300  # PlanEntry.value limit
 
 
@@ -173,6 +175,16 @@ def reject(project: Project, cr_id: str) -> ChangeRequest:
     if cr.status != "pending":
         raise ChangeError(f"{cr_id} is already {cr.status}")
     cr.status, cr.decided, cr.decided_by = "rejected", now(), "author"
+    save(project, cr)
+    return cr
+
+
+def dismiss(project: Project, cr_id: str) -> ChangeRequest:
+    """Accept the prose as it is and leave the plan alone: the difference does not matter."""
+    cr = get(project, cr_id)
+    if cr.status != "pending":
+        raise ChangeError(f"{cr_id} is already {cr.status}")
+    cr.status, cr.decided, cr.decided_by = "dismissed", now(), "author"
     save(project, cr)
     return cr
 

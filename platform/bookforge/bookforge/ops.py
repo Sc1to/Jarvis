@@ -299,8 +299,12 @@ def redo_layer(project: Project, layer: str, note: str = "", cascade: bool = Fal
     return {"layer": layer, "reset": reset, "note": bool(note.strip()), "archived": archived}
 
 
-def decide_change(project: Project, cr_id: str, approve: bool) -> change_requests.ChangeRequest:
-    decided = change_requests.approve(project, cr_id) if approve else change_requests.reject(project, cr_id)
+def decide_change(project: Project, cr_id: str, approve: bool | None, dismiss: bool = False) -> change_requests.ChangeRequest:
+    """Approve (the plan follows the prose), reject (the prose follows the plan) or dismiss (neither changes)."""
+    if dismiss:
+        decided = change_requests.dismiss(project, cr_id)
+    else:
+        decided = change_requests.approve(project, cr_id) if approve else change_requests.reject(project, cr_id)
     if project.config.git.commit_each_step:
         vcs.commit(project.root, f"{project.book}: change request {decided.id} {decided.status}")
     return decided

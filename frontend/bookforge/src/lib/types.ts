@@ -40,7 +40,7 @@ export interface TreeChapter { id: string; title: string; tension: number; scene
 export interface TreeAct { id: string; title: string; chapters: TreeChapter[] }
 
 export interface ChangeRequest {
-  id: string; status: 'pending' | 'applied' | 'rejected'; proposed_by: string; track: string; entity: string
+  id: string; status: 'pending' | 'applied' | 'rejected' | 'dismissed'; proposed_by: string; track: string; entity: string
   reason: string; planned: string; observed: string; evidence: string; affects: string[]
   scope: 'within_chapter' | 'later_chapters'; decided_by: string | null; fixed: boolean
 }

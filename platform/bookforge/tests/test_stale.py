@@ -352,6 +352,22 @@ def test_a_request_can_only_be_decided_once(book):
             raise AssertionError("expected an error")
 
 
+def test_a_dismissed_request_leaves_both_prose_and_plan_alone(book):
+    p = gap_book(book)
+    before = store.load_tracks(p)
+    changes.dismiss(p, "cr-0001")
+    assert changes.get(p, "cr-0001").status == "dismissed"
+    assert store.load_tracks(p) == before  # the plan is untouched
+    assert stale.scan(p).empty  # nothing is stale, nothing to patch
+    assert not changes.open_rejections(p)
+    try:
+        changes.dismiss(p, "cr-0001")
+    except changes.ChangeError as e:
+        assert "already dismissed" in str(e)
+    else:
+        raise AssertionError("expected an error")
+
+
 def test_a_rejected_request_patches_the_scene_to_agree_with_the_plan(book):
     p = gap_book(book)
     changes.reject(p, "cr-0001")
