@@ -668,3 +668,17 @@ def test_the_rewrite_preview_and_the_rewrite_with_all_through_the_api(book):
     done = data(client.post(f"{B}/rewrite", json={"targets": ["all"], "reset_voice": True}))
     assert done["reset"] == plan["reset"] and done["voice_reset"] is True
     assert {s["status"] for s in data(client.get(f"{B}/scenes"))} == {"pending"}
+
+
+# ── models ──────────────────────────────────────────────────────────────────
+
+def test_models_overview_lists_every_name_even_with_no_backend_running():
+    d = data(client.get("/api/models?series=series"))
+    assert {n["name"] for n in d["names"]} >= {"writer", "critic", "research", "extraction"}
+    assert d["assign"]["qc"] == "writer" and d["layers"]["prose"] == "writer"
+    assert all(n["state"] == "down" for n in d["names"])  # nothing listens on the test machine's model ports
+
+
+def test_choosing_a_model_that_no_backend_lists_is_refused():
+    error(client.put("/api/series/series/models", json={"target": "writer", "base_url": "http://127.0.0.1:11434/v1", "model": "nope"}), 400)
+    error(client.put("/api/series/nosuch/models", json={"target": "writer"}), 404)

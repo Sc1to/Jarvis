@@ -42,7 +42,7 @@ def qc_role(project) -> str:
 
 def qc_options(project) -> dict:
     """Call options for those checks: on the writer model the checks use qc.temperature instead of a drafting temperature."""
-    return {"temperature": project.config.qc.temperature} if project.config.qc.model == "writer" else {}
+    return {"temperature": project.config.qc.temperature} if project.config.qc.model != "critic" else {}
 
 
 def ask_json(ctx, label: str, role: str, template: str, check, max_tokens: int = 1500, call_options: dict | None = None, **slots) -> dict:

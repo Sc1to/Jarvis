@@ -4,6 +4,8 @@ Everything lives under /api (Caddy strips /bookforge). Responses use the platfor
 `{"data": ..., "status": "ok"}`, errors `{"error", "status": "error", "detail"}`.
 
     GET  /api/doctor                                  environment, model endpoints, web tool
+    GET  /api/models[?series=]                        backends, loaded and available models, who uses which (model_admin.py)
+    PUT  /api/series/{s}/models                       {target, base_url, model} give a role or layer another model
     GET  /api/series                                  the series on disk
     POST /api/series                                  create one (name, premise, book)
     DELETE /api/series/{s}                            move a series to the trash (restorable)
@@ -47,7 +49,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from . import books as book_mgmt, deletion, documents, push, assemble as assembly, export as exporting, bench as benchmarks, changes as change_requests, ops, report as morning_report, scenefiles, stale as staleness
+from . import model_admin, books as book_mgmt, deletion, documents, push, assemble as assembly, export as exporting, bench as benchmarks, changes as change_requests, ops, report as morning_report, scenefiles, stale as staleness
 from .bible import store
 from .constants import CHECKPOINTS, LAYER_ORDER
 from .doctor import run_doctor
@@ -102,6 +104,12 @@ class NewSeries(BaseModel):
     name: str
     premise: str
     book: str = "b1"
+
+
+class ModelChoice(BaseModel):
+    target: str  # writer | critic | research | extraction | qc | notes | layer:<name>
+    base_url: str | None = None  # both empty on a layer: back to its default
+    model: str | None = None
 
 
 class RunBody(BaseModel):
@@ -237,6 +245,19 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
     def doctor(offline: bool = False, series: str | None = None, book: str = "b1"):
         root = series_root(series) if series else None
         return ok([{"name": c.name, "level": c.level, "detail": c.detail} for c in run_doctor(root, book, online=not offline)])
+
+    # ── models ───────────────────────────────────────────────────────────────
+
+    @router.get("/models")
+    def models(series: str | None = None):
+        from .config import load_config
+        return ok(model_admin.overview(load_config(series_root(series) if series else None)))
+
+    @router.put("/series/{series}/models")
+    def choose_model(series: str, body: ModelChoice):
+        root = series_root(series)
+        require_idle(series)  # a model unloaded under a running job would fail its next call
+        return ok(model_admin.choose(root, body.target, body.base_url, body.model))
 
     # ── series ───────────────────────────────────────────────────────────────
 

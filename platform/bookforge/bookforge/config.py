@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from .constants import CHECKPOINTS, LAYER_ORDER
 from .errors import ConfigError
@@ -54,6 +54,12 @@ class DecideEndpoint(_Strict):
     url: str = "http://127.0.0.1:8041/v1/systemone"
 
 
+class Assign(_Strict):
+    """Which endpoint answers the research step and the extraction step. A name from `models:` (writer, critic or a key of `extra`)."""
+    research: str = "writer"  # reads pages, extracts facts, picks which results to read
+    extraction: str = "writer"  # records what each accepted scene says about the tracked states
+
+
 class Models(_Strict):
     writer: ModelEndpoint = ModelEndpoint(base_url="http://127.0.0.1:8040/v1", temperature=[0.7, 0.85, 1.0])
     critic: ModelEndpoint = ModelEndpoint(
@@ -61,10 +67,12 @@ class Models(_Strict):
         timeout_seconds=1800,
     )
     decide: DecideEndpoint = DecideEndpoint()
+    extra: dict[str, ModelEndpoint] = Field(default_factory=dict)  # more named endpoints; any layer may use one (layers.<name>.model)
+    assign: Assign = Assign()
 
 
 class LayerSettings(_Strict):
-    model: Literal["writer", "critic"]
+    model: str  # writer, critic or a key of models.extra: the endpoint that answers this layer
     checkpoint: Literal["direction", "structure"] | None = None
     count: tuple[int, int] | None = None
     per_chapter: tuple[int, int] | None = None
@@ -113,7 +121,7 @@ class Research(_Strict):
     sources_per_question: int = Field(2, gt=0)  # ...and they come from at least this many different pages
     model_pick: bool = True  # a model chooses which results to read from their titles and excerpts (one small call per question)
     skip_domains: list[str] = Field(default_factory=lambda: list(DEFAULT_SKIP_DOMAINS))  # results from these sites are not read
-    notes_model: Literal["writer", "critic"] = "writer"  # reads pages and extracts facts
+    notes_model: str = "research"  # reads pages and extracts facts: research (models.assign.research), writer, critic or a key of models.extra
     check_relevance: bool = True  # a second look: drop facts that do not answer the question for the story's time and place
     check_support: bool = True  # an audit: drop a fact whose claim says more than its quote (one small call per page with facts)
     notes_max_chars: int = Field(6000, gt=0)  # research notes included in a prompt
@@ -140,8 +148,8 @@ class QC(_Strict):
     # stays loaded for the whole prose layer, so a night's run never waits for a model to be swapped (a big colibri model can take tens
     # of minutes to load). "critic": the planner/critic model, as before; needs both models loaded, or swapped several times per scene.
     # The planning layers and their reviews always use the model set per layer under `layers:`.
-    model: Literal["writer", "critic"] = "writer"
-    temperature: float = Field(0.2, ge=0, le=2)  # for those checks when they run on the writer model (its own temperatures suit drafts, not judging)
+    model: str = "writer"  # writer, critic or a key of models.extra
+    temperature: float = Field(0.2, ge=0, le=2)  # for those checks when they run on any model but the critic (its own temperatures suit drafts, not judging)
     continuity_flag_threshold: float = 0.3
     critic_min_score: int = 3
     max_revision_rounds: int = 2
@@ -211,6 +219,34 @@ class Config(_Strict):
                 raise ValueError(f"layer {name}: unknown checkpoint {s.checkpoint}")
         return v
 
+    @model_validator(mode="after")
+    def _model_names_exist(self) -> "Config":
+        names = set(self.model_names())
+        bad = [f"layers.{n}.model={s.model!r}" for n, s in self.layers.items() if s.model not in names]
+        bad += [f"{label}={value!r}" for label, value in (
+            ("qc.model", self.qc.model), ("research.notes_model", self.research.notes_model),
+            ("models.assign.research", self.models.assign.research), ("models.assign.extraction", self.models.assign.extraction),
+        ) if value not in names]
+        if bad:
+            raise ValueError(f"unknown model name(s) {', '.join(bad)}; known: {', '.join(sorted(names))}")
+        return self
+
+    def model_names(self) -> list[str]:
+        """Every name a layer or step may use for its model."""
+        return ["writer", "critic", "research", "extraction", *self.models.extra]
+
+    def endpoint(self, name: str) -> ModelEndpoint:
+        """The endpoint a model name stands for (research and extraction follow models.assign; an assignment is followed one step)."""
+        if name in ("research", "extraction"):
+            name = getattr(self.models.assign, name)
+            if name in ("research", "extraction"):
+                name = "writer"  # an assignment cannot point at another assignment
+        if name in ("writer", "critic"):
+            return getattr(self.models, name)
+        if name in self.models.extra:
+            return self.models.extra[name]
+        raise ConfigError(f"unknown model name '{name}'")
+
     def checkpoint_layers(self, checkpoint: str) -> list[str]:
         """Layers (in run order) that must be accepted before this checkpoint is reached."""
         return [name for name in LAYER_ORDER if self.layers[name].checkpoint == checkpoint]
@@ -240,6 +276,26 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return out
 
 
+LOCAL_CHOICES_FILE = "models.local.yaml"  # model choices made in the dashboard (model_admin.py); merged after config.yaml
+
+
+def _apply_local_choices(merged: dict, local: dict) -> dict:
+    """Dashboard choices win over config.yaml. An endpoint they name replaces the whole endpoint (a field they left out is gone, not
+    inherited), everything else merges key by key."""
+    out = dict(merged)
+    models = dict(local.get("models") or {})
+    out["models"] = dict(out.get("models") or {})
+    for name in ("writer", "critic"):
+        if name in models:
+            out["models"][name] = models.pop(name)
+    extra = models.pop("extra", None)
+    if extra:
+        out["models"]["extra"] = {**(out["models"].get("extra") or {}), **extra}
+    out["models"] = _deep_merge(out["models"], models)
+    rest = {k: v for k, v in local.items() if k != "models"}
+    return _deep_merge(out, rest)
+
+
 def host_config_path() -> Path | None:
     """BOOKFORGE_CONFIG if set, else platform/bookforge/config.yaml if it exists."""
     env = os.environ.get(HOST_CONFIG_ENV)
@@ -261,6 +317,9 @@ def load_config(series_root: Path | None = None, host_path: Path | None = None) 
         series_cfg = series_root / "config.yaml"
         if series_cfg.exists():
             merged = _deep_merge(merged, _read_yaml(series_cfg))
+        local = series_root / LOCAL_CHOICES_FILE
+        if local.exists():
+            merged = _apply_local_choices(merged, _read_yaml(local))
     try:
         return Config.model_validate(merged)
     except ValidationError as e:
