@@ -82,7 +82,7 @@ The target machine is a Minisforum MS-S1 MAX: Ryzen AI Max+ 395 (16 cores), Rade
 | Planner and critic (big) | GLM-5.2 (`glm-5.2`) | 429 GB | About 1.8 tok/s on a 128 GB Ryzen AI Max+ 395, CPU only | Story bible, outline, critique, pairwise judging |
 | Optional prose upgrade | Qwen3.8-Flash-Next (`qwen38-flash-next`) | 186 GB | Not yet measured on this machine | Drafting, if Qwen3.6 prose feels flat |
 
-**Two servers, two ports.** Run the writer on port 8040 and the planner/critic on port 8041, each as its own `coli serve`. The writer takes roughly 20 GB of RAM, leaving the rest to the big model's expert cache. If both together run out of memory, run them one at a time: the pipeline groups calls by model so it only needs one loaded per stage.
+**Two servers, two ports.** Run the writer on port 8040 and the planner/critic on port 8041, each as its own `coli serve`. The writer takes roughly 20 GB of RAM, leaving the rest to the big model's expert cache. If both together run out of memory, run them one at a time. The planning layers run in stages, so the planner/critic model is only needed there. Inside the prose layer the pipeline alternates between roles for every scene (drafts, judge, continuity, critic, revisions, summary), so it does not group calls by model; `qc.model: writer` (the default) therefore answers the judge, continuity and critic checks with the writer model, and one model stays loaded for the whole prose layer. Set `qc.model: critic` only when both models are loaded at once.
 
 **Disk budget (4 TB):** Ubuntu and tools ~100 GB, the three models ~640 GB, projects and logs under 50 GB. Plenty of room left for a second big model later.
 

@@ -136,6 +136,12 @@ class Briefing(_Strict):
 
 
 class QC(_Strict):
+    # Which model answers the checks inside the prose layer (draft judge, continuity questions, rubric critic). "writer": one model
+    # stays loaded for the whole prose layer, so a night's run never waits for a model to be swapped (a big colibri model can take tens
+    # of minutes to load). "critic": the planner/critic model, as before; needs both models loaded, or swapped several times per scene.
+    # The planning layers and their reviews always use the model set per layer under `layers:`.
+    model: Literal["writer", "critic"] = "writer"
+    temperature: float = Field(0.2, ge=0, le=2)  # for those checks when they run on the writer model (its own temperatures suit drafts, not judging)
     continuity_flag_threshold: float = 0.3
     critic_min_score: int = 3
     max_revision_rounds: int = 2

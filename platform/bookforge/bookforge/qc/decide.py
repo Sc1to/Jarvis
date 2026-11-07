@@ -8,7 +8,7 @@ conservatively (see continuity.py). Questions are sent in batches to keep the nu
 
 from dataclasses import dataclass
 
-from .support import ask_json, quote_in_page
+from .support import ask_json, qc_options, qc_role, quote_in_page
 
 
 @dataclass
@@ -69,8 +69,8 @@ def ask_questions(ctx, label: str, what: str, text: str, questions: list[Questio
     for start in range(0, len(questions), batch_size):
         batch = questions[start: start + batch_size]
         listing = "\n".join(f"{q.id} [{q.kind}] {q.text}" for q in batch)
-        data = ask_json(ctx, f"{label} questions {start + 1}-{start + len(batch)}", "critic", "continuity", _check(batch),
-                        max_tokens=300 + 120 * len(batch), what=what, text=text, questions=listing)
+        data = ask_json(ctx, f"{label} questions {start + 1}-{start + len(batch)}", qc_role(ctx.project), "continuity", _check(batch),
+                        max_tokens=300 + 120 * len(batch), call_options=qc_options(ctx.project), what=what, text=text, questions=listing)
         by_id = {a["id"]: a for a in data["answers"] if isinstance(a, dict) and "id" in a}
         for q in batch:
             a = by_id[q.id]
@@ -108,7 +108,8 @@ def _check_confirmation(data: dict) -> list[str]:
 
 def confirm_contradiction(ctx, label: str, what: str, fact: str, evidence: str, text: str) -> Confirmation:
     """Second opinion on one flagged contradiction: only the fact and the paragraph with the quoted words go to the model."""
-    data = ask_json(ctx, f"{label} confirm", "critic", "continuity_confirm", _check_confirmation, max_tokens=400,
+    data = ask_json(ctx, f"{label} confirm", qc_role(ctx.project), "continuity_confirm", _check_confirmation, max_tokens=400,
+                    call_options=qc_options(ctx.project),
                     what=what, fact=fact, passage=_passage_around(text, evidence), quote=evidence)
     return Confirmation(bool(data["conflict"]), " ".join(str(data.get("fact_says") or "").split()),
                         " ".join(str(data.get("text_says") or "").split()), float(data["confidence"]))

@@ -35,7 +35,17 @@ def messages(project, template: str, **slots) -> list[dict]:
             {"role": "user", "content": render(template, project.root, **slots)}]
 
 
-def ask_json(ctx, label: str, role: str, template: str, check, max_tokens: int = 1500, **slots) -> dict:
+def qc_role(project) -> str:
+    """The model role that answers the checks inside the prose layer (qc.model)."""
+    return project.config.qc.model
+
+
+def qc_options(project) -> dict:
+    """Call options for those checks: on the writer model the checks use qc.temperature instead of a drafting temperature."""
+    return {"temperature": project.config.qc.temperature} if project.config.qc.model == "writer" else {}
+
+
+def ask_json(ctx, label: str, role: str, template: str, check, max_tokens: int = 1500, call_options: dict | None = None, **slots) -> dict:
     """Ask for a JSON object; `check(data)` returns problems, which are sent back for correction."""
     msgs = messages(ctx.project, template, **slots)
 
@@ -43,5 +53,5 @@ def ask_json(ctx, label: str, role: str, template: str, check, max_tokens: int =
         data = parse_json_object(text)
         return ["the reply must be a single JSON object in exactly the requested shape"] if data is None else check(data)
 
-    text = ask_until_valid(ctx, label, role, msgs, validate, {"max_tokens": max_tokens}, strip_preamble=False)
+    text = ask_until_valid(ctx, label, role, msgs, validate, {"max_tokens": max_tokens, **(call_options or {})}, strip_preamble=False)
     return parse_json_object(text) or {}

@@ -67,6 +67,8 @@ briefing:
   recent_chapters_full: 2              # chapters before this one summarised scene by scene; older ones in a line each
 
 qc:
+  model: writer                        # writer | critic: which model answers the prose layer's checks (judge, continuity, critic); writer keeps one model loaded
+  temperature: 0.2                     # those checks' temperature when they run on the writer model
   continuity_flag_threshold: 0.3
   critic_min_score: 3
   max_revision_rounds: 2

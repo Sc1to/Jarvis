@@ -96,6 +96,29 @@ def test_a_scene_goes_through_every_layer_in_order(book):
     assert n >= 1 and seq[4:4 + n] == ["continuity"] * n and seq[4 + n:] == ["critic", "summary", "extract"]
 
 
+def _check_calls(llm):
+    """(kind, role, temperature option) of each quality-control call."""
+    return [(k, c["role"], c["options"].get("temperature")) for k, c in zip(kinds(llm), llm.calls) if k in ("judge", "continuity", "critic")]
+
+
+def test_the_checks_run_on_the_writer_model_by_default(book):
+    llm = RuleLLM(qc_rules())
+    go(book, llm)
+    checks = _check_calls(llm)
+    assert {k for k, _, _ in checks} == {"judge", "continuity", "critic"}
+    assert {role for _, role, _ in checks} == {"writer"}  # one model for the whole prose layer: nothing to swap
+    assert {t for _, _, t in checks} == {0.2}  # judged at qc.temperature, not at a drafting temperature
+    assert {c["role"] for k, c in zip(kinds(llm), llm.calls) if k == "draft"} == {"writer"}
+
+
+def test_the_checks_can_use_the_critic_model(book):
+    book.config.qc.model = "critic"
+    llm = RuleLLM(qc_rules())
+    go(book, llm)
+    checks = _check_calls(llm)
+    assert {role for _, role, _ in checks} == {"critic"} and {t for _, _, t in checks} == {None}  # the critic's own temperature applies
+
+
 def test_the_review_records_every_layer(book):
     over = {SID: [good(SID, 1), good(SID, 2) + " Zebra finale."]}
     llm = RuleLLM(qc_rules(overrides=over))

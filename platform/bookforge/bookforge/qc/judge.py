@@ -12,7 +12,7 @@ from itertools import combinations
 from ..bible.models import Scene
 from ..errors import BookforgeError
 from .mechanical import MechanicalReport
-from .support import ask_json, scene_brief, voice_excerpt
+from .support import ask_json, qc_options, qc_role, scene_brief, voice_excerpt
 
 
 @dataclass
@@ -30,7 +30,7 @@ def _check(data: dict) -> list[str]:
 def _ask(ctx, scene: Scene, label: str, first: str, second: str) -> str:
     """'first' or 'second', whichever the judge preferred."""
     project = ctx.project
-    data = ask_json(ctx, label, "critic", "judge", _check, max_tokens=300, brief=scene_brief(project, scene),
+    data = ask_json(ctx, label, qc_role(project), "judge", _check, max_tokens=300, call_options=qc_options(project), brief=scene_brief(project, scene),
                     voice=voice_excerpt(project), a=first, b=second)
     return "first" if data["winner"] == "A" else "second"
 
