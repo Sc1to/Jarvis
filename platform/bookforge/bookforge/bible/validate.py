@@ -5,6 +5,7 @@ list is what gets sent back to the model for a correction round. Problems are wr
 model to act on: they say what is wrong and what is expected.
 """
 
+import difflib
 import re
 from dataclasses import dataclass, field
 
@@ -104,6 +105,38 @@ def _check_entity(entities: dict[str, Entity], eid: str, kind: str | None, label
 
 # A setting is where a scene happens: a place, or a thing people are inside (a ship, a carriage) that the cast lists as an object.
 SETTING_ALSO = ("object",)
+
+
+def adopt_places(raw_items: list, entities: dict[str, Entity], where: str) -> list[Entity]:
+    """Add the places a plan uses as `setting` but the cast does not list, instead of failing the reply.
+
+    The chapter and scene planners sometimes need a place the cast step did not foresee. The place joins the cast (so nothing
+    can point at an id that does not exist), with a plain note that its details are still open. An id that is a near-miss of an
+    existing one (a typo like lower-sector) is NOT adopted: it is reported as an unknown id so the model corrects it.
+    The `entities` map is extended in place; the new entities are returned so the caller can save them.
+    """
+    added: list[Entity] = []
+    for item in raw_items:
+        eid = item.get("setting") if isinstance(item, dict) else None
+        if not isinstance(eid, str) or not eid or eid in entities:
+            continue
+        if difflib.get_close_matches(eid, list(entities), n=1, cutoff=0.88):
+            continue
+        name = eid.replace("-", " ").replace("_", " ").strip().title()
+        try:
+            entity = Entity(id=eid, kind="place", name=name or eid,
+                            facts=[f"{name or eid} is a place first used in {where}; nothing else about it is decided yet."])
+        except ValidationError:
+            continue  # not a usable id: the normal 'not in the cast' problem is reported
+        entities[eid] = entity
+        added.append(entity)
+    return added
+
+
+def add_entities(constants: Constants, new: list[Entity]) -> Constants:
+    known = {e.id for e in constants.entities}
+    fresh = [e for e in new if e.id not in known]
+    return Constants(entities=constants.entities + fresh, rules=constants.rules) if fresh else constants
 
 
 # ── layer 4: acts ───────────────────────────────────────────────────────────
@@ -257,6 +290,7 @@ def _check_research_ids(ids: list[str], known: set[str], label: str, problems: l
 class ChaptersBundle:
     chapters: list[Chapter] = field(default_factory=list)
     tracks: list[Track] = field(default_factory=list)
+    new_entities: list[Entity] = field(default_factory=list)  # places used as a setting that the cast did not list
 
 
 def parse_chapters(
@@ -269,6 +303,7 @@ def parse_chapters(
     problems: list[str] = []
     raw = _items(data, "chapters", problems)
     entities = entity_map(constants)
+    new_places = adopt_places(raw, entities, act.id)
     if raw and len(raw) != act.chapter_count:
         problems.append(f"{act.id} needs exactly {act.chapter_count} chapters, got {len(raw)}")
     chapters: list[Chapter] = []
@@ -297,7 +332,7 @@ def parse_chapters(
         # Without tracks the story's changes (injuries, who knows what, where people are) are neither planned nor checked later.
         problems.append(f"{act.id} defines no state tracks: add a 'tracks:' list with at least one track created or extended in these chapters "
                         "(an injury, where a key character is, a relationship, a possession, who knows which secret)")
-    return (None, problems) if problems else (ChaptersBundle(chapters, tracks), [])
+    return (None, problems) if problems else (ChaptersBundle(chapters, tracks, new_places), [])
 
 
 # ── layer 6: scenes of one chapter ──────────────────────────────────────────
@@ -307,6 +342,7 @@ class ScenesBundle:
     scenes: list[Scene] = field(default_factory=list)
     timeline: list[TimelineEntry] = field(default_factory=list)
     tracks_after: list[Track] = field(default_factory=list)  # the full track list with this chapter's entries refined
+    new_entities: list[Entity] = field(default_factory=list)  # places used as a setting that the cast did not list
 
 
 def _in_chapter(entry_from: str, book: str, chapter: int) -> bool:
@@ -327,6 +363,7 @@ def parse_scenes(
     problems: list[str] = []
     raw = _items(data, "scenes", problems)
     entities = entity_map(constants)
+    new_places = adopt_places(raw, entities, chapter.id)
     lo, hi = project.config.layers["scenes"].per_chapter or (2, 4)
     if raw and not lo <= len(raw) <= hi:
         problems.append(f"{chapter.id} needs {lo} to {hi} scenes, got {len(raw)}")
@@ -369,7 +406,7 @@ def parse_scenes(
     refined = _parse_tracks(_items(data, "tracks", problems, required=False), entities=entities, existing=existing,
                             allowed_from=allowed, prefix="tracks", problems=problems)
     tracks_after = _apply_refinement(refined, tracks_so_far, project.book, ch_num, chapter.id, problems)
-    return (None, problems) if problems else (ScenesBundle(scenes, timeline, tracks_after), [])
+    return (None, problems) if problems else (ScenesBundle(scenes, timeline, tracks_after, new_places), [])
 
 
 def _apply_refinement(

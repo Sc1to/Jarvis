@@ -202,6 +202,30 @@ def test_restating_a_track_unchanged_does_not_bump_its_version(p, constants):
     assert problems == [] and next(t for t in again.tracks_after if t.id == "anna-wound").version == 2
 
 
+def test_an_unknown_scene_setting_joins_the_cast(p, constants):
+    data = scenes_reply(2)
+    data["scenes"][0]["setting"] = "outer-rim-outpost"
+    bundle, problems = parse_scenes(dump(data), **scene_args(p, constants))
+    assert problems == []
+    assert [e.id for e in bundle.new_entities] == ["outer-rim-outpost"]
+    assert bundle.new_entities[0].kind == "place" and bundle.new_entities[0].name == "Outer Rim Outpost"
+
+
+def test_an_unknown_chapter_setting_and_its_track_join_the_cast(p, constants):
+    data = chapters_act1()
+    data["chapters"][0]["setting"] = "outer-rim-outpost"
+    data["tracks"][0]["entity"] = "outer-rim-outpost"
+    bundle, problems = parse_chapters(dump(data), **ctx_args(p, constants))
+    assert problems == [] and [e.id for e in bundle.new_entities] == ["outer-rim-outpost"]
+
+
+def test_a_near_miss_of_a_known_place_is_still_a_mistake(p, constants):
+    data = chapters_act1()
+    data["chapters"][0]["setting"] = "harbors"  # typo of 'harbor': corrected by the model, not adopted
+    bundle, problems = parse_chapters(dump(data), **ctx_args(p, constants))
+    assert bundle is None and any("'harbors' is not in the cast" in x for x in problems)
+
+
 def test_the_pov_character_is_added_to_characters(p, constants):
     data = scenes_reply(2)
     data["scenes"][0]["characters"] = ["jonas"]
