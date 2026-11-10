@@ -10,7 +10,7 @@ from typing import Callable
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from . import ab, arc, calibration, rules, rules_ai, studio, xray
+from . import ab, arc, calibration, milestones, rules, rules_ai, studio, xray
 from .layers.runner import StepContext
 from .project import Project
 
@@ -64,11 +64,6 @@ class TensionBody(BaseModel):
     chapter: str
     value: int
     apply: bool = False
-
-
-class MilestoneBody(BaseModel):
-    label: str
-    chapter: str
 
 
 class ThreadBody(BaseModel):
@@ -232,26 +227,17 @@ def register(router: APIRouter, h: Helpers) -> None:
         p = h.open_project(series, book)
         return h.ok({"tension": arc.tension(p), "threads": arc.thread_map(p), "milestones": arc.milestones(p)})
 
-    @router.post(W + "/arc/milestones")
-    def arc_milestone_add(series: str, book: str, body: MilestoneBody):
-        p = h.open_project(series, book)
-        h.require_idle(series)
-        arc.save_milestone(p, body.label, body.chapter)
-        return h.ok(arc.milestones(p))
+    @router.post(W + "/arc/milestones/refresh", status_code=202)
+    def arc_milestones_refresh(series: str, book: str):
+        h.open_project(series, book)
+        root = h.series_root(series)
 
-    @router.put(W + "/arc/milestones/{milestone_id}")
-    def arc_milestone_save(series: str, book: str, milestone_id: str, body: MilestoneBody):
-        p = h.open_project(series, book)
-        h.require_idle(series)
-        arc.save_milestone(p, body.label, body.chapter, milestone_id)
-        return h.ok(arc.milestones(p))
+        def job() -> dict:
+            project, ctx = job_ctx(root, book, h.make_llm())
+            record = milestones.refresh(ctx, force=True)
+            return {"milestones": len(record["items"])}
 
-    @router.delete(W + "/arc/milestones/{milestone_id}")
-    def arc_milestone_delete(series: str, book: str, milestone_id: str):
-        p = h.open_project(series, book)
-        h.require_idle(series)
-        arc.delete_milestone(p, milestone_id)
-        return h.ok(arc.milestones(p))
+        return h.start_job(series, book, "milestones", {}, job)
 
     @router.post(W + "/arc/tension")
     def arc_tension(series: str, book: str, body: TensionBody):
