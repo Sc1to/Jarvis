@@ -303,6 +303,25 @@ def test_changing_tension_previews_its_consequence_and_applies_only_when_told(fu
         arc.set_tension(full, "b1.ch99", 5)
 
 
+def test_milestones_are_labels_pinned_to_chapters_in_book_order(full):
+    arc.save_milestone(full, "riddle solved", "b1.ch04")
+    arc.save_milestone(full, "body found", "b1.ch02")
+    m = arc.milestones(full)
+    assert [(i["id"], i["label"], i["at"]) for i in m["items"]] == [("m2", "body found", 1), ("m1", "riddle solved", 3)]
+    assert m["items"][0]["title"] and m["items"][0]["problem"] is None and len(m["chapters"]) >= 4
+    arc.save_milestone(full, "breakthrough", "b1.ch03", "m1")  # change an existing one
+    assert {i["id"]: i["chapter"] for i in arc.milestones(full)["items"]}["m1"] == "b1.ch03"
+    arc.delete_milestone(full, "m2")
+    arc.save_milestone(full, "first suspect", "b1.ch01")
+    assert {i["id"] for i in arc.milestones(full)["items"]} == {"m1", "m2"}
+    for args in (("", "b1.ch01"), ("x", "b1.ch99"), ("x" * 121, "b1.ch01"), ("x", "b1.ch01", "m9")):
+        with pytest.raises(arc.ArcError):
+            arc.save_milestone(full, *args)
+    with pytest.raises(arc.ArcError):
+        arc.delete_milestone(full, "nope")
+    assert not stale.scan(full).scenes  # notes only: nothing goes stale
+
+
 def test_the_thread_map_marks_setups_without_a_payoff(full):
     arc.upsert_thread(full, "ledger", "the ledger's first entry", "b1.ch01.s1", "b1.ch04.s1")
     arc.upsert_thread(full, "key", "the vestry key", "b1.ch02.s1")

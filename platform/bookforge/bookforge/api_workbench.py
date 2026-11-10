@@ -66,6 +66,11 @@ class TensionBody(BaseModel):
     apply: bool = False
 
 
+class MilestoneBody(BaseModel):
+    label: str
+    chapter: str
+
+
 class ThreadBody(BaseModel):
     note: str = ""
     setup: str
@@ -225,7 +230,28 @@ def register(router: APIRouter, h: Helpers) -> None:
     @router.get(W + "/arc")
     def arc_view(series: str, book: str):
         p = h.open_project(series, book)
-        return h.ok({"tension": arc.tension(p), "threads": arc.thread_map(p)})
+        return h.ok({"tension": arc.tension(p), "threads": arc.thread_map(p), "milestones": arc.milestones(p)})
+
+    @router.post(W + "/arc/milestones")
+    def arc_milestone_add(series: str, book: str, body: MilestoneBody):
+        p = h.open_project(series, book)
+        h.require_idle(series)
+        arc.save_milestone(p, body.label, body.chapter)
+        return h.ok(arc.milestones(p))
+
+    @router.put(W + "/arc/milestones/{milestone_id}")
+    def arc_milestone_save(series: str, book: str, milestone_id: str, body: MilestoneBody):
+        p = h.open_project(series, book)
+        h.require_idle(series)
+        arc.save_milestone(p, body.label, body.chapter, milestone_id)
+        return h.ok(arc.milestones(p))
+
+    @router.delete(W + "/arc/milestones/{milestone_id}")
+    def arc_milestone_delete(series: str, book: str, milestone_id: str):
+        p = h.open_project(series, book)
+        h.require_idle(series)
+        arc.delete_milestone(p, milestone_id)
+        return h.ok(arc.milestones(p))
 
     @router.post(W + "/arc/tension")
     def arc_tension(series: str, book: str, body: TensionBody):

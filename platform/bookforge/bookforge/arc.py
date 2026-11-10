@@ -73,6 +73,71 @@ def set_tension(project: Project, chapter_id: str, value: int, apply: bool = Fal
     return result
 
 
+# ── milestones ───────────────────────────────────────────────────────────────
+# A short list of "what happens where": a label pinned to a chapter ("body found" at ch 2, "riddle solved" at ch 19).
+# Plain notes for the author: nothing is checked against the prose and changing them makes nothing stale.
+
+MAX_MILESTONES = 40
+
+
+def _milestones_path(project: Project):
+    return project.root / "workbench" / "milestones.yaml"
+
+
+def _load_milestones(project: Project) -> list[dict]:
+    try:
+        data = yaml.safe_load(_milestones_path(project).read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return []
+    return [m for m in data.get("milestones", []) if isinstance(m, dict) and m.get("id") and m.get("label")]
+
+
+def _save_milestones(project: Project, items: list[dict]) -> None:
+    p = _milestones_path(project)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(yaml.safe_dump({"milestones": items}, sort_keys=False, allow_unicode=True), encoding="utf-8")
+
+
+def milestones(project: Project) -> dict:
+    chapters = store.load_chapters(project) if store.chapters_path(project).exists() else []
+    index = {c.id: i for i, c in enumerate(chapters)}
+    titles = {c.id: c.title for c in chapters}
+    items = []
+    for m in _load_milestones(project):
+        at = index.get(m.get("chapter"))
+        items.append({"id": m["id"], "label": m["label"], "chapter": m.get("chapter", ""), "title": titles.get(m.get("chapter"), ""),
+                      "at": at, "problem": None if at is not None else "this chapter no longer exists"})
+    items.sort(key=lambda m: (m["at"] is None, m["at"] or 0, m["id"]))
+    return {"chapters": [{"id": c.id, "title": c.title} for c in chapters], "items": items}
+
+
+def save_milestone(project: Project, label: str, chapter: str, milestone_id: str = "") -> None:
+    label = (label or "").strip()
+    if not label or len(label) > 120:
+        raise ArcError("a milestone needs a short label (up to 120 characters)")
+    if chapter not in {c.id for c in store.load_chapters(project)}:
+        raise ArcError(f"no chapter '{chapter}'")
+    items = _load_milestones(project)
+    if milestone_id:
+        mine = next((m for m in items if m["id"] == milestone_id), None)
+        if mine is None:
+            raise ArcError(f"no milestone '{milestone_id}'")
+        mine["label"], mine["chapter"] = label, chapter
+    else:
+        if len(items) >= MAX_MILESTONES:
+            raise ArcError(f"keep it short: at most {MAX_MILESTONES} milestones")
+        n = 1 + max((int(m["id"][1:]) for m in items if str(m["id"])[1:].isdigit()), default=0)
+        items.append({"id": f"m{n}", "label": label, "chapter": chapter})
+    _save_milestones(project, items)
+
+
+def delete_milestone(project: Project, milestone_id: str) -> None:
+    items = _load_milestones(project)
+    if not any(m["id"] == milestone_id for m in items):
+        raise ArcError(f"no milestone '{milestone_id}'")
+    _save_milestones(project, [m for m in items if m["id"] != milestone_id])
+
+
 # ── threads ──────────────────────────────────────────────────────────────────
 
 def _threads_path(project: Project):

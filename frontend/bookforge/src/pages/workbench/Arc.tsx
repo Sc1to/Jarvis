@@ -26,16 +26,48 @@ export default function Arc({ series, book }: { series: string; book: string }) 
     if (window.confirm(`${preview?.consequence}. Change ${sel} from ${chapter?.tension} to ${value}?`) && (await act.run(() => post(`${base}/tension`, { chapter: sel, value, apply: true })))) { arc.reload() }
   }
   const addThread = async () => { if (await act.run(() => api(`${base}/threads/${encodeURIComponent(t.id)}`, { method: 'PUT', body: { note: t.note, setup: t.setup, payoff: t.payoff } }))) { setT({ id: '', note: '', setup: '', payoff: '' }); arc.reload() } }
+  const [m, setM] = useState({ label: '', chapter: '' })
+  const addMilestone = async () => { if (await act.run(() => post(`${base}/milestones`, m))) { setM({ label: '', chapter: m.chapter }); arc.reload() } }
+  const dropMilestone = async (id: string) => { if (await act.run(() => api(`${base}/milestones/${encodeURIComponent(id)}`, { method: 'DELETE' }))) arc.reload() }
   const dropThread = async (id: string) => { if (await act.run(() => api(`${base}/threads/${encodeURIComponent(id)}`, { method: 'DELETE' }))) arc.reload() }
 
   if (arc.error) return <ErrorBanner message={arc.error} />
   if (!arc.data) return <Loading />
-  const { tension, threads } = arc.data
+  const { tension, threads, milestones } = arc.data
   const n = Math.max(threads.scenes.length, 1)
+  const nch = Math.max(milestones.chapters.length, 1)
+  const num = (id: string) => id.split('.').pop()?.replace('ch', '') ?? id
 
   return (
     <div className="space-y-3">
       <ErrorBanner message={act.error} onClose={act.clear} />
+      <Card title="Story milestones">
+        {!milestones.chapters.length ? <Empty>No chapters planned yet.</Empty> : (
+          <>
+            <div className="relative mt-1 h-6 rounded bg-slate-100" aria-hidden>
+              {milestones.items.filter((x) => x.at !== null).map((x) => (
+                <span key={x.id} title={`ch ${num(x.chapter)}: ${x.label}`} className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-sky-600" style={{ left: `${(((x.at ?? 0) + 0.5) / nch) * 100}%` }} />
+              ))}
+            </div>
+            <div className="mt-0.5 flex justify-between text-[10px] text-slate-500"><span>ch 1</span><span>ch {num(milestones.chapters[milestones.chapters.length - 1].id)}</span></div>
+            {!milestones.items.length && <Empty>Nothing yet. Add what happens where, like “body found” in chapter 2.</Empty>}
+            <ul className="mt-2 divide-y divide-slate-100">
+              {milestones.items.map((x) => (
+                <li key={x.id} className="flex items-center justify-between gap-2 py-1 text-sm">
+                  <span><span className="inline-block w-12 tabular-nums text-slate-500">ch {num(x.chapter)}</span>{x.label}{x.problem && <span className="ml-2 text-xs text-red-700">{x.problem}</span>}</span>
+                  <button onClick={() => dropMilestone(x.id)} className="min-h-10 px-2 text-xs text-slate-500 underline">remove</button>
+                </li>
+              ))}
+            </ul>
+            <form className="mt-3 grid grid-cols-[1fr_auto] gap-2 border-t border-slate-100 pt-3" onSubmit={(e) => { e.preventDefault(); void addMilestone() }}>
+              <input value={m.label} onChange={(e) => setM({ ...m, label: e.target.value })} placeholder="what happens, like riddle solved" maxLength={120} required className="col-span-2 min-h-10 rounded-md border border-slate-300 px-2 text-sm" />
+              <select value={m.chapter} onChange={(e) => setM({ ...m, chapter: e.target.value })} required aria-label="Chapter" className="min-h-10 rounded-md border border-slate-300 bg-white px-2 text-sm"><option value="">chapter…</option>{milestones.chapters.map((c) => <option key={c.id} value={c.id}>ch {num(c.id)} {c.title}</option>)}</select>
+              <Button type="submit" kind="primary" disabled={act.busy}>Add</Button>
+            </form>
+            <p className="mt-2 text-xs text-slate-500">Notes for you only: nothing is checked against the prose and changing them makes nothing stale.</p>
+          </>
+        )}
+      </Card>
       <Card title="Tension per chapter">
         {!tension.chapters.length ? <Empty>No chapters planned yet.</Empty> : (
           <>
