@@ -109,7 +109,8 @@ def test_a_reason_can_be_accepted_and_the_scene_is_kept_as_written_not_written_a
     from bookforge import ops, scenefiles
     critic_flagged(book)
     kept = scenefiles.best_text(book, SID)
-    ops.accept_reason(book, SID, "critic:beats_covered", "the debt is existing, not hereditary: fine")
+    out = ops.accept_reason(book, SID, "critic:beats_covered", "the debt is existing, not hereditary: fine")
+    assert out["scene_status"] == "accepted" and load_state(book.state_path).items[SID].status == "accepted"  # settled at once, green
     llm = RuleLLM(qc_rules(critic=(CRITIC, critic([{"beats_covered": 1}] * 9)), revise=(REVISE, reviser({}))))
     go(book, llm)
     assert load_state(book.state_path).items[SID].status == "accepted"

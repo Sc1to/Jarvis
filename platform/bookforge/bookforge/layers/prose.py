@@ -312,6 +312,44 @@ def write_scene(ctx: StepContext, scene: Scene, scenes: list[Scene], drafts: int
     return True, [scenefiles.rel(project, p) for p in paths if p.exists()]
 
 
+def finish_accepted(ctx: StepContext, scene: Scene, scenes: list[Scene]) -> None:
+    """Every reason a flagged scene was flagged is accepted by the author: keep its saved text as it is and settle it now.
+
+    Does what the end of `write_scene` does for a passing scene (final text, summary, what it shows) without writing or
+    revising anything. The summary and the extraction need the model; without one (or if it fails) the plan's purpose stands in
+    for the summary and the extraction is skipped.
+    """
+    project, sid = ctx.project, scene.id
+    text = scenefiles.best_text(project, sid)
+    if not text or not text.strip():
+        raise LayerError(f"{sid} has no text to accept")
+    text = text.strip()
+    review = _saved_review(project, sid)
+    review.pop("blocking", None)
+    review["reason_items"] = []
+    review["accepted_reasons"] = scene_notes.read(project, sid)["accepted"]
+    review["accepted_by_author"] = True
+    paths = [scenefiles.deps_path(project, sid), scenefiles.review_path(project, sid)]
+    write_deps(paths[0], build_briefing(project, sid).deps)
+    final = scenefiles.final_path(project, sid)
+    final.write_text(text + "\n", encoding="utf-8")
+    if ctx.llm is not None:
+        summary, review["summary_source"] = _summarise(ctx, scene, text)
+        try:
+            gaps, filed = record_extraction(ctx, scene, scenes, text, review, paths)
+        except BookforgeError as e:
+            log.warning("%s: nothing recorded about what the scene shows (%s)", sid, e)
+            gaps, filed = 0, []
+    else:
+        summary, review["summary_source"], gaps, filed = scene.purpose, "plan", 0, []
+    scenefiles.summary_path(project, sid).write_text(summary.rstrip() + "\n", encoding="utf-8")
+    paths += [final, scenefiles.summary_path(project, sid)]
+    scenefiles.review_path(project, sid).write_text(json.dumps(review, indent=2, ensure_ascii=False), encoding="utf-8")
+    clear_progress(project, sid)
+    _set_status(project, sid, "accepted", "accepted by the author" + (f"; {gaps} gap(s) between plan and prose" if gaps else ""))
+    _commit(project, sid, "flagged, every reason accepted by the author", paths)
+
+
 def order_for_run(project, scenes: list[Scene], voice_approved: bool, first_chapter: str) -> list[Scene]:
     """The scenes a run goes through, in order. Scenes still to do come first (one that was interrupted, `drafted`, before the
     untouched ones); flagged scenes are retried afterwards, so pausing a run does not send it back to a flagged scene at the start of

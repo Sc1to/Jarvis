@@ -411,7 +411,7 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
     def accept_reason(series: str, book: str, scene_id: str, body: AcceptBody):
         project = open_project(series, book)
         require_idle(series)
-        return ok(ops.accept_reason(project, scene_id, body.key, body.note))
+        return ok(ops.accept_reason(project, scene_id, body.key, body.note, make_llm(project)))
 
     @router.post("/series/{series}/books/{book}/scenes/{scene_id}/accept-stale")
     def accept_stale(series: str, book: str, scene_id: str):

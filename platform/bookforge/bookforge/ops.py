@@ -275,11 +275,12 @@ def flag_reasons(project: Project, scene_id: str) -> list[dict]:
     return out
 
 
-def accept_reason(project: Project, scene_id: str, key: str, note: str = "") -> dict:
+def accept_reason(project: Project, scene_id: str, key: str, note: str = "", llm: LLMClient | None = None) -> dict:
     """Accept one reason a scene is flagged: the text is kept as it is and this reason no longer blocks it.
 
-    Applied the next run: the other reasons are still revised or checked, and once none is left the scene is accepted (summary,
-    extraction). Returns the reason.
+    Once every reason is accepted the scene is settled at once (accepted, summary, extraction; `llm` writes those, else the plan
+    stands in for the summary). While some reason is still open the others are revised or checked on the next run. Returns the
+    reason, with `scene_status`.
     """
     from . import scenefiles
     from .qc import scene_notes
@@ -294,7 +295,12 @@ def accept_reason(project: Project, scene_id: str, key: str, note: str = "") -> 
     scene_notes.accept(project, scene_id, key, found["message"], note)
     if project.config.git.commit_each_step:
         vcs.commit(project.root, f"{scene_id}: you accepted a reason it was flagged: {found['message']}"[:200], [scenefiles.scene_dir(project, scene_id)])
-    return {**found, "accepted": True, "note": " ".join(note.split())}
+    if all(r["accepted"] or r["key"] == key for r in reasons):
+        from .layers.prose import finish_accepted
+        scenes = bible_store.load_scenes(project)
+        scene = next(s for s in scenes if s.id == scene_id)
+        finish_accepted(StepContext(project=project, layer="prose", llm=llm), scene, scenes)
+    return {**found, "accepted": True, "note": " ".join(note.split()), "scene_status": project.state.items[scene_id].status}
 
 
 def undo_accept_reason(project: Project, scene_id: str, key: str) -> None:

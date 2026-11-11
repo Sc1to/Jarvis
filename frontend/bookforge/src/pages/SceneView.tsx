@@ -157,9 +157,9 @@ function ReasonsCard({ detail, scenePath, locked, onDone }: { detail: SceneDetai
   return (
     <Card title="Why this scene is flagged" tone="warn" right={<span className="text-xs text-slate-600">{open ? `${open} of ${reasons.length} still open` : 'all accepted'}</span>}>
       <div className="space-y-3">
-        <p className="text-xs text-slate-600">Each reason is its own decision. Accepting one keeps the text as it is for that reason only; the others are still fixed or checked on the next Run.</p>
+        <p className="text-xs text-slate-600">Each reason is its own decision. Accepting one keeps the text as it is for that reason only; the others are still fixed or checked on the next Run. Once every reason is accepted, the scene turns green at once.</p>
         <ul className="space-y-2">{reasons.map((r) => <ReasonRow key={r.key} reason={r} found={evidence(r)} scenePath={scenePath} locked={locked || detail.status !== 'flagged'} onDone={onDone} />)}</ul>
-        {!open && detail.status === 'flagged' && <p className="text-sm text-emerald-800">Every reason is accepted: the scene is finished the next time you press Run. Its text is kept, not written again.</p>}
+        {!open && detail.status === 'flagged' && <p className="text-sm text-emerald-800">Every reason is accepted: the scene is finished and its text is kept as it is.</p>}
         <div className="space-y-2">
           <Button onClick={() => setShowText((v) => !v)}>{showText ? 'Hide the scene' : 'Read the scene with the quoted lines marked'}</Button>
           {showText && detail.text && <div className="rounded-md border border-slate-200 bg-white p-3"><Prose text={detail.text} quotes={quotes} /></div>}
