@@ -143,6 +143,7 @@ export interface CalibrationReport {
 export interface ArcView {
   tension: { chapters: { id: string; title: string; act: string; tension: number; scenes: number; written: number }[]; notes: string[] }
   threads: { scenes: string[]; unpaid: number; threads: { id: string; note: string; setup: string; payoff: string; problem: string | null; setup_at: number | null; payoff_at: number | null }[] }
+  milestones: { chapters: { id: string; title: string }[]; items: { label: string; chapter: string; title: string; at: number | null; basis: 'plan' | 'written' }[]; generated_at: string; current: boolean }
 }
 export interface TensionPreview { chapter: string; from: number; to: number; consequence: string; applied: boolean }
 

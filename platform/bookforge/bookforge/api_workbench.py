@@ -10,7 +10,7 @@ from typing import Callable
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from . import ab, arc, calibration, rules, rules_ai, studio, xray
+from . import ab, arc, calibration, milestones, rules, rules_ai, studio, xray
 from .layers.runner import StepContext
 from .project import Project
 
@@ -225,7 +225,19 @@ def register(router: APIRouter, h: Helpers) -> None:
     @router.get(W + "/arc")
     def arc_view(series: str, book: str):
         p = h.open_project(series, book)
-        return h.ok({"tension": arc.tension(p), "threads": arc.thread_map(p)})
+        return h.ok({"tension": arc.tension(p), "threads": arc.thread_map(p), "milestones": arc.milestones(p)})
+
+    @router.post(W + "/arc/milestones/refresh", status_code=202)
+    def arc_milestones_refresh(series: str, book: str):
+        h.open_project(series, book)
+        root = h.series_root(series)
+
+        def job() -> dict:
+            project, ctx = job_ctx(root, book, h.make_llm())
+            record = milestones.refresh(ctx, force=True)
+            return {"milestones": len(record["items"])}
+
+        return h.start_job(series, book, "milestones", {}, job)
 
     @router.post(W + "/arc/tension")
     def arc_tension(series: str, book: str, body: TensionBody):

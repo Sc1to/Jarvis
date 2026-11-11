@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, bookPath, post } from '../../lib/api'
-import { useAction, useApi } from '../../lib/hooks'
+import { useAction, useApi, useJob } from '../../lib/hooks'
 import type { ArcView, TensionPreview } from '../../lib/types'
 import { Button, Card, Empty, ErrorBanner, Loading } from '../../components/ui'
 
@@ -26,16 +26,48 @@ export default function Arc({ series, book }: { series: string; book: string }) 
     if (window.confirm(`${preview?.consequence}. Change ${sel} from ${chapter?.tension} to ${value}?`) && (await act.run(() => post(`${base}/tension`, { chapter: sel, value, apply: true })))) { arc.reload() }
   }
   const addThread = async () => { if (await act.run(() => api(`${base}/threads/${encodeURIComponent(t.id)}`, { method: 'PUT', body: { note: t.note, setup: t.setup, payoff: t.payoff } }))) { setT({ id: '', note: '', setup: '', payoff: '' }); arc.reload() } }
+  const refresh = useJob<{ milestones: number }>(bookPath(series, book))
+  useEffect(() => { if (refresh.result) arc.reload() }, [refresh.result])  // eslint-disable-line react-hooks/exhaustive-deps
   const dropThread = async (id: string) => { if (await act.run(() => api(`${base}/threads/${encodeURIComponent(id)}`, { method: 'DELETE' }))) arc.reload() }
 
   if (arc.error) return <ErrorBanner message={arc.error} />
   if (!arc.data) return <Loading />
-  const { tension, threads } = arc.data
+  const { tension, threads, milestones } = arc.data
   const n = Math.max(threads.scenes.length, 1)
+  const nch = Math.max(milestones.chapters.length, 1)
+  const num = (id: string) => id.split('.').pop()?.replace('ch', '') ?? id
 
   return (
     <div className="space-y-3">
       <ErrorBanner message={act.error} onClose={act.clear} />
+      <Card title="Story milestones" right={<Button disabled={refresh.busy || !milestones.chapters.length} onClick={() => refresh.run('/workbench/arc/milestones/refresh')} title="Ask the planner model to work out the milestones again">{refresh.busy ? 'Working…' : 'Refresh'}</Button>}>
+        {refresh.error && <ErrorBanner message={refresh.error} onClose={refresh.reset} />}
+        {!milestones.chapters.length ? <Empty>No chapters planned yet.</Empty> : !milestones.items.length ? (
+          <Empty>None yet. They are worked out by the model at the end of a run; tap Refresh to have it done now.</Empty>
+        ) : (
+          <>
+            <div className="relative mt-1 h-6 rounded bg-slate-100" aria-hidden>
+              {milestones.items.filter((x) => x.at !== null).map((x) => (
+                <span key={`${x.chapter}-${x.label}`} title={`ch ${num(x.chapter)}: ${x.label}`} className={`absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full ${x.basis === 'written' ? 'bg-sky-600' : 'border-2 border-sky-600 bg-white'}`} style={{ left: `${(((x.at ?? 0) + 0.5) / nch) * 100}%` }} />
+              ))}
+            </div>
+            <div className="mt-0.5 flex justify-between text-[10px] text-slate-500"><span>ch 1</span><span>ch {num(milestones.chapters[milestones.chapters.length - 1].id)}</span></div>
+            <ul className="mt-2 divide-y divide-slate-100">
+              {milestones.items.map((x) => (
+                <li key={`${x.chapter}-${x.label}`} className="flex items-baseline justify-between gap-2 py-1.5 text-sm">
+                  <span><span className="inline-block w-12 tabular-nums text-slate-500">ch {num(x.chapter)}</span>{x.label}</span>
+                  <span className="shrink-0 text-xs text-slate-500">{x.basis === 'written' ? 'in the text' : 'planned'}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-2 text-xs text-slate-500">
+              Worked out by the model from the chapter plan and, for written chapters, the scene summaries. Filled dot: in the text; hollow: only planned.
+              {!milestones.current && ' The plan or the text has changed since: tap Refresh.'}
+            </p>
+          </>
+        )}
+      </Card>
+
       <Card title="Tension per chapter">
         {!tension.chapters.length ? <Empty>No chapters planned yet.</Empty> : (
           <>

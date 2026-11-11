@@ -73,6 +73,21 @@ def set_tension(project: Project, chapter_id: str, value: int, apply: bool = Fal
     return result
 
 
+# ── milestones ───────────────────────────────────────────────────────────────
+# Made by the model (milestones.py), not typed in: this only shows them against the chapters.
+
+def milestones(project: Project) -> dict:
+    from . import milestones as made
+    chapters = store.load_chapters(project) if store.chapters_path(project).exists() else []
+    index = {c.id: i for i, c in enumerate(chapters)}
+    titles = {c.id: c.title for c in chapters}
+    record = made.load(project)
+    items = [{"label": m["label"], "chapter": m["chapter"], "title": titles.get(m["chapter"], ""), "at": index.get(m["chapter"]), "basis": m.get("basis", "plan")}
+             for m in record.get("items", []) if isinstance(m, dict) and m.get("chapter") in index and m.get("label")]
+    return {"chapters": [{"id": c.id, "title": c.title} for c in chapters], "items": items, "generated_at": record.get("generated_at", ""),
+            "current": bool(record.get("items")) and record.get("fingerprint") == made._fingerprint(made._inputs(project))}
+
+
 # ── threads ──────────────────────────────────────────────────────────────────
 
 def _threads_path(project: Project):

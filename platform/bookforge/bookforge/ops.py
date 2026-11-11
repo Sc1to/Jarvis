@@ -9,7 +9,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from . import steering, assemble as assembly, bench as benchmarks, changes as change_requests, report as morning_report, stale as staleness, vcs
+from . import milestones, steering, assemble as assembly, bench as benchmarks, changes as change_requests, report as morning_report, stale as staleness, vcs
 from .bible import store as bible_store
 from .constants import LAYER_ORDER, REDO_NOTE
 from .errors import BookforgeError
@@ -35,6 +35,7 @@ class PipelineOutcome:
     assembled: assembly.Assembly | None = None
     report_path: str | None = None
     report_error: str | None = None
+    milestones_error: str | None = None  # why no milestones were made (never stops a run)
 
 
 def resume_point(project: Project) -> dict | None:
@@ -81,6 +82,8 @@ def run_pipeline(project: Project, llm: LLMClient | None, web: WebClient | None,
             out.assembled = assembly.assemble(project)
         except BookforgeError as e:
             summary.detail = f"not assembled: {e}"
+    if llm is not None:
+        out.milestones_error = milestones.refresh_quietly(StepContext(project=project, layer="prose", llm=llm))
     try:
         out.report_path = morning_report.write_report(project, since=started)
         if project.config.git.commit_each_step:

@@ -5,7 +5,7 @@ import subprocess
 
 import pytest
 
-from bookforge import ab, arc, calibration, rules, rules_ai, scenefiles, stale, studio, xray
+from bookforge import ab, arc, calibration, milestones, rules, rules_ai, scenefiles, stale, studio, xray
 from bookforge.bible import store
 from bookforge.layers.runner import StepContext
 from bookforge.project import Project
@@ -301,6 +301,59 @@ def test_changing_tension_previews_its_consequence_and_applies_only_when_told(fu
             arc.set_tension(full, "b1.ch02", bad)
     with pytest.raises(arc.ArcError):
         arc.set_tension(full, "b1.ch99", 5)
+
+
+def milestone_llm(items):
+    return RuleLLM([("List the key story milestones", json.dumps({"milestones": items}))])
+
+
+MS = [{"chapter": "b1.ch04", "label": "Riddle solved"}, {"chapter": "b1.ch02", "label": "Body found"},
+      {"chapter": "b1.ch01", "label": "First suspect"}, {"chapter": "b1.ch03", "label": "Breakthrough"}]
+
+
+def test_the_model_picks_milestones_and_they_are_shown_in_book_order(full):
+    llm = milestone_llm(MS)
+    record = milestones.refresh(ctx(full, llm))
+    assert [(m["chapter"], m["label"]) for m in record["items"]] == [("b1.ch01", "First suspect"), ("b1.ch02", "Body found"), ("b1.ch03", "Breakthrough"), ("b1.ch04", "Riddle solved")]
+    assert {m["basis"] for m in record["items"]} == {"written"}  # the whole small book is written: summaries were read
+    view = arc.milestones(full)
+    assert [i["at"] for i in view["items"]] == [0, 1, 2, 3] and view["current"] is True and view["items"][1]["title"]
+    sent = llm.calls[0]["messages"][-1]["content"]
+    assert "[written]" in sent and "b1.ch02" in sent
+
+
+def test_milestones_are_asked_again_only_when_the_text_changed(full):
+    llm = milestone_llm(MS)
+    milestones.refresh(ctx(full, llm))
+    milestones.refresh(ctx(full, llm))
+    assert len(llm.calls) == 1  # same plan and summaries: kept
+    milestones.refresh(ctx(full, llm), force=True)
+    assert len(llm.calls) == 2
+    chapters = store.load_chapters(full)
+    chapters[0].summary += " A new twist."
+    store.save_chapters(full, chapters)
+    assert arc.milestones(full)["current"] is False
+    milestones.refresh(ctx(full, llm))
+    assert len(llm.calls) == 3
+
+
+def test_a_planned_chapter_gives_a_plan_milestone(book):
+    record = milestones.refresh(ctx(book, milestone_llm(MS)))
+    assert {m["basis"] for m in record["items"]} == {"plan"}
+
+
+def test_unusable_milestones_are_refused_and_the_old_list_is_kept(full):
+    milestones.refresh(ctx(full, milestone_llm(MS)))
+    bad = milestone_llm([{"chapter": "b1.ch99", "label": "Nowhere"}])
+    with pytest.raises(Exception):
+        milestones.refresh(ctx(full, bad), force=True)
+    assert [m["label"] for m in arc.milestones(full)["items"]][0] == "First suspect"
+    assert milestones.refresh_quietly(ctx(full, bad)) is None  # unchanged text: nothing asked, nothing failed
+
+
+def test_a_run_never_fails_because_milestones_could_not_be_made(book):
+    assert milestones.refresh_quietly(ctx(book, RuleLLM([]))) is not None  # the fake cannot answer: reported, not raised
+    assert not milestones.path(book).exists()
 
 
 def test_the_thread_map_marks_setups_without_a_payoff(full):
