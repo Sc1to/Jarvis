@@ -105,6 +105,18 @@ def test_stale_lists_reasons_without_changing_anything(full):
     assert data(client.get(f"{B}/scenes"))[0]["status"] == "accepted"  # a read does not mark anything
 
 
+def test_accepting_a_stale_scene_as_is_marks_it_accepted(full):
+    constants = store.load_constants(full)
+    constants.entities[0].facts = ["a different fact"]
+    store.save_constants(full, constants)
+    data(client.get(f"{B}/stale"))
+    out = data(client.post(f"{B}/scenes/b1.ch01.s1/accept-stale"))
+    assert out["status"] == "accepted"
+    assert "b1.ch01.s1" not in [s["scene"] for s in data(client.get(f"{B}/stale"))["scenes"]]
+    assert data(client.get(f"{B}/scenes/b1.ch01.s1"))["status"] == "accepted"
+    error(client.post(f"{B}/scenes/b1.ch99.s9/accept-stale"), 404)
+
+
 # ── decisions ───────────────────────────────────────────────────────────────
 
 def test_approving_a_waiting_checkpoint(book):

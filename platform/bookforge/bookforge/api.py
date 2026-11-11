@@ -413,6 +413,17 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
         require_idle(series)
         return ok(ops.accept_reason(project, scene_id, body.key, body.note))
 
+    @router.post("/series/{series}/books/{book}/scenes/{scene_id}/accept-stale")
+    def accept_stale(series: str, book: str, scene_id: str):
+        """Accept an out-of-date scene as it is: its text is kept, what it is built from is refreshed, it turns green."""
+        project = open_project(series, book)
+        require_idle(series)
+        try:
+            ops.stale_pass(project, None, False, [scene_id])
+        except BookforgeError as e:
+            raise HTTPException(404, str(e))
+        return ok({"scene": scene_id, "status": project.state.items[scene_id].status})
+
     @router.delete("/series/{series}/books/{book}/scenes/{scene_id}/accept-reason")
     def undo_accept_reason(series: str, book: str, scene_id: str, key: str = Query(...)):
         project = open_project(series, book)

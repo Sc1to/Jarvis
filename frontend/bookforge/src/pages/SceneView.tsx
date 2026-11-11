@@ -319,6 +319,7 @@ export default function SceneView({ series, book, id, status, reload }: { series
   const base = bookPath(series, book)
   const d = useApi<SceneDetail>(`${base}/scenes/${encodeURIComponent(id)}`)
   const [view, setView] = useState<'text' | 'compare' | 'review' | 'plan' | null>(null)
+  const accept = useAction()
   if (d.error) return <div className="space-y-3"><ErrorBanner message={d.error} /><a className="text-sm underline" href={href({ series, book, tab: 'tree' })}>Back to the tree</a></div>
   if (!d.data) return <Loading />
   const x = d.data
@@ -363,6 +364,14 @@ export default function SceneView({ series, book, id, status, reload }: { series
             </Card>
           )}
         </div>
+      )}
+      {x.status === 'stale' && (
+        <Card title="Out of date" tone="warn">
+          <p className="mb-2 text-sm text-slate-700">Something this scene was built from has changed. If the text is still fine, keep it as it is.</p>
+          <ErrorBanner message={accept.error} onClose={accept.clear} />
+          <Button kind="primary" disabled={accept.busy || status.job?.status === 'running'}
+            onClick={async () => { if (window.confirm('Accept this scene as it is?') && await accept.run(() => post(`${base}/scenes/${encodeURIComponent(id)}/accept-stale`))) { d.reload(); reload() } }}>Accept as is</Button>
+        </Card>
       )}
       {current !== 'plan' && <Button onClick={d.reload}>Refresh</Button>}
     </div>
