@@ -157,6 +157,8 @@ export default function Inbox({ series, book, status, reload }: { series: string
               <a className="font-medium underline" href={href({ series, book, tab: 'scene', id: s.scene })}>{s.scene}</a>
               <span className="text-slate-500"> · start with {s.level}</span>
               <ul className="ml-4 list-disc text-xs text-slate-600">{s.reasons.map((r) => <li key={r}>{r}</li>)}</ul>
+              <div className="mt-1"><Button disabled={fix.busy || !!locked} title="Keep the text as it is and mark the scene accepted"
+                onClick={async () => { if (window.confirm(`Accept ${s.scene} as it is? The text is kept and the scene is marked accepted.`) && await fix.run(() => post(`${base}/scenes/${encodeURIComponent(s.scene)}/accept-stale`))) { stale.reload(); reload() } }}>Accept as is</Button></div>
             </li>
           ))}
           {stale.data?.plan.map((p) => <li key={p.id} className="text-sm"><span className="font-medium">{p.id}</span> <span className="text-slate-600">plan out of date: {p.reason}</span></li>)}

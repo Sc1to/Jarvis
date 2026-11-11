@@ -105,6 +105,7 @@ def stale_pass(project: Project, llm: LLMClient | None = None, fix: bool = False
     for target in accept or []:
         if target in scene_ids:
             staleness.accept_as_is(project, target)
+            staleness.record_plan(project, {target})  # also clears "its chapter changed" for this scene
         elif target in {c.id for c in bible_store.load_chapters(project)}:
             staleness.record_plan(project, {target})
         else:
