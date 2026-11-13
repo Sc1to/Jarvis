@@ -1,0 +1,10 @@
+scenes:
+- id: t.ch01.s1
+  day: 1
+  time: dawn
+- id: t.ch02.s1
+  day: 2
+  time: noon
+- id: t.ch03.s1
+  day: 1
+  time: noon

@@ -1,0 +1,37 @@
+acts:
+- id: t.act1
+  title: The yard
+  summary: Mara, in debt, finds the ferry and enters it.
+  purpose: setup
+  turning_point: the ferry is entered
+  chapter_count: 8
+  events:
+  - e1
+  - e2
+  - e3
+  turning_point_event: e3
+  sizing_reason: hit the word target
+- id: t.act2
+  title: The drive
+  summary: Mara finds the drive; Corso learns and offers a deal.
+  purpose: escalation
+  turning_point: the deal is offered
+  chapter_count: 2
+  events:
+  - e4
+  - e5
+  - e6
+  turning_point_event: e6
+  sizing_reason: one chapter per beat
+- id: t.act3
+  title: The deal
+  summary: Mara signs, launches and Corso is arrested.
+  purpose: crisis
+  turning_point: the arrest
+  chapter_count: 2
+  events:
+  - e7
+  - e8
+  - e9
+  turning_point_event: ''
+  sizing_reason: the rest

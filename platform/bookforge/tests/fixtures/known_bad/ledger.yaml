@@ -1,0 +1,132 @@
+events:
+- once_only: true
+  after: []
+  kind: event
+  pov: ''
+  ending: false
+  pays_off: ''
+  source: synopsis
+  parent: ''
+  id: e1
+  text: Mara owes Corso a crushing debt
+  excerpt: owes a crushing debt to the moneylender Corso
+  weight: 1
+- once_only: true
+  after:
+  - e1
+  kind: event
+  pov: ''
+  ending: false
+  pays_off: ''
+  source: synopsis
+  parent: ''
+  id: e2
+  text: Mara finds a derelict ferry in the harbor yard
+  excerpt: finds a derelict ferry rusting in the harbor yard
+  weight: 2
+- once_only: true
+  after:
+  - e2
+  kind: event
+  pov: ''
+  ending: false
+  pays_off: ''
+  source: synopsis
+  parent: ''
+  id: e3
+  text: Mara enters the ferry
+  excerpt: forces her way into the ferry
+  weight: 2
+- once_only: true
+  after:
+  - e3
+  kind: event
+  pov: ''
+  ending: false
+  pays_off: ''
+  source: synopsis
+  parent: ''
+  id: e4
+  text: Mara finds a data drive naming Corso as a smuggler
+  excerpt: finds a data drive that names Corso as a smuggler
+  weight: 3
+- once_only: true
+  after:
+  - e4
+  kind: event
+  pov: ''
+  ending: false
+  pays_off: ''
+  source: synopsis
+  parent: ''
+  id: e5
+  text: Corso learns of the drive
+  excerpt: Corso learns of the drive
+  weight: 2
+- once_only: true
+  after:
+  - e5
+  kind: event
+  pov: ''
+  ending: false
+  pays_off: ''
+  source: synopsis
+  parent: ''
+  id: e6
+  text: 'Corso offers a deal: the drive for the debt'
+  excerpt: 'offers Mara a deal: hand it over and the debt is voided'
+  weight: 2
+- once_only: true
+  after:
+  - e6
+  kind: setup
+  pov: ''
+  ending: false
+  pays_off: ''
+  source: synopsis
+  parent: ''
+  id: e7
+  text: Mara signs the deal but secretly keeps a copy
+  excerpt: Mara signs the deal but secretly keeps a copy of the drive
+  weight: 3
+- once_only: true
+  after:
+  - e7
+  kind: event
+  pov: ''
+  ending: false
+  pays_off: ''
+  source: synopsis
+  parent: ''
+  id: e8
+  text: Mara launches the ferry to escape the yard
+  excerpt: she launches the ferry to escape the yard
+  weight: 3
+- once_only: true
+  after:
+  - e8
+  kind: payoff
+  pov: ''
+  ending: true
+  pays_off: e7
+  source: synopsis
+  parent: ''
+  id: e9
+  text: The inspector arrests Corso with Mara's copy
+  excerpt: gives the copy to the harbor inspector, who arrests Corso
+  weight: 3
+- once_only: true
+  after:
+  - e9
+  kind: event
+  pov: ''
+  ending: true
+  pays_off: ''
+  source: synopsis
+  parent: ''
+  id: e10
+  text: Mara sails free, her debt cleared
+  excerpt: Mara sails free with her debt cleared
+  weight: 1
+questions: []
+thin: false
