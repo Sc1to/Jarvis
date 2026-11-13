@@ -81,7 +81,8 @@ def test_missing_playwright_is_reported(monkeypatch):
     assert by_name(check_web(None))["playwright"].level == "fail"
 
 
-def test_run_doctor_online_runs_every_check(project, tmp_path):
+def test_run_doctor_online_runs_every_check(project_with_ledger, tmp_path):
+    project = project_with_ledger
     host = tmp_path / "_host_config.yaml"
     host.write_text("models:\n  writer:\n    model: qwen36-35b\n  critic:\n    model: other\n", encoding="utf-8")
     result = by_name(run_doctor(project.root, transport=transport(lambda r: MODELS if r.url.path.endswith("/models") else httpx.Response(200)),

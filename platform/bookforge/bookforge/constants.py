@@ -5,6 +5,7 @@ LAYER_ORDER = (
     "series_north_star",
     "book_north_star",
     "synopsis",
+    "ledger",
     "acts",
     "chapters",
     "scenes",
@@ -14,7 +15,10 @@ LAYER_ORDER = (
 # The four human checkpoints. direction and structure are attached to layers in
 # config; voice (after chapter 1 prose) and final (after assembly) are reached
 # explicitly by later milestones.
-CHECKPOINTS = ("direction", "structure", "voice", "final")
+CHECKPOINTS = ("direction", "ledger", "structure", "voice", "final")
+
+# The checkpoints a planning layer is attached to (`layers.<name>.checkpoint`), in pipeline order.
+LAYER_CHECKPOINTS = ("direction", "ledger", "structure")
 
 # Item status values (docs/BOOKFORGE.md, Key records: state.json).
 STATUSES = ("pending", "drafted", "checked", "accepted", "stale", "flagged")
@@ -27,6 +31,7 @@ STATE_SCHEMA_VERSION = 1
 CHECKPOINT_REVIEW_FILES = {
     "direction": ("north-star.md", "books/{book}/north-star.md", "books/{book}/synopsis.md",
                   "research/needs.md", "books/{book}/research/needs.md"),
+    "ledger": ("books/{book}/ledger.yaml", "books/{book}/synopsis.md", "books/{book}/validation/ledger.json"),
     "voice": ("books/{book}/scenes/ch01/s*/final.md", "style/guide.md", "style/banned.txt"),
     "structure": ("books/{book}/acts.yaml", "books/{book}/chapters.yaml", "books/{book}/scenes.yaml",
                   "bible/constants.yaml", "bible/tracks.yaml", "bible/timeline.yaml", "books/{book}/research/needs.md"),

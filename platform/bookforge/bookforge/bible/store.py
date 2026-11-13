@@ -8,7 +8,7 @@ from pydantic import BaseModel, ValidationError
 
 from ..errors import BookforgeError
 from ..project import Project
-from .models import Act, Chapter, Constants, Scene, TimelineEntry, Track, problems_from
+from .models import Act, Chapter, Constants, Ledger, Scene, TimelineEntry, Track, problems_from
 
 
 class BibleError(BookforgeError):
@@ -157,3 +157,25 @@ def upsert_plan(base: list[Track], incoming: list[Track]) -> list[Track]:
             entries[e.from_] = e
         existing.plan = sorted(entries.values(), key=lambda e: parse_position(e.from_).key)
     return [by_id[i] for i in order]
+
+
+# ── the story-event ledger ───────────────────────────────────────────────────
+
+def ledger_path(project: Project) -> Path:
+    return project.book_dir / "ledger.yaml"
+
+
+def load_ledger(project: Project) -> Ledger | None:
+    data = _load(ledger_path(project))
+    if not data:
+        return None
+    try:
+        return Ledger.model_validate(data)
+    except ValidationError as e:
+        raise BibleError(f"{ledger_path(project)} is not valid: " + "; ".join(problems_from(e))) from e
+
+
+def save_ledger(project: Project, ledger: Ledger) -> None:
+    path = ledger_path(project)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(dump_yaml(to_plain(ledger)), encoding="utf-8")

@@ -158,6 +158,7 @@ class AuthorQuestion(_Record):
     options: list[Text] = []  # complications the model proposes, for the author to pick, edit or reject
     answer: str = ""  # the author's answer; the ledger is revised from it
     status: Literal["open", "answered", "dismissed"] = "open"
+    applied: bool = False  # an answered question has been worked into the ledger
 
 
 class Ledger(_Record):

@@ -31,6 +31,7 @@ layers:                                # model used for the refine step; review 
   series_north_star: {model: critic, checkpoint: direction}
   book_north_star:   {model: critic, checkpoint: direction}
   synopsis:          {model: critic, checkpoint: direction}
+  ledger:            {model: critic, checkpoint: ledger}      # the story-event ledger, extracted from the synopsis; you approve it before acts run
   acts:              {model: critic, count: [3, 4], checkpoint: structure}
   chapters:          {model: critic, count: [25, 35], checkpoint: structure}
   scenes:            {model: critic, per_chapter: [2, 4], checkpoint: structure}
@@ -57,6 +58,10 @@ research:
   notes_max_chars: 6000                # research notes included in a prompt
   page_max_chars: 12000                # page text given to the model (for a long page, the parts that mention the question)
   scene_questions: 2                   # questions researched per chapter before its scenes are planned (0 = none)
+
+ledger:
+  weight_per_chapter: 2.0              # story weight one chapter carries (events weigh 1 minor, 2 ordinary, 3 major)
+  min_chapters: 12                     # less story than this many chapters' worth is 'thin': the ledger asks you questions instead of padding
 
 book:
   target_words: 90000

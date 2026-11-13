@@ -88,6 +88,46 @@ def run(
     raise typer.Exit(summary.exit_code)
 
 
+@app.command("ledger")
+def ledger_cmd(
+    path: Path = PathArg,
+    book: str = BookOpt,
+    out: Optional[Path] = typer.Option(None, "--out", help="Where to write the preview (default: books/<book>/ledger.preview.yaml)"),
+) -> None:
+    """Extract the story-event ledger from the synopsis as a PREVIEW: prints the events, the capacity numbers and the checks.
+
+    Changes nothing else: no state, no commit, the real ledger.yaml and every other file are left alone. Use it to see what
+    the ledger stage makes of a synopsis (also of a book that was planned before the ledger existed).
+    """
+    from .layers.ledger import generate, report_text
+    from .layers.runner import StepContext
+    from .validators import store as findings_store
+    try:
+        project = Project.open(path, book)
+        ledger_obj, findings = generate(StepContext(project=project, layer="ledger", llm=build_client(project)),
+                                        project.resolve(f"books/{project.book}/synopsis.md").read_text(encoding="utf-8").strip())
+        target = out or project.book_dir / "ledger.preview.yaml"
+        from .bible.store import dump_yaml, to_plain
+        target.write_text(dump_yaml(to_plain(ledger_obj)), encoding="utf-8")
+        findings_store.save(project, "ledger-preview", findings, {"capacity": ledger_obj.capacity})
+    except (BookforgeError, OSError) as e:
+        _fail(e)
+    typer.echo(report_text(ledger_obj, findings))
+    typer.echo(f"\nPreview written to {target}")
+
+
+@app.command("ledger-answer")
+def ledger_answer(path: Path = PathArg, question: str = typer.Argument(..., help="Question id, like q1"),
+                  answer: str = typer.Argument(..., help="Your answer"), book: str = BookOpt) -> None:
+    """Answer a ledger question. The next `run` revises the ledger from your answers (new events get source: author)."""
+    from .layers.ledger import answer_question
+    try:
+        answer_question(Project.open(path, book), question, answer)
+    except BookforgeError as e:
+        _fail(e)
+    typer.echo(f"Recorded your answer to {question}. Run again to revise the ledger.")
+
+
 @app.command()
 def status(
     path: Path = PathArg,

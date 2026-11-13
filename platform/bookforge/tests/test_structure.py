@@ -362,8 +362,13 @@ def test_validate_bible_reports_unreadable_files(built):
 
 # ── through the CLI ─────────────────────────────────────────────────────────
 
+LEDGER_REPLY = dump({"events": [
+    {"id": "e1", "text": "The story begins", "excerpt": "story story story story", "weight": 2},
+    {"id": "e2", "text": "The story ends", "excerpt": "story story story", "weight": 2, "after": ["e1"], "ending": True}]})
+
+
 def test_full_cli_flow_to_the_structure_checkpoint_and_state_lookups(tmp_path, monkeypatch):
-    llm = RuleLLM(direction_rules() + rules())
+    llm = RuleLLM(direction_rules() + [("Extract the STORY EVENTS", LEDGER_REPLY)] + rules())
     monkeypatch.setattr(cli, "build_client", lambda p: llm)
     monkeypatch.setattr(cli, "build_web_client", lambda p: None)
     runner = CliRunner()
@@ -371,11 +376,14 @@ def test_full_cli_flow_to_the_structure_checkpoint_and_state_lookups(tmp_path, m
     premise.write_text("A clerk finds a ledger.\n")
     series = tmp_path / "s"
     assert runner.invoke(cli.app, ["new", str(series), "--premise", str(premise)]).exit_code == 0
-    (series / "config.yaml").write_text(SMALL_CONFIG)
+    (series / "config.yaml").write_text(SMALL_CONFIG + "ledger:\n  min_chapters: 1\n")
 
     first = runner.invoke(cli.app, ["run", str(series)])
     assert first.exit_code == 0 and "approve direction" in first.output
     assert runner.invoke(cli.app, ["approve", str(series), "direction"]).exit_code == 0
+    ledger_run = runner.invoke(cli.app, ["run", str(series)])
+    assert ledger_run.exit_code == 0 and "accepted: ledger" in ledger_run.output and "approve ledger" in ledger_run.output
+    assert runner.invoke(cli.app, ["approve", str(series), "ledger"]).exit_code == 0
 
     second = runner.invoke(cli.app, ["run", str(series)])
     assert second.exit_code == 0, second.output

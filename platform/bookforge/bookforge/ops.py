@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 
 from . import milestones, steering, assemble as assembly, bench as benchmarks, changes as change_requests, report as morning_report, stale as staleness, vcs
 from .bible import store as bible_store
-from .constants import LAYER_ORDER, REDO_NOTE
+from .constants import LAYER_CHECKPOINTS, LAYER_ORDER, REDO_NOTE
 from .errors import BookforgeError
 from .layers import HANDLERS
 from .layers.runner import RunSummary, StepContext, run as run_layers
@@ -322,7 +322,10 @@ def redo_plan(project: Project, layer: str) -> list[str]:
     """The layers `redo` would reset along with this one: those after it that are not still pending."""
     if layer not in REDOABLE:
         raise BookforgeError(f"only planning layers can be redone ({', '.join(REDOABLE)}); written scenes are redone with `rewrite`")
-    return [l for l in LAYER_ORDER[LAYER_ORDER.index(layer) + 1:] if l != "prose" and project.state.layers[l].status != "pending"]
+    def unused(name: str) -> bool:  # a ledger a book was planned without is not something to reset
+        item = project.state.layers[name]
+        return name == "ledger" and item.status == "accepted" and (item.note or "").startswith("not used")
+    return [l for l in LAYER_ORDER[LAYER_ORDER.index(layer) + 1:] if l != "prose" and project.state.layers[l].status != "pending" and not unused(l)]
 
 
 def redo_layer(project: Project, layer: str, note: str = "", cascade: bool = False) -> dict:
@@ -349,7 +352,7 @@ def redo_layer(project: Project, layer: str, note: str = "", cascade: bool = Fal
         project.state.set_layer_status(l, "pending", REDO_NOTE)
         _clean_work(project, l)
     project.state.items = {}
-    for cp in ("direction", "structure"):
+    for cp in LAYER_CHECKPOINTS:
         if any(project.config.layers[l].checkpoint == cp for l in reset):
             project.state.checkpoints[cp] = Checkpoint()
     for l in reset:

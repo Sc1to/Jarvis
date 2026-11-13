@@ -20,9 +20,23 @@ def isolated_env(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
 
 
+def skip_ledger(project: Project) -> None:
+    """Most tests predate the story-event ledger layer: treat their book as planned without it (like a book from before the ledger).
+    The ledger's own tests (test_ledger_layer.py) use `project_with_ledger`."""
+    project.state.set_layer_status("ledger", "accepted", note="not used in this test")
+    project.state.checkpoints["ledger"].status = "approved"
+    project.save_state()
+
+
+@pytest.fixture
+def project_with_ledger(tmp_path) -> Project:
+    return Project.create(tmp_path / "series", "A clerk finds a ledger that predicts deaths.\n")
+
+
 @pytest.fixture
 def project(tmp_path) -> Project:
     project = Project.create(tmp_path / "series", "A clerk finds a ledger that predicts deaths.\n")
+    skip_ledger(project)
     project.config.research.model_pick = False  # tests that exercise the model's pick or the claim audit turn them on
     project.config.research.check_support = False
     return project
