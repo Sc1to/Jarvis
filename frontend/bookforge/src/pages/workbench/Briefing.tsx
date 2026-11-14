@@ -3,6 +3,7 @@ import { bookPath } from '../../lib/api'
 import { useApi, useJob } from '../../lib/hooks'
 import type { BriefingPreview, SceneRow, XrayResult } from '../../lib/types'
 import { Button, Card, Empty, ErrorBanner, Loading } from '../../components/ui'
+import Checks from './Checks'
 
 const SEV = { problem: 'text-red-700', warn: 'text-amber-800', info: 'text-slate-600' }
 const CAUSE: Record<string, string> = {
@@ -25,6 +26,7 @@ export default function Briefing({ series, book }: { series: string; book: strin
 
   return (
     <div className="space-y-3">
+      <Checks series={series} book={book} />
       <select value={scene} onChange={(e) => { setScene(e.target.value); beats.reset() }} aria-label="Scene" className="min-h-10 w-full rounded-md border border-slate-300 bg-white px-2 text-sm">
         <option value="">choose a scene</option>
         {scenes.data?.map((s) => <option key={s.id} value={s.id}>{s.id} · {s.status}</option>)}

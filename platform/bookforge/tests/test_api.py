@@ -694,3 +694,19 @@ def test_models_overview_lists_every_name_even_with_no_backend_running():
 def test_choosing_a_model_that_no_backend_lists_is_refused():
     error(client.put("/api/series/series/models", json={"target": "writer", "base_url": "http://127.0.0.1:11434/v1", "model": "nope"}), 400)
     error(client.put("/api/series/nosuch/models", json={"target": "writer"}), 404)
+
+
+def test_validation_results_and_the_ledger_are_served_and_questions_answered(full):
+    from bookforge.bible.models import AuthorQuestion, Ledger
+    from bookforge.validators import findings as F, store as findings_store
+    got = data(client.get(f"{WB}/validation"))
+    assert set(got["stages"]) == {"ledger", "acts", "chapters", "scenes", "prose"} and got["stages"]["acts"]["findings"] == []
+    findings_store.save(full, "chapters", [F.hard("chapters", "flat_tension", "tension is flat", ["b1.ch01"])])
+    again = data(client.get(f"{WB}/validation"))["stages"]["chapters"]
+    assert again["summary"]["hard"] == 1 and again["findings"][0]["code"] == "flat_tension"
+    assert data(client.get(f"{WB}/ledger")) is None
+    from bookforge.bible import store
+    store.save_ledger(full, Ledger(questions=[AuthorQuestion(id="q1", question="What next?", why="thin", options=["a"])]))
+    got = data(client.post(f"{WB}/ledger/questions/q1/answer", json={"answer": "A rival appears."}))
+    assert got["questions"][0]["status"] == "answered" and got["questions"][0]["answer"] == "A rival appears."
+    error(client.post(f"{WB}/ledger/questions/q9/answer", json={"answer": "x"}), 422)
