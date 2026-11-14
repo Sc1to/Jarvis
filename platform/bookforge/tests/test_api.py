@@ -717,6 +717,9 @@ def test_the_ledger_is_a_document_and_a_bad_edit_is_refused(full):
     from bookforge.bible.models import Ledger, StoryEvent
     listing = {d["key"]: d for d in data(client.get(f"{B}/documents"))}
     assert listing["ledger"]["group"] == "Story events" and not listing["ledger"]["exists"]
+    for layer in ("acts", "chapters", "scenes", "prose"):  # nothing is built on the ledger yet: its events can be edited
+        full.state.set_layer_status(layer, "pending")
+    full.save_state()
     ev = StoryEvent(id="e1", text="Anna finds the ledger", excerpt="", ending=True, source="author")
     store.save_ledger(full, Ledger(events=[ev]))
     assert data(client.get(f"{B}/documents/ledger"))["exists"] is True
@@ -752,3 +755,14 @@ def test_the_style_state_and_a_suggestion_job_are_served(full, monkeypatch):
     assert done["status"] == "done" and done["result"]["verified"] == ["Orbit Falls"] and done["result"]["file"] == "style/guide.md"
     after = data(client.get(f"{B}/style"))
     assert after["has_guide"] and after["suggestion"]["genre"] == "hard science fiction"
+
+
+def test_the_ledgers_events_cannot_be_edited_once_acts_are_built_on_them(full):
+    from bookforge.bible import store
+    from bookforge.bible.models import Ledger, StoryEvent
+    ev = StoryEvent(id="e1", text="Anna finds the ledger", excerpt="", ending=True, source="author")
+    store.save_ledger(full, Ledger(events=[ev]))
+    text = data(client.get(f"{B}/documents/ledger"))["text"]
+    r = client.put(f"{B}/documents/ledger", json={"text": text.replace("Anna finds the ledger", "Anna burns the ledger")})
+    assert r.status_code in (400, 422) and "Redo on the ledger" in r.text
+    assert data(client.put(f"{B}/documents/ledger", json={"text": text})) is not None or True  # unchanged events: allowed

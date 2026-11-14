@@ -78,3 +78,14 @@ def test_only_repeat_findings_with_two_passages_are_put_to_the_critic(project):
     assert [f.severity for f in out] == [HARD, HARD] and llm.calls == []
     project.config.qc.confirm_repeats = False
     assert confirm_repeats(ctx, [repeat_finding()])[0].severity == HARD and llm.calls == []
+
+
+def test_the_critics_second_look_is_remembered_per_passage_pair(project):
+    from bookforge.qc import repeat_confirm
+    repeat_confirm._ANSWERS.clear()
+    llm = RuleLLM([("A check found passages", json.dumps({"same_event": False, "reason": "a consequence"}))])
+    ctx = StepContext(project=project, layer="chapters", llm=llm)
+    out1 = confirm_repeats(ctx, [repeat_finding()])
+    out2 = confirm_repeats(ctx, [repeat_finding()])  # a correction round or a cached reuse asks the same again
+    assert out1[0].severity == out2[0].severity == SOFT and len(llm.calls) == 1
+    repeat_confirm._ANSWERS.clear()

@@ -5,11 +5,11 @@ from ..bible import store
 from ..bible.positions import parse_position
 from . import prose as P, repeats as R
 from .text import sentences
-from .findings import Finding, HARD
+from .findings import Finding, HARD, soft
 from . import accepted, store as findings_store
 
 
-def prose_findings(project) -> tuple[list[Finding], dict]:
+def prose_findings(project, ctx=None) -> tuple[list[Finding], dict]:
     scenes = store.load_scenes(project) if store.scenes_path(project).exists() else []
     texts: list[tuple[str, str]] = []
     for s in scenes:
@@ -27,8 +27,31 @@ def prose_findings(project) -> tuple[list[Finding], dict]:
     except Exception:  # a missing or unreadable cast must not hide the prose findings
         pass
     tics, table = P.tic_report(texts, names)
-    findings = accepted.apply(project, P.repeated_sentences(texts) + P.chapter_openings_copy(chapter_texts) + P.wrap_up_endings(texts) + tics + _event_repeats(project, scenes, names), "prose")
+    from ..qc.repeat_confirm import confirm_repeats
+    findings = accepted.apply(project, confirm_repeats(ctx, P.repeated_sentences(texts) + P.chapter_openings_copy(chapter_texts) + P.wrap_up_endings(texts) + tics + _event_repeats(project, scenes, names) + _events_shown(project, scenes, texts)), "prose")
     return findings, table
+
+
+def _events_shown(project, scenes, texts: list[tuple[str, str]]) -> list[Finding]:
+    """Soft: a written scene should show the events its plan lists (a third of an event's words, at least, in a scene of 300+ words)."""
+    from ..bible.store import active_ledger
+    from .ledger import _stems_wo_names
+    ledger = active_ledger(project)
+    if ledger is None:
+        return []
+    event_text = {e.id: e.text for e in ledger.events}
+    written = dict(texts)
+    out = []
+    for s in scenes:
+        t = written.get(s.id)
+        if not t or len(t.split()) < 300:
+            continue
+        unit = _stems_wo_names(t)
+        for ev in s.events:
+            need = _stems_wo_names(event_text.get(ev, ""))
+            if len(need) >= 3 and len(need & unit) / len(need) < 0.34:
+                out.append(soft("prose", "prose_misses_event", f"{s.id} lists {ev} ('{event_text[ev][:80]}') but the written scene hardly mentions it: check that the scene shows it", [s.id, ev]))
+    return out
 
 
 def _event_repeats(project, scenes, names: set[str]) -> list[Finding]:
@@ -46,8 +69,8 @@ def _event_repeats(project, scenes, names: set[str]) -> list[Finding]:
     return R.repeated_events(chapters, units, names, None, stage="prose") if len(chapters) > 1 else []
 
 
-def save_prose_findings(project) -> tuple[list[Finding], str]:
-    findings, table = prose_findings(project)
+def save_prose_findings(project, ctx=None) -> tuple[list[Finding], str]:
+    findings, table = prose_findings(project, ctx)
     return findings, findings_store.save(project, "prose", findings, {"tics": table})
 
 

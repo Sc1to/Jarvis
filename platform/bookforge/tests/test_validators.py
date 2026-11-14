@@ -497,3 +497,11 @@ def test_a_chapter_heavier_than_its_scenes_can_carry_is_overloaded():
     f = L.scene_count_plausibility(ch, [dict(id=str(i)) for i in range(4)], ev)
     assert [(x.code, x.severity) for x in f] == [("chapter_overloaded", HARD)] and "more than 4 scenes can carry" in f[0].message
     assert [x.code for x in L.heavy_chapters([ch], ev)] == ["heavy_chapter"]
+
+
+def test_an_event_text_that_says_more_than_its_excerpt_is_flagged_softly():
+    syn = "The corporation has turned the asteroid into a closed economic loop where workers are paid in scrip valid only at company stores. She warns Eli that his grandfather did not simply vanish; he was executed by the corporation for discovering that the mining operations were destabilizing the asteroid's core."
+    ev = [dict(id="e1", text="Eli observes the decaying industrial environment and realizes his debt binds him to the Astra Dominion", excerpt="The corporation has turned the asteroid into a closed economic loop where workers are paid in scrip valid only at company stores", once_only=True, kind="event", weight=2, ending=False),
+          dict(id="e2", text="Mara reveals that Eli's grandfather was executed by the corporation for discovering mining destabilization", excerpt="she warns Eli that his grandfather did not simply vanish; he was executed by the corporation for discovering that the mining operations were destabilizing the asteroid's core", once_only=True, kind="event", weight=3, ending=True, after=["e1"])]
+    found = [f for f in L.check_ledger(ev, syn) if f.code == "event_text_not_in_excerpt"]
+    assert [(f.items, f.severity) for f in found] == [(["e1"], SOFT)]

@@ -29,11 +29,20 @@ def skip_ledger(project: Project) -> None:
 
 
 @pytest.fixture(autouse=True)
+def fresh_repeat_answers():
+    """The critic's answers on repeat findings are remembered per passage pair; every test starts without any."""
+    from bookforge.qc import repeat_confirm
+    repeat_confirm._ANSWERS.clear()
+    yield
+    repeat_confirm._ANSWERS.clear()
+
+
+@pytest.fixture(autouse=True)
 def lenient_book_prose_checks(request, monkeypatch):
     """The scripted writer returns the same text for every scene, which the whole-book prose checks rightly refuse. Tests of
     those checks ask for the real thing with the `real_prose_checks` marker."""
     if "real_prose_checks" not in request.keywords:
-        monkeypatch.setattr("bookforge.validators.book.prose_findings", lambda project: ([], {}))
+        monkeypatch.setattr("bookforge.validators.book.prose_findings", lambda project, ctx=None: ([], {}))
 
 
 @pytest.fixture(autouse=True)
