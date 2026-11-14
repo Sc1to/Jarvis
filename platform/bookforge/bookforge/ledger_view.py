@@ -32,12 +32,14 @@ def act_events(ledger: Ledger, ids: list[str]) -> list[StoryEvent]:
     return [e for e in ledger.events if e.id in want or (e.parent and e.parent in want and e.id in want)]
 
 
-def status_text(ledger: Ledger, mine: set[str], chapters_done: list[Chapter], mine_label: str = "ASSIGNED HERE: plan these") -> str:
+def status_text(ledger: Ledger, mine: set[str], chapters_done: list[Chapter], mine_label: str = "ASSIGNED HERE: plan these", continuing: set[str] | None = None) -> str:
     """done / assigned here / reserved for later, with an explicit instruction about what must not be used yet."""
     covered = covered_map(chapters_done)
-    done, here, later = [], [], []
+    done, here, later, cont = [], [], [], []
     for e in ledger.events:
-        if e.id in covered:
+        if continuing and e.id in continuing:  # begun in the chapter before and carried on here: not done, not new
+            cont.append(event_line(e, f"  [begun in {covered.get(e.id, 'the chapter before')}]"))
+        elif e.id in covered:
             done.append(event_line(e, f"  [told in {covered[e.id]}]"))
         elif e.id in mine:
             here.append(event_line(e))
@@ -46,6 +48,7 @@ def status_text(ledger: Ledger, mine: set[str], chapters_done: list[Chapter], mi
         else:
             later.append(event_line(e))
     return ("DONE (already told; never tell again, refer to them only as the past):\n" + ("\n".join(done) or "none yet")
+            + ("\n\nCONTINUING FROM THE CHAPTER BEFORE (this chapter carries it on; do not start it again, do not repeat what was already shown):\n" + "\n".join(cont) if cont else "")
             + f"\n\n{mine_label}:\n" + ("\n".join(here) or "none")
             + "\n\nRESERVED FOR LATER (do NOT use, hint at, stage or resolve any of these yet):\n" + ("\n".join(later) or "none"))
 

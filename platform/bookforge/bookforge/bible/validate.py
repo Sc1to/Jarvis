@@ -480,11 +480,12 @@ def parse_scenes(
                             allowed_from=allowed, prefix="tracks", problems=problems)
     tracks_after = _apply_refinement(refined, tracks_so_far, project.book, ch_num, chapter.id, problems)
     if ledger is not None and scenes:
-        from ..validators import HARD, ledger as ledger_checks
+        from ..validators import HARD, ledger as ledger_checks, repeats as repeats_check
         plain_events = [e.model_dump() for e in ledger.events]
         plain_scenes = [x.model_dump() for x in scenes]
         found = ledger_checks.check_scenes_vs_chapters(plain_scenes, [chapter.model_dump()], plain_events)
         found += ledger_checks.check_scene_texts(plain_scenes, [c.model_dump() for c in all_chapters or [chapter]], plain_events)
+        found += repeats_check.scene_repeats_in_chapters(plain_scenes)
         found += ledger_checks.scene_count_plausibility(chapter.model_dump(), plain_scenes, plain_events, max_scenes=count_range(project, "scenes")[1])
         problems += accepted.hard_lines(project, found, "scenes")
     return (None, problems) if problems else (ScenesBundle(scenes, timeline, tracks_after, new_places), [])

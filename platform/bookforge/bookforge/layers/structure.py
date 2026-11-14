@@ -8,6 +8,7 @@ into the final files and the work folder is removed. Judging quality is the crit
 """
 
 import logging
+import re
 import shutil
 from pathlib import Path
 from typing import Callable
@@ -143,7 +144,7 @@ def get_piece(
     return result
 
 
-_TEMPLATE_LAYER = {"acts": "acts", "cast": "acts", "chapters": "chapters", "scenes": "scenes"}  # which layer's author note applies
+_TEMPLATE_LAYER = {"acts": "acts", "cast": "acts", "chapters": "chapters", "scenes": "scenes", "chapters_ledger": "chapters", "scenes_ledger": "scenes"}  # which layer's author note applies
 
 
 def _messages(project, template: str, **slots) -> list[dict]:
@@ -363,13 +364,14 @@ def _build_chapters(ctx: StepContext, files: list[str]) -> str:
         tracks = store.upsert_plan(tracks, bundle.tracks)
         first = last + 1
 
+    if ledger is not None:  # the whole-book checks come BEFORE anything is saved: a failure leaves the files as they were, so a rerun starts clean
+        files.append(_book_chapter_checks(project, done, ledger, ctx))
     store.save_constants(project, constants)
     store.save_tracks(project, tracks)
     store.save_chapters(project, done)
     if ledger is not None:
         store.save_ledger(project, ledger)
         files.append("books/%s/ledger.yaml" % project.book)
-        files.append(_book_chapter_checks(project, done, ledger, ctx))
     problems = validate_chapters_file(project)
     if problems:
         store.chapters_path(project).unlink(missing_ok=True)  # keep the saved pieces so a rerun does not start over
@@ -382,6 +384,20 @@ def _build_chapters(ctx: StepContext, files: list[str]) -> str:
             + (f"; added to the cast because chapters used them: {', '.join(adopted)}" if adopted else ""))
 
 
+def _redo_pieces(project, layer: str, hard_findings, pieces_of_item, all_pieces: list[str]) -> list[str]:
+    """After a whole-book failure: drop the saved pieces the findings point at, so the next Run asks the model for them again, with the
+    findings in its prompt. (Keeping them all would make the next Run reuse them and fail the same way, for ever.) Returns what was dropped."""
+    names: set[str] = set()
+    for f in hard_findings:
+        for item in f.items:
+            names |= pieces_of_item(item)
+    names = names or set(all_pieces)  # a finding that names nothing in particular: plan everything again
+    for n in names:
+        piece_path(project, layer, n).unlink(missing_ok=True)
+    steering.with_findings(project, layer, [f.line() for f in hard_findings])
+    return sorted(names)
+
+
 def _book_chapter_checks(project, chapters: list[Chapter], ledger, ctx=None) -> str:
     """Whole-book checks once every act is planned: events and flat stretches. Hard findings stop the layer (the pieces are kept)."""
     from ..validators import HARD, accepted, ledger as ledger_checks, repeats, store as findings_store, tension
@@ -389,14 +405,21 @@ def _book_chapter_checks(project, chapters: list[Chapter], ledger, ctx=None) -> 
     ev = [e.model_dump() for e in ledger.events]
     acts_plain = [a.model_dump() for a in store.load_acts(project)]
     findings = (ledger_checks.check_chapters(ch, ev, acts_plain) + ledger_checks.check_chapter_texts(ch, ev) + repeats.repeated_events(ch, [], ledger_events=ev)
-                + tension.flat_stretches(ch) + [f for f in ledger_checks.check_ledger(ev) if f.severity == "soft"])
+                + tension.flat_stretches(ch) + ledger_checks.heavy_chapters(ch, ev, project.config.ledger.weight_per_chapter)
+                + [f for f in ledger_checks.check_ledger(ev) if f.severity == "soft"])
     from ..qc.repeat_confirm import confirm_repeats
     findings = accepted.apply(project, confirm_repeats(ctx, findings), "chapters")
     rel = findings_store.save(project, "chapters", findings)
     hard_left = [f.line() for f in findings if f.severity == HARD]
     if hard_left:
-        store.chapters_path(project).unlink(missing_ok=True)  # keep the saved pieces so a rerun does not start over
-        raise LayerError("the chapters do not hold together: " + "; ".join(hard_left[:6]) + f" (all findings: {rel})")
+        store.chapters_path(project).unlink(missing_ok=True)
+        acts_ = store.load_acts(project)
+        act_of_chapter = {c.id: c.act.split(".")[-1] for c in chapters}
+        act_of_event = {e: a.id.split(".")[-1] for a in acts_ for e in a.events}
+        dropped = _redo_pieces(project, "chapters", [f for f in findings if f.severity == HARD],
+                               lambda item: {x for x in (act_of_chapter.get(item), act_of_event.get(item), item.split(".")[-1] if item.split(".")[-1].startswith("act") else None) if x},
+                               [a.id.split(".")[-1] for a in acts_])
+        raise LayerError("the chapters do not hold together: " + "; ".join(hard_left[:6]) + f" (all findings: {rel}). {', '.join(dropped)} will be planned again with these findings on the next Run")
     return rel
 
 
@@ -437,8 +460,18 @@ def _book_scene_checks(project, chapters: list[Chapter], scenes_all: list, timel
     rel = findings_store.save(project, "scenes", findings)
     hard_left = [f.line() for f in findings if f.severity == HARD]
     if hard_left:
-        store.scenes_path(project).unlink(missing_ok=True)  # keep the saved pieces so a rerun does not start over
-        raise LayerError("the scenes do not hold together: " + "; ".join(hard_left[:6]) + f" (all findings: {rel})")
+        store.scenes_path(project).unlink(missing_ok=True)
+        chapter_names = [c.id.split(".", 1)[1] for c in chapters]
+        covering = {ev: c.id.split(".", 1)[1] for c in chapters for ev in c.events_covered}
+
+        def pieces_of(item: str) -> set[str]:
+            name = re.sub(r"\.s\d+$", "", item).split(".", 1)[-1]  # a scene id points at its chapter
+            if name in chapter_names:
+                return {name}
+            return {covering[item]} if item in covering else set()
+
+        dropped = _redo_pieces(project, "scenes", [f for f in findings if f.severity == HARD], pieces_of, chapter_names)
+        raise LayerError("the scenes do not hold together: " + "; ".join(hard_left[:6]) + f" (all findings: {rel}). Chapters {', '.join(dropped)} will be planned again with these findings on the next Run")
     return rel
 
 
@@ -509,7 +542,7 @@ def _build_scenes(ctx: StepContext, files: list[str]) -> str:
                 act_line = f"{act.id} {act.title}: {_short(act.summary, 300)} Turning point: {_short(act.turning_point, 160)}" if act else chapter.act
                 return _messages(
                     project, "scenes_ledger", chapter=dump_yaml(to_plain(chapter)), act=act_line,
-                    ledger_status=status_text(ledger, set(chapter.events_covered), ch_list[:idx], "SHOWN IN THIS CHAPTER: plan scenes for these"),
+                    ledger_status=status_text(ledger, set(chapter.events_covered), ch_list[:idx], "SHOWN IN THIS CHAPTER: plan scenes for these", set(chapter.events_continued)),
                     story_so_far=story_so_far_planning(project, ch_list[:idx], scenes_so_far), carried=carried_for_prompt(project),
                     cast=cast_digest(constants), tracks_in_chapter=tracks_in_chapter_digest(tracks, project.book, ch_num),
                     other_tracks="\n".join(f"- {t.id} (owner {t.entity})" for t in others) or "none",
@@ -533,7 +566,7 @@ def _build_scenes(ctx: StepContext, files: list[str]) -> str:
             max_tokens=3500, before=before,
             review=_reviewer(ctx, f"scenes {chapter.id}", f"scenes of {chapter.id}",
                              dump_yaml(to_plain(chapter)), tracks_in_chapter_digest(tracks, project.book, ch_num), stars,
-                             None if ledger is None else status_text(ledger, set(chapter.events_covered), ch_list[:idx], "SHOWN IN THIS CHAPTER")),
+                             None if ledger is None else status_text(ledger, set(chapter.events_covered), ch_list[:idx], "SHOWN IN THIS CHAPTER", set(chapter.events_continued))),
         )
         if bundle.new_entities:  # places the planner needed that the cast did not list: they join the cast
             adopted += [e.id for e in bundle.new_entities if e.id not in {x.id for x in constants.entities}]
@@ -547,6 +580,8 @@ def _build_scenes(ctx: StepContext, files: list[str]) -> str:
         last = bundle.timeline[-1]
         prev_when = f"the previous scene ({bundle.scenes[-1].id}) took place on day {last.day}, {last.time}" + (" (a flashback)" if last.flashback else "")
 
+    if ledger is not None:  # the whole-book checks come BEFORE anything is saved, so a failure leaves the files as they were
+        files.append(_book_scene_checks(project, ch_list, scenes_all, timeline_all, tracks, constants, ledger, ctx))
     kept = [t for t in store.load_timeline(project) if parse_position(t.id).book != project.book]
     store.save_timeline(project, kept + timeline_all)
     store.save_tracks(project, tracks)
@@ -554,8 +589,6 @@ def _build_scenes(ctx: StepContext, files: list[str]) -> str:
         store.save_constants(project, constants)
         log.info("scenes: %d place(s) added to the cast: %s", len(adopted), ", ".join(adopted))
     store.save_scenes(project, scenes_all)
-    if ledger is not None:
-        files.append(_book_scene_checks(project, ch_list, scenes_all, timeline_all, tracks, constants, ledger, ctx))
     problems = validate_scenes_file(project)
     if problems:
         store.scenes_path(project).unlink(missing_ok=True)  # keep the saved pieces so a rerun does not start over

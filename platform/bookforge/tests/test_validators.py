@@ -480,3 +480,20 @@ def test_a_continued_event_is_the_chapters_own_for_the_text_checks():
           dict(id="b.ch02", act="a", purpose="p", summary="Halloway presses the attack at the launch bay with drones and a plasma cutter while Eli decides to broadcast contamination data instead of fighting.",
                events_covered=["e2"], events_continued=["e1"])]
     assert [f for f in L.check_chapter_texts(ch, events) if f.severity == HARD] == []
+
+
+def test_two_scenes_of_one_chapter_that_tell_the_same_thing_are_caught():
+    scenes = [dict(id="t.ch01.s1", chapter="t.ch01", beats=["Mara forces the rusted lock on the cargo hatch and slips inside the ferry."]),
+              dict(id="t.ch01.s2", chapter="t.ch01", beats=["Mara forces the rusted lock on the cargo hatch and slips inside the ferry again."]),
+              dict(id="t.ch02.s1", chapter="t.ch02", beats=["Mara forces the rusted lock on the cargo hatch and slips inside the ferry once more."])]
+    f = R.scene_repeats_in_chapters(scenes, {"mara"})
+    assert [(x.code, x.severity, x.items) for x in f] == [("scene_repeats_scene", HARD, ["t.ch01.s1", "t.ch01.s2"])]  # a different chapter is the event check's business
+    assert R.scene_repeats_in_chapters(scenes[:1] + [dict(id="t.ch01.s2", chapter="t.ch01", beats=["Mara reads the log aloud in the dark cabin."])], {"mara"}) == []
+
+
+def test_a_chapter_heavier_than_its_scenes_can_carry_is_overloaded():
+    ev = [dict(id=f"e{i}", text=f"event {i}", weight=3, once_only=True, kind="event") for i in range(1, 9)]
+    ch = dict(id="t.ch01", events_covered=[e["id"] for e in ev])  # weight 24
+    f = L.scene_count_plausibility(ch, [dict(id=str(i)) for i in range(4)], ev)
+    assert [(x.code, x.severity) for x in f] == [("chapter_overloaded", HARD)] and "more than 4 scenes can carry" in f[0].message
+    assert [x.code for x in L.heavy_chapters([ch], ev)] == ["heavy_chapter"]
