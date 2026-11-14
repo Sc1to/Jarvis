@@ -76,7 +76,7 @@ def dump(d):
 
 def rules():
     r = [("Divide the book into ACTS by assigning", dump(acts())), ("List the CAST AND WORLD", dump(sf.cast())),
-         ("Plan exactly 2 chapters, b1.ch01 to b1.ch02", dump(chapters(1))), ("Plan exactly 2 chapters, b1.ch03 to b1.ch04", dump(chapters(3)))]
+         ("Plan up to 2 chapters, b1.ch01 to b1.ch02", dump(chapters(1))), ("Plan up to 2 chapters, b1.ch03 to b1.ch04", dump(chapters(3)))]
     for ch in range(1, 5):
         r.append((f"Scene ids are consecutive: b1.ch{ch:02d}.s1", dump(scenes(ch))))
     return r
