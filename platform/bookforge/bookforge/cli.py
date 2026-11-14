@@ -133,6 +133,26 @@ def suite_cmd(
     raise typer.Exit(0 if ok else 1)
 
 
+@app.command("style-suggest")
+def style_suggest_cmd(
+    path: Path = PathArg, book: str = BookOpt,
+    replace: bool = typer.Option(False, "--replace", help="Replace the style guide you have (it is committed first); otherwise a guide you have is kept and the suggestion goes to style/guide.suggested.md"),
+) -> None:
+    """Suggest a style guide from the north stars, the synopsis and what the web says about the prose style of successful books of the genre."""
+    from .layers.runner import StepContext
+    from .style import suggest_style_guide
+    try:
+        project = Project.open(path, book)
+        web = build_web_client(project) if project.config.research.enabled else None
+        s = suggest_style_guide(StepContext(project=project, layer="synopsis", llm=build_client(project), web=web), web, replace)
+    except BookforgeError as e:
+        _fail(e)
+    typer.echo(f"Wrote {s.path} ({s.words} words). " + (f"Learned from: {', '.join(s.verified)}." if s.verified else "No title was checked on the web, so none is named."))
+    for p_ in s.problems[:5]:
+        typer.echo(f"  note: {p_}")
+    typer.echo("Read and edit it in the Documents tab (Voice), or in the file; style/suggestion.json says what it was based on.")
+
+
 @app.command("ledger-answer")
 def ledger_answer(path: Path = PathArg, question: str = typer.Argument(..., help="Question id, like q1"),
                   answer: str = typer.Argument(..., help="Your answer"), book: str = BookOpt) -> None:

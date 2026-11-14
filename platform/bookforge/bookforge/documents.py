@@ -55,6 +55,7 @@ def catalog(project: Project) -> list[Doc]:
         Doc("tracks", "State tracks", "Story bible", "yaml", root / "bible" / "tracks.yaml"),
         Doc("timeline", "Timeline", "Story bible", "yaml", root / "bible" / "timeline.yaml"),
         Doc("style_guide", "Style guide", "Voice", "markdown", root / "style" / "guide.md"),
+        Doc("style_suggested", "Style guide (a suggestion beside yours)", "Voice", "markdown", root / "style" / "guide.suggested.md"),
         Doc("banned", "Banned phrases", "Voice", "text", root / project.config.qc.banned_phrases),
     ]
     for scope, directory in (("series", root / "research"), ("book", book / "research")):
