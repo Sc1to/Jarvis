@@ -48,7 +48,7 @@ Each chapter has:
 - a title and a purpose: what the chapter changes, for the plot or for a character;
 - `events_covered`: the ledger event ids it tells. Use only events from "ASSIGNED HERE" (or minor complications you derive below). A `once_only` event is told in exactly ONE chapter: never retell an event listed as DONE, and never touch one RESERVED FOR LATER. Together the chapters cover every event assigned here, in ledger order;
 - at least one event that has not been told before: every chapter must move the story forward;
-- a summary of what happens, 2 to 5 sentences. Say what happens and why, not how it is told. It must not restate an earlier chapter;
+- a summary of what happens, 2 to 5 sentences. Say what happens and why, not how it is told. Describe only this chapter's own events: it must not restate an earlier chapter, and the events RESERVED FOR LATER (other acts) must not appear in it at all, not even as a goal or a rumour. You may close by pointing at what the next chapter of this act takes up, in a clause, but never describe it;
 - `end_state`: where things stand when the chapter ends (where the key people are, what they hold, who knows what);
 - a point-of-view character and a main setting, using ids from the cast; a tension value from 1 (calm) to 10 (peak), so the act has a shape (rising and falling, not flat).
 

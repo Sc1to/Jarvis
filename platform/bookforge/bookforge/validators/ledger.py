@@ -433,7 +433,10 @@ def _stems_wo_names(text: str) -> set:
     return set(content_stems(text, drop=proper_nouns(text)))
 
 
-def _event_text_checks(unit_id: str, unit_text: str, listed: list[str], by_id: dict, others: list[dict], stage: str, what: str) -> list[Finding]:  # noqa: C901
+def _event_text_checks(unit_id: str, unit_text: str, listed: list[str], by_id: dict, others: list[dict], stage: str, what: str,
+                       where: dict | None = None, soften: set | None = None) -> list[Finding]:  # noqa: C901
+    """`where` says why an event is not this unit's ('was already told in b2.ch01', 'is reserved for a later act'); `soften` lists events whose
+    retelling is only soft (the next chapters of the same act: a chapter may touch what follows)."""
     out: list[Finding] = []
     unit = _stems_wo_names(unit_text)
     for ev_id in listed:
@@ -457,34 +460,74 @@ def _event_text_checks(unit_id: str, unit_text: str, listed: list[str], by_id: d
         shared = need & unit
         recall = len(shared) / len(need)
         if len(shared) >= 4 and recall >= RETELLS_SOFT:
-            make = hard if recall >= RETELLS_HARD else soft
-            out.append(make(stage, f"{what}_retells_event", f"{unit_id} describes {ev['id']} again ('{ev['text'][:90]}'), which belongs to another chapter: do not retell it", [unit_id, ev["id"]],
+            make = hard if recall >= RETELLS_HARD and ev["id"] not in (soften or set()) else soft
+            why = (where or {}).get(ev["id"], "belongs elsewhere")
+            out.append(make(stage, f"{what}_retells_event", f"{unit_id} describes {ev['id']} ('{ev['text'][:90]}'), which {why}: do not tell, show or hint at it here", [unit_id, ev["id"]],
                             [unit_text[:120]]))
     return out
 
 
+def _where(chapters: list[dict]) -> tuple[dict, dict]:
+    """event id -> the first chapter (index) that tells it, and that chapter's act."""
+    first: dict[str, int] = {}
+    for i, c in enumerate(chapters):
+        for ev in c.get("events_covered") or []:
+            first.setdefault(ev, i)
+    return first, {i: c.get("act") for i, c in enumerate(chapters)}
+
+
+def _classify(first: dict, acts: dict, chapters: list[dict], here_idx: int, here_act, ev_id: str) -> tuple[str, bool]:
+    """(why this unit may not use the event, whether it is only the next chapter(s) of the same act)."""
+    at = first.get(ev_id)
+    if at is None:
+        return "is reserved for a later act (no chapter tells it yet)", False
+    if at < here_idx:
+        return f"was already told in {chapters[at]['id']}", False
+    if at > here_idx and here_act is not None and acts.get(at) == here_act:
+        return f"is told in the later chapter {chapters[at]['id']}", True
+    return f"is told in {chapters[at]['id']}" if at != here_idx else "is told here", False
+
+
 def check_chapter_texts(chapters: list[dict], events: list[dict], stage: str = "chapters") -> list[Finding]:
-    """Each chapter's summary must describe the events it lists, and must not retell events that belong to other chapters."""
+    """Each chapter's summary must describe the events it lists. It must not retell an event already told, nor touch one reserved for a
+    later act (hard). Touching an event of a following chapter in the same act is only soft: a chapter may lead into the next."""
     by_id = {e["id"]: e for e in events}
+    first, acts = _where(chapters)
     out: list[Finding] = []
-    for c in chapters:
+    for i, c in enumerate(chapters):
         text = " ".join(str(c.get(k, "")) for k in ("purpose", "summary"))  # not the title: its capitalised words would read as names
         mine = set(c.get("events_covered") or [])
         others = [e for e in events if e["id"] not in mine and not e.get("carried_in")]
-        out += _event_text_checks(c["id"], text, list(mine), by_id, others, stage, "chapter")
+        where, soften = {}, set()
+        for e in others:
+            why, near = _classify(first, acts, chapters, i, c.get("act"), e["id"])
+            where[e["id"]] = why
+            if near:
+                soften.add(e["id"])
+        out += _event_text_checks(c["id"], text, list(mine), by_id, others, stage, "chapter", where, soften)
     return out
 
 
 def check_scene_texts(scenes: list[dict], chapters: list[dict], events: list[dict], stage: str = "scenes") -> list[Finding]:
-    """Each scene's purpose and beats must describe the events it lists; they must not retell an event of another chapter."""
+    """Each scene's purpose and beats must describe the events it lists, and must not retell an event of an earlier chapter or one reserved
+    for a later act (hard). Touching what the next chapters of the same act tell is only soft."""
     by_id = {e["id"]: e for e in events}
-    ch_events = {c["id"]: set(c.get("events_covered") or []) for c in chapters}
+    first, acts = _where(chapters)
+    index = {c["id"]: i for i, c in enumerate(chapters)}
     out: list[Finding] = []
     for s in scenes:
         ch = s.get("chapter") or s["id"].rsplit(".s", 1)[0]
+        here = index.get(ch, -1)
+        mine = set(chapters[here].get("events_covered") or []) if here >= 0 else set()
         text = " ".join([str(s.get("purpose", ""))] + [str(b) for b in s.get("beats") or []])
-        others = [e for e in events if e["id"] not in ch_events.get(ch, set()) and not e.get("carried_in")]
-        out += _event_text_checks(s["id"], text, list(s.get("events") or []), by_id, others, stage, "scene")
+        others = [e for e in events if e["id"] not in mine and not e.get("carried_in")]
+        where, soften = {}, set()
+        for e in others:
+            why, near = _classify(first, acts, chapters, here, chapters[here].get("act") if here >= 0 else None, e["id"])
+            where[e["id"]] = why
+            if near:
+                soften.add(e["id"])
+        out += _event_text_checks(s["id"], text, list(s.get("events") or []), by_id, others, stage, "scene", where, soften)
     return out
 
 
