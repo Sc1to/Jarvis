@@ -156,3 +156,14 @@ def test_books_planned_before_the_ledger_carry_on(tmp_path):
     raw["layers"]["acts"]["status"] = "pending"
     p.state_path.write_text(json.dumps(raw))
     assert load_state(p.state_path).layers["ledger"].status == "pending"  # not yet planned: the ledger will run
+
+
+def test_a_setup_that_names_the_text_instead_of_the_id_is_repaired_without_a_correction_round(project_with_ledger):
+    p = prepared(project_with_ledger)
+    p.config.ledger.min_chapters = 4
+    sloppy = copy.deepcopy(GOOD)
+    e7 = next(e for e in sloppy["events"] if e["id"] == "e7")
+    next(e for e in sloppy["events"] if e["id"] == "e9")["pays_off"] = e7["text"]  # the text, not "e7"
+    summary, llm = run_ledger(p, [sloppy])
+    assert summary.ran == ["ledger"] and len(llm.calls) == 1
+    assert next(e for e in store.load_ledger(p).events if e.id == "e9").pays_off == "e7"

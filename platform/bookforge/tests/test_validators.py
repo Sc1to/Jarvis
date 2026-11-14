@@ -252,3 +252,15 @@ def test_a_payoff_chapter_may_echo_its_setup_chapter():
     events = [dict(id="e1", kind="setup", once_only=True), dict(id="e2", kind="reveal", pays_off="e1", once_only=True)]
     assert R.repeated_events(chapters, [], ledger_events=events) == []
     assert R.repeated_events(chapters, [], ledger_events=[dict(id="e1", once_only=True), dict(id="e2", once_only=True)])  # unlinked: reported
+
+
+def test_an_event_text_written_where_an_id_belongs_is_mapped_back_and_unknown_ones_are_explained():
+    raw = [dict(id="e1", text="Mara hides the key", excerpt="Mara hides the key", kind="setup", after=[]),
+           dict(id="e2", text="The key opens the vault", after=["Mara hides the key"], pays_off="Mara hides the key"),
+           dict(id="e3", text="Something else", pays_off="A sentence that matches no event")]
+    assert L.resolve_references(raw) == 2
+    assert raw[1]["pays_off"] == "e1" and raw[1]["after"] == ["e1"] and raw[2]["pays_off"].startswith("A sentence")
+    found = [f for f in L.check_ledger([{**e, "once_only": True, "kind": e.get("kind", "event"), "weight": 1} for e in raw]) if f.code == "unknown_event"]
+    assert found and "ID of the setup" in found[0].message and "Known ids: e1, e2, e3" in found[0].message
+    ambiguous = [dict(id="e1", text="Same words"), dict(id="e2", text="Same words"), dict(id="e3", text="x", pays_off="Same words")]
+    assert L.resolve_references(ambiguous) == 0  # two events match: not guessed
