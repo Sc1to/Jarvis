@@ -42,7 +42,9 @@ Plan the CHAPTERS of one act of the book, and the state tracks they create. The 
 
 ## Task
 
-Plan exactly {chapter_count} chapters, {first_chapter} to {last_chapter}, covering this act's events from its first to its turning point.
+Plan up to {chapter_count} chapters, {first_chapter} to {last_chapter}, covering this act's events from its first to its turning point.
+
+{chapter_count} is a ceiling, not a target. Every chapter needs an event of its own: if the act's events (a weight 3 event may take a second chapter) are all told before that, STOP there with fewer chapters. Never fill the remaining chapters by retelling an event or borrowing one from another act.
 
 Each chapter has:
 - a title and a purpose: what the chapter changes, for the plot or for a character;

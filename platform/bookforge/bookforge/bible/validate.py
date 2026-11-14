@@ -336,7 +336,9 @@ def parse_chapters(
     raw = _items(data, "chapters", problems)
     entities = entity_map(constants)
     new_places = adopt_places(raw, entities, act.id)
-    if raw and len(raw) != act.chapter_count:
+    if raw and ledger is not None and len(raw) > act.chapter_count:  # with a ledger the count is a ceiling: an act whose events run out ends sooner
+        problems.append(f"{act.id} plans at most {act.chapter_count} chapters, got {len(raw)}")
+    elif raw and ledger is None and len(raw) != act.chapter_count:
         problems.append(f"{act.id} needs exactly {act.chapter_count} chapters, got {len(raw)}")
     chapters: list[Chapter] = []
     for i, item in enumerate(raw):

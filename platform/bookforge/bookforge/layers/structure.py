@@ -374,6 +374,10 @@ def _build_chapters(ctx: StepContext, files: list[str]) -> str:
             if bundle.derived:  # minor complications join the ledger, so later acts and the validators see them
                 ledger = ledger.model_copy(update={"events": merge_derived(ledger.events, bundle.derived)})
         done += bundle.chapters
+        if ledger is not None and len(bundle.chapters) < act.chapter_count:  # the act's events ran out first: it ends sooner, nothing is padded
+            log.info("chapters: %s has material for %d of its %d chapters", act.id, len(bundle.chapters), act.chapter_count)
+            act_list = [a.model_copy(update={"chapter_count": len(bundle.chapters)}) if a.id == act.id else a for a in act_list]
+            last = first + len(bundle.chapters) - 1
         if bundle.new_entities:  # places the planner needed that the cast did not list: they join the cast
             adopted += [e.id for e in bundle.new_entities if e.id not in {x.id for x in constants.entities}]
             constants = add_entities(constants, bundle.new_entities)
@@ -382,11 +386,12 @@ def _build_chapters(ctx: StepContext, files: list[str]) -> str:
 
     if ledger is not None:  # the whole-book checks come BEFORE anything is saved: a failure leaves the files as they were, so a rerun starts clean
         files.append(_book_chapter_checks(project, done, ledger, ctx))
-    with store.transaction([store.constants_path(project), store.tracks_path(project), store.chapters_path(project), store.ledger_path(project)]):
+    with store.transaction([store.constants_path(project), store.tracks_path(project), store.chapters_path(project), store.ledger_path(project), store.acts_path(project)]):
         store.save_constants(project, constants)  # a failure anywhere in here puts every one of these files back as it was
         store.save_tracks(project, tracks)
         store.save_chapters(project, done)
         if ledger is not None:
+            store.save_acts(project, act_list)
             store.save_ledger(project, ledger)
             files.append("books/%s/ledger.yaml" % project.book)
         problems = validate_chapters_file(project)
