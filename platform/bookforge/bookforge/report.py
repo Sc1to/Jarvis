@@ -134,7 +134,9 @@ def build_report(project: Project, since: str | None = None, today: str | None =
     if scenes:
         parts = [f"{counts[k]} {k}" for k in ("accepted", "flagged", "stale", "drafted", "checked") if counts[k]]
         out.append(f"- Scenes: {len(scenes)} planned: " + ", ".join(parts + ([f"{n_pending} pending"] if n_pending else [])))
-        out.append(f"- Words in accepted scenes: {accepted_words} (target {cfg.book.target_words})")
+        from .sizing import planned_words
+        lo, hi = planned_words(project, scenes)
+        out.append(f"- Words in accepted scenes: {accepted_words}. The plan comes to about {lo} to {hi} words (from the beats of {len(scenes)} scenes; a result, not a target)")
     t = call_totals(project, since)
     out.append(f"- {'This run' if since else 'So far'}: {t['calls']} model calls ({t['failed']} failed), {_duration(t['seconds'])} of model time, "
                f"{t['prompt_tokens'] + t['completion_tokens']} tokens ({t['prompt_tokens']} in, {t['completion_tokens']} out)"

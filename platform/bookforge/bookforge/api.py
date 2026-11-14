@@ -96,6 +96,20 @@ def notification_for(job) -> tuple[str, str] | None:
     return None
 
 
+def _planned_words(project) -> dict | None:
+    """What the plan comes to, from the scenes' beats: {low, high, scenes, chapters}; None before scenes exist."""
+    from .sizing import planned_words
+    try:
+        scenes_ = store.load_scenes(project) if store.scenes_path(project).exists() else []
+        chapters_ = store.load_chapters(project) if store.chapters_path(project).exists() else []
+    except Exception:  # a plan file in the middle of an edit must not break the status page
+        return None
+    if not scenes_:
+        return None
+    lo, hi = planned_words(project, scenes_)
+    return {"low": lo, "high": hi, "scenes": len(scenes_), "chapters": len(chapters_)}
+
+
 def ok(data) -> dict:
     return {"data": data, "status": "ok"}
 
@@ -363,6 +377,7 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
                         "checkpoint": project.config.layers[n].checkpoint} for n in LAYER_ORDER],
             "checkpoints": {n: state.checkpoints[n].status for n in CHECKPOINTS},
             "scenes": {"total": len(ids), **counts},
+            "planned_words": _planned_words(project),
             "title": project.state.title,
             "server_time": datetime.now(timezone.utc).isoformat(timespec="seconds"),  # so the page can time a call without trusting its own clock
             "pending_changes": sum(c.status == "pending" for c in change_requests.list_requests(project)),

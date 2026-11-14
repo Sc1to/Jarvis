@@ -292,3 +292,43 @@ def test_a_turning_point_text_that_describes_another_event_is_flagged():
     bad = dict(id="t.act1", turning_point_event="e13", turning_point="Eli accepts he cannot save Mara and chooses to broadcast the data instead of fighting")
     assert L.turning_point_texts([ok], ev) == []
     assert [f.code for f in L.turning_point_texts([bad], ev)] == ["turning_point_text_differs"]
+
+
+# ── do the texts describe the events they list? ─────────────────────────────
+
+TEXT_EVENTS = [dict(id="e1", text="The harbor master seizes the smuggled cargo at dawn", once_only=True, weight=2),
+               dict(id="e2", text="Teresa bribes the night watchman to open the customs warehouse", once_only=True, weight=2),
+               dict(id="e3", text="A fire destroys the customs warehouse ledgers overnight", once_only=True, weight=3)]
+
+
+def test_a_chapter_that_retells_another_chapters_event_is_a_hard_finding():
+    chapters = [dict(id="t.ch01", title="Dawn", purpose="p", summary="The harbor master seizes the smuggled cargo at dawn.", events_covered=["e1"]),
+                dict(id="t.ch02", title="Warehouse", purpose="p", summary="Again the harbor master seizes the smuggled cargo at dawn, before Teresa bribes the night watchman.", events_covered=["e2"])]
+    f = L.check_chapter_texts(chapters, TEXT_EVENTS)
+    assert any(x.code == "chapter_retells_event" and x.severity == HARD and "e1" in x.items for x in f)
+    ok = [chapters[0], dict(chapters[1], summary="Teresa bribes the night watchman to open the customs warehouse.")]
+    assert [x for x in L.check_chapter_texts(ok, TEXT_EVENTS) if x.severity == HARD] == []
+
+
+def test_a_listed_event_the_text_never_mentions_is_a_soft_finding():
+    ch = [dict(id="t.ch01", title="x", purpose="y", summary="Nothing relevant here at all, only weather and gloom.", events_covered=["e3"])]
+    f = L.check_chapter_texts(ch, TEXT_EVENTS)
+    assert [x.code for x in f if "misses" in x.code] == ["chapter_text_misses_event"] and f[0].severity == SOFT
+
+
+def test_scenes_that_retell_an_event_of_another_chapter_are_refused():
+    chapters = [dict(id="t.ch01", events_covered=["e1"]), dict(id="t.ch02", events_covered=["e2"])]
+    scenes = [dict(id="t.ch02.s1", chapter="t.ch02", purpose="p", events=["e2"],
+                   beats=["The harbor master seizes the smuggled cargo at dawn again.", "Teresa bribes the night watchman to open the customs warehouse."])]
+    assert any(x.code == "scene_retells_event" and x.severity == HARD for x in L.check_scene_texts(scenes, chapters, TEXT_EVENTS))
+
+
+def test_scene_counts_follow_the_weight_of_the_chapter():
+    heavy = dict(id="t.ch01", events_covered=["e1", "e2", "e3"])  # weight 7
+    ev = TEXT_EVENTS
+    one = L.scene_count_plausibility(heavy, [dict(id="t.ch01.s1")], ev)
+    assert one and one[0].severity == HARD and "crammed" in one[0].message and "between 2 and 4" in one[0].message
+    assert L.scene_count_plausibility(heavy, [dict(id="a"), dict(id="b")], ev) == []
+    light = dict(id="t.ch02", events_covered=["e1"])  # weight 2
+    four = L.scene_count_plausibility(light, [dict(id=str(i)) for i in range(4)], ev)
+    assert four and "padded" in four[0].message

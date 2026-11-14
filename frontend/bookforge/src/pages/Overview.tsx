@@ -144,6 +144,11 @@ export default function Overview({ series, book, status, reload }: { series: str
     <div className="space-y-3">
       <ErrorBanner message={act.error} onClose={act.clear} />
 
+      {status.planned_words && (
+        <p className="rounded-md border border-slate-200 bg-white p-2 text-sm text-slate-700" title="Worked out from the beats of every scene. It is a result of the plan, not a target.">
+          The plan: {status.planned_words.chapters} chapters, {status.planned_words.scenes} scenes, about {status.planned_words.low.toLocaleString()} to {status.planned_words.high.toLocaleString()} words (from the beats).
+        </p>
+      )}
       {status.resume_text && !busy && <p className="rounded-md border border-slate-200 bg-white p-2 text-sm text-slate-700">{status.resume_text}</p>}
       {status.job && (
         <Card title={`${status.job.kind} ${status.job.status}`} tone={busy ? undefined : 'warn'}>

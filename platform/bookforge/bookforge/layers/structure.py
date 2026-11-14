@@ -385,7 +385,8 @@ def _book_chapter_checks(project, chapters: list[Chapter], ledger) -> str:
     ch = [c.model_dump() for c in chapters]
     ev = [e.model_dump() for e in ledger.events]
     acts_plain = [a.model_dump() for a in store.load_acts(project)]
-    findings = (ledger_checks.check_chapters(ch, ev, acts_plain) + repeats.repeated_events(ch, [], ledger_events=ev) + tension.flat_stretches(ch))
+    findings = (ledger_checks.check_chapters(ch, ev, acts_plain) + ledger_checks.check_chapter_texts(ch, ev) + repeats.repeated_events(ch, [], ledger_events=ev)
+                + tension.flat_stretches(ch) + [f for f in ledger_checks.check_ledger(ev) if f.severity == "soft"])
     rel = findings_store.save(project, "chapters", findings)
     hard_left = [f.line() for f in findings if f.severity == HARD]
     if hard_left:
@@ -423,7 +424,7 @@ def _book_scene_checks(project, chapters: list[Chapter], scenes_all: list, timel
     story_texts = [_read(project, f"books/{project.book}/synopsis.md"), _read(project, "north-star.md"), _read(project, f"books/{project.book}/north-star.md"),
                    " ".join(e.text for e in ledger.events), " ".join(" ".join(e.facts) + " " + e.name for e in constants.entities)]
     tracks_plain = [to_plain(t) for t in tracks]
-    findings = (ledger_checks.check_scenes_vs_chapters(sc, ch, ev) + repeats.repeated_events(ch, sc, names, ev, stage="scenes")
+    findings = (ledger_checks.check_scenes_vs_chapters(sc, ch, ev) + ledger_checks.check_scene_texts(sc, ch, ev) + repeats.repeated_events(ch, sc, names, ev, stage="scenes")
                 + repeats.action_patterns(sc, ch, names) + research_leak.research_in_beats(sc, claims, story_texts)
                 + state_checks.track_regressions(tracks_plain) + state_checks.location_conflicts(sc, tl, tracks_plain) + state_checks.day_regressions(sc, tl))
     rel = findings_store.save(project, "scenes", findings)
@@ -521,7 +522,7 @@ def _build_scenes(ctx: StepContext, files: list[str]) -> str:
             ctx, "scenes", chapter.id.split(".", 1)[1], build,
             lambda text, chapter=chapter, prev_day=prev_day, tracks=tracks: parse_scenes(
                 text, project=project, chapter=chapter, prev_day=prev_day, constants=constants, tracks_so_far=tracks,
-                fact_ids=_fact_ids(project), ledger=ledger),
+                fact_ids=_fact_ids(project), ledger=ledger, all_chapters=ch_list),
             max_tokens=3500, before=before,
             review=_reviewer(ctx, f"scenes {chapter.id}", f"scenes of {chapter.id}",
                              dump_yaml(to_plain(chapter)), tracks_in_chapter_digest(tracks, project.book, ch_num), stars),

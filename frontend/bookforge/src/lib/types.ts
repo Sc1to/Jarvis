@@ -29,6 +29,7 @@ export interface BookStatus {
   manuscript: boolean
   job: Job | null
   resume_text?: string
+  planned_words?: { low: number; high: number; scenes: number; chapters: number } | null
 }
 
 export interface SeriesInfo { name: string; books: string[]; titles: Record<string, string>; busy: Job | null }

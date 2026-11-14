@@ -115,3 +115,12 @@ def test_flat_tension_across_the_book_blocks_the_chapters_layer(project):
         _book_chapter_checks(p, flat, store.load_ledger(p))
     saved = json.loads((p.book_dir / "validation" / "chapters.json").read_text())
     assert any(f["code"] == "flat_tension" and f["severity"] == "hard" for f in saved["findings"])
+
+
+def test_too_many_derived_complications_for_an_act_are_refused(project):
+    p = project_ready(project)
+    padded = chapters(1)
+    padded["derived_events"] = [dict(id=f"e1.{i}", text=f"A small delay number {i} slows her", parent="e1", after=["e1"], weight=1, kind="event") for i in (1, 2)]
+    padded["chapters"][0]["events_covered"] = ["e1", "e1.1", "e1.2"]
+    s = run(p, RuleLLM([("Plan exactly 2 chapters, b1.ch01 to b1.ch02", dump(padded))] + rules()), HANDLERS, until="chapters")
+    assert s.stopped == "failed" and "too_many_derived" in s.detail
