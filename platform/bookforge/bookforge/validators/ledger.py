@@ -225,7 +225,7 @@ def _synopsis_coverage(events: list[dict], synopsis: str, stage: str) -> list[Fi
 
 # ── acts, chapters and scenes against the ledger ─────────────────────────────
 
-def check_acts(acts: list[dict], events: list[dict], stage: str = "acts") -> list[Finding]:
+def check_acts(acts: list[dict], events: list[dict], stage: str = "acts", weight_per_chapter: float = 2.0) -> list[Finding]:
     out: list[Finding] = []
     by_id = {e["id"]: e for e in events}
     index = {e["id"]: n for n, e in enumerate(events)}
@@ -260,27 +260,61 @@ def check_acts(acts: list[dict], events: list[dict], stage: str = "acts") -> lis
         missing = [x for x in endings if x not in (final.get("events") or [])]
         if endings and missing:
             out.append(hard(stage, "resolution_not_in_last_act", f"the last act ({final['id']}) must contain the resolution; missing: {', '.join(missing)}", [final["id"]] + missing))
-    out += sizing_plausibility(acts, events, stage)
+    out += sizing_plausibility(acts, events, stage, weight_per_chapter)
+    out += turning_point_texts(acts, events, stage)
     return out
 
 
-def sizing_plausibility(acts: list[dict], events: list[dict], stage: str = "acts") -> list[Finding]:
-    """Warn when the chapter count of an act does not fit the weight of its events (soft: sizing is the model's call)."""
-    out: list[Finding] = []
+def act_weight(act: dict, events: list[dict]) -> tuple[int, int]:
+    """(total weight, number of events) of an act's events, computed from the ledger (never taken from what the model says)."""
     by_id = {e["id"]: e for e in events}
+    evs = [by_id[x] for x in act.get("events", []) or [] if x in by_id]
+    return sum(int(e.get("weight", 1)) for e in evs), len(evs)
+
+
+def sizing_note(act: dict, events: list[dict], weight_per_chapter: float = 2.0) -> str:
+    weight, n = act_weight(act, events)
+    return f"[computed: weight {weight} over {n} events, about {weight / weight_per_chapter:.1f} chapters at {weight_per_chapter:g} weight per chapter]"
+
+
+def sizing_plausibility(acts: list[dict], events: list[dict], stage: str = "acts", weight_per_chapter: float = 2.0) -> list[Finding]:
+    """The chapter count of an act must fit the weight of its events: about `weight_per_chapter` each, within 0.6x to 1.75x of it.
+    Outside that the act is padded (too many chapters for the material) or crammed (too few). The weights are computed here from
+    the ledger, so a model that miscounts them in its reasoning is corrected with the real numbers."""
+    out: list[Finding] = []
+    w = weight_per_chapter
     for a in acts:
-        evs = [by_id[x] for x in a.get("events", []) or [] if x in by_id]
-        weight = sum(int(e.get("weight", 1)) for e in evs)
+        weight, n_events = act_weight(a, events)
         n = a.get("chapter_count")
-        if not n or not evs:
+        if not n or not n_events:
             continue
         per = weight / n
-        if per < 0.8 or per > 4.5:
-            out.append(soft(stage, "implausible_chapter_count",
-                            f"{a['id']}: {n} chapters for {len(evs)} events of total weight {weight} ({per:.1f} weight per chapter; "
-                            "plausible is about 1 to 4): too many chapters pads the story, too few crams it", [a["id"]]))
+        if per < 0.6 * w or per > 1.75 * w:
+            lo, hi = max(1, math.ceil(weight / (1.75 * w))), max(1, math.floor(weight / (0.6 * w)))
+            kind = "padded: too many chapters for this material" if per < 0.6 * w else "crammed: too few chapters for this material"
+            out.append(hard(stage, "implausible_chapter_count",
+                            f"{a['id']}: its events weigh {weight} in total ({n_events} events; the ledger's weights, not your estimate) and you gave {n} chapters, "
+                            f"{per:.1f} weight each: {kind}. At about {w:g} weight per chapter that is about {weight / w:.1f} chapters; give between {lo} and {hi}", [a["id"]]))
         if not a.get("sizing_reason"):
             out.append(soft(stage, "no_sizing_reason", f"{a['id']} gives no sizing_reason for its chapter count", [a["id"]]))
+    return out
+
+
+def turning_point_texts(acts: list[dict], events: list[dict], stage: str = "acts") -> list[Finding]:
+    """The act's turning_point text must describe its turning_point_event, not another event (soft)."""
+    by_id = {e["id"]: e for e in events}
+    out = []
+    for a in acts:
+        ev = by_id.get(a.get("turning_point_event") or "")
+        text = str(a.get("turning_point") or "")
+        if not ev or not text:
+            continue
+        stems = set(content_stems(text))
+        ev_stems = set(content_stems(ev.get("text", "")))
+        extra = stems - ev_stems
+        if ev_stems and len(stems & ev_stems) / len(ev_stems) < 0.4 or (stems and len(extra) / len(stems) > 0.35):
+            out.append(soft(stage, "turning_point_text_differs", f"{a['id']}: the turning_point text does not match its event {ev['id']} ('{ev.get('text', '')[:80]}'); "
+                            "describe that event only", [a["id"], ev["id"]], [text[:120]]))
     return out
 
 

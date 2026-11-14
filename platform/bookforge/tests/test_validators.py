@@ -274,3 +274,21 @@ def test_reversed_and_unmarked_setup_payoff_pairs_are_repaired():
     assert L.repair_setups(raw2) and raw2[0]["kind"] == "setup"
     raw3 = [dict(id="e1", kind="setup"), dict(id="e2", kind="payoff", pays_off="e1")]
     assert L.repair_setups(raw3) == []
+
+
+def test_chapter_counts_are_checked_against_the_ledgers_real_weights():
+    ev = [dict(id=f"e{i}", text=f"event {i}", weight=3, once_only=True, kind="event") for i in range(1, 7)]  # weight 18
+    act = lambda n, reason="weight 15": dict(id="t.act1", events=[e["id"] for e in ev], chapter_count=n, sizing_reason=reason, turning_point_event="e6", turning_point="event 6")
+    crammed = [f for f in L.sizing_plausibility([act(4)], ev) if f.code == "implausible_chapter_count"]
+    assert crammed and crammed[0].severity == HARD and "weigh 18" in crammed[0].message and "between 6 and 15" in crammed[0].message
+    assert L.sizing_plausibility([act(9)], ev) == []
+    assert any(f.code == "implausible_chapter_count" and "padded" in f.message for f in L.sizing_plausibility([act(20)], ev))
+    assert "weight 18 over 6 events" in L.sizing_note(act(9), ev)
+
+
+def test_a_turning_point_text_that_describes_another_event_is_flagged():
+    ev = [dict(id="e10", text="Eli decides to broadcast the data instead of fighting"), dict(id="e13", text="Eli accepts he cannot save Mara and she dies")]
+    ok = dict(id="t.act1", turning_point_event="e13", turning_point="Eli accepts he cannot save Mara")
+    bad = dict(id="t.act1", turning_point_event="e13", turning_point="Eli accepts he cannot save Mara and chooses to broadcast the data instead of fighting")
+    assert L.turning_point_texts([ok], ev) == []
+    assert [f.code for f in L.turning_point_texts([bad], ev)] == ["turning_point_text_differs"]

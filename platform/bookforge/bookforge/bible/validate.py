@@ -173,7 +173,7 @@ def parse_acts(text: str, project: Project, ledger=None) -> tuple[list[Act] | No
         problems.append(f"the chapter_count values add up to {total}; they must add up to between {clo} and {chi}")
     if ledger is not None and acts and len(acts) == len(raw):
         from ..validators import HARD, ledger as ledger_checks
-        findings = ledger_checks.check_acts([a.model_dump() for a in acts], [e.model_dump() for e in ledger.events])
+        findings = ledger_checks.check_acts([a.model_dump() for a in acts], [e.model_dump() for e in ledger.events], weight_per_chapter=project.config.ledger.weight_per_chapter)
         problems += [f.line() for f in findings if f.severity == HARD]
     return (None, problems) if problems else (acts, [])
 
