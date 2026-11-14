@@ -4,6 +4,7 @@ import { useApi } from '../lib/hooks'
 import { href, type Route } from '../lib/route'
 import type { BookStatus } from '../lib/types'
 import { ErrorBanner, Loading } from '../components/ui'
+import Cast from './Cast'
 import Documents from './Documents'
 import Inbox from './Inbox'
 import Jobs from './Jobs'
@@ -16,7 +17,7 @@ import Tracks from './Tracks'
 import Tree from './Tree'
 import Workbench from './Workbench'
 
-const TABS: [string, string][] = [['overview', 'Overview'], ['documents', 'Documents'], ['tree', 'Progress'], ['inbox', 'Inbox'], ['tracks', 'Tracks'], ['research', 'Research'], ['read', 'Read'], ['jobs', 'Jobs'], ['models', 'Models'], ['workbench', 'Workbench']]
+const TABS: [string, string][] = [['overview', 'Overview'], ['documents', 'Documents'], ['cast', 'Cast'], ['tree', 'Progress'], ['inbox', 'Inbox'], ['tracks', 'Tracks'], ['research', 'Research'], ['read', 'Read'], ['jobs', 'Jobs'], ['models', 'Models'], ['workbench', 'Workbench']]
 
 export default function Book({ route }: { route: Route }) {
   const { series, book } = route as Required<Pick<Route, 'series' | 'book'>>
@@ -56,6 +57,7 @@ export default function Book({ route }: { route: Route }) {
       {status.error && <ErrorBanner message={status.error} />}
       {tab === 'overview' && <Overview series={series} book={book} status={s} reload={status.reload} />}
       {tab === 'documents' && <Documents series={series} book={book} docKey={route.id} />}
+      {tab === 'cast' && <Cast series={series} book={book} />}
       {tab === 'tree' && <Tree series={series} book={book} />}
       {tab === 'inbox' && <Inbox series={series} book={book} status={s} reload={status.reload} />}
       {tab === 'scene' && route.id && <SceneView series={series} book={book} id={route.id} status={s} reload={status.reload} />}

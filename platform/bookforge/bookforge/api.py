@@ -51,6 +51,7 @@ from pydantic import BaseModel, Field
 
 from . import model_admin, books as book_mgmt, deletion, documents, push, assemble as assembly, export as exporting, bench as benchmarks, changes as change_requests, ops, report as morning_report, scenefiles, stale as staleness
 from .bible import store
+from . import cast as cast_mod
 from .constants import CHECKPOINTS, LAYER_ORDER
 from .doctor import run_doctor
 from .errors import BookforgeError
@@ -166,6 +167,17 @@ class NeedBody(BaseModel):
     stance: str | None = None
     rule: str | None = None
     applies_to: list[str] | None = None  # chapter or scene ids; [] = the whole book
+
+
+class CastBody(BaseModel):
+    id: str | None = None  # only when adding
+    kind: str | None = None
+    name: str | None = None
+    facts: list[str] | None = None
+
+
+class RenameEntity(BaseModel):
+    id: str
 
 
 class AddBook(BaseModel):
@@ -316,6 +328,41 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
         require_idle(series)
         project = book_mgmt.add_book(root, body.title, body.brief, copy_from=body.copy_from, copy_entities=body.entities)
         return ok({"book": project.book, "title": project.state.title})
+
+    # ── the cast editor ──────────────────────────────────────────────────────
+
+    @router.get("/series/{series}/books/{book}/cast")
+    def cast_list(series: str, book: str):
+        return ok(cast_mod.overview(open_project(series, book)))
+
+    @router.get("/series/{series}/books/{book}/cast/{entity}/usage")
+    def cast_usage(series: str, book: str, entity: str):
+        return ok({"entity": entity, "usage": cast_mod.usage(open_project(series, book), entity)})
+
+    @router.post("/series/{series}/books/{book}/cast", status_code=201)
+    def cast_add(series: str, book: str, body: CastBody):
+        project = open_project(series, book)
+        require_idle(series)
+        return ok(cast_mod.add(project, body.id or "", body.kind or "", body.name or "", body.facts or []).model_dump())
+
+    @router.put("/series/{series}/books/{book}/cast/{entity}")
+    def cast_update(series: str, book: str, entity: str, body: CastBody):
+        project = open_project(series, book)
+        require_idle(series)
+        return ok(cast_mod.update(project, entity, body.kind, body.name, body.facts).model_dump())
+
+    @router.delete("/series/{series}/books/{book}/cast/{entity}")
+    def cast_delete(series: str, book: str, entity: str):
+        project = open_project(series, book)
+        require_idle(series)
+        cast_mod.delete(project, entity)
+        return ok({"deleted": entity})
+
+    @router.post("/series/{series}/books/{book}/cast/{entity}/rename")
+    def cast_rename(series: str, book: str, entity: str, body: RenameEntity):
+        project = open_project(series, book)
+        require_idle(series)
+        return ok({"from": entity, "to": body.id, "references_changed": cast_mod.rename(project, entity, body.id)})
 
     @router.get("/series/{series}/carry-over")
     def carry_over(series: str, source: str):

@@ -37,3 +37,6 @@ Each book has its own bible (`books/<book>/bible/`); a track may carry `starts_a
 
 ## Files
 `books/<b>/ledger.yaml`, `acts.yaml`, `chapters.yaml`, `scenes.yaml`; `books/<b>/validation/{ledger,acts,chapters,scenes,prose}.json`; per series: `workbench/prompts/` overrides.
+
+## Cast editor (`cast.py`)
+Input: entity id, kind (character/place/object/group/concept), name, facts (at least one). Invariants: a change that would add a validation problem is refused and nothing is written; delete is refused while any chapter, scene, ledger event, track or character rule refers to the entity; rename is all-or-nothing across those files and refused on a shared bible.
