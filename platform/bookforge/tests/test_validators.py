@@ -442,3 +442,41 @@ def test_a_chapter_may_lead_into_the_next_event_of_its_act_but_not_use_a_later_a
     assert "reserved for a later act" in msg
     again = next(x.message for x in f if x.items[:2] == ["b2.ch04", "e4"] ) if any(x.items[:2] == ["b2.ch04", "e4"] for x in f) else ""
     assert again == "" or "already told" in again or "its own" in again
+
+
+# ── a major event may take a second chapter; an act cannot ask for more chapters than its events supply ──
+
+def test_a_weight_three_event_may_continue_into_the_next_chapter_and_nothing_else_may():
+    ev = [dict(id="e1", text="a", weight=2, once_only=True, kind="event"), dict(id="e2", text="b", weight=3, once_only=True, kind="event", after=["e1"]),
+          dict(id="e3", text="c", weight=3, once_only=True, kind="event", after=["e2"])]
+    acts = [dict(id="t.act1", events=["e1", "e2", "e3"])]
+    ch = lambda n, cov, cont=(): dict(id=f"t.ch{n:02d}", act="t.act1", events_covered=list(cov), events_continued=list(cont))  # noqa: E731
+    ok = [ch(1, ["e1"]), ch(2, ["e2"]), ch(3, [], ["e2"]), ch(4, ["e3"])]
+    assert [f for f in L.check_chapters(ok, ev, acts) if f.severity == HARD] == []
+    light = [ch(1, ["e1"]), ch(2, [], ["e1"]), ch(3, ["e2"]), ch(4, ["e3"])]
+    assert "only_major_events_continue" in codes(L.check_chapters(light, ev, acts), HARD)
+    gap = [ch(1, ["e1"]), ch(2, ["e2"]), ch(3, ["e3"]), ch(4, [], ["e2"])]
+    assert "continued_event_not_begun" in codes(L.check_chapters(gap, ev, acts), HARD)
+    third = [ch(1, ["e1"]), ch(2, ["e2"]), ch(3, [], ["e2"]), ch(4, [], ["e2"]), ch(5, ["e3"])]
+    assert "event_spans_too_many_chapters" in codes(L.check_chapters(third, ev, acts), HARD)
+    stalled = [ch(1, ["e1"]), ch(2, ["e1"]), ch(3, ["e2"]), ch(4, ["e3"])]  # retelling e1 without continuing it
+    assert "once_only_repeated" in codes(L.check_chapters(stalled, ev, acts), HARD)
+
+
+def test_an_act_cannot_ask_for_more_chapters_than_its_events_supply():
+    ev = [dict(id=f"e{i}", text=f"event {i}", weight=w, once_only=True, kind="event") for i, w in enumerate([2, 2, 3, 3, 3, 3], 5)]  # the act 2 that failed on a real run
+    act = lambda n: dict(id="b2.act2", events=[e["id"] for e in ev], chapter_count=n, sizing_reason="x", turning_point_event="e10", turning_point="event 10")  # noqa: E731
+    assert L.act_capacity(act(8), ev) == (12, 6, 4, 2)  # 6 events + 4 major second chapters + 2 derived
+    assert not [f for f in L.sizing_plausibility([act(8)], ev) if f.code == "chapter_count_exceeds_capacity"]
+    big = [dict(id=f"e{i}", text=f"event {i}", weight=3, once_only=True, kind="event") for i in range(1, 7)]
+    over = [f for f in L.sizing_plausibility([dict(id="a", events=[e["id"] for e in big], chapter_count=15, sizing_reason="x")], big) if f.code == "chapter_count_exceeds_capacity"]
+    assert over and over[0].severity == HARD and "at most 14" in over[0].message
+
+
+def test_a_continued_event_is_the_chapters_own_for_the_text_checks():
+    events = [dict(id="e1", text="Halloway intercepts them at the launch bay with drones and a plasma cutter", once_only=True, weight=3),
+              dict(id="e2", text="Eli decides to broadcast contamination data instead of fighting", once_only=True, weight=3)]
+    ch = [dict(id="b.ch01", act="a", purpose="p", summary="Halloway intercepts them at the launch bay with drones and a plasma cutter.", events_covered=["e1"], events_continued=[]),
+          dict(id="b.ch02", act="a", purpose="p", summary="Halloway presses the attack at the launch bay with drones and a plasma cutter while Eli decides to broadcast contamination data instead of fighting.",
+               events_covered=["e2"], events_continued=["e1"])]
+    assert [f for f in L.check_chapter_texts(ch, events) if f.severity == HARD] == []

@@ -280,6 +280,18 @@ def sizing_note(act: dict, events: list[dict], weight_per_chapter: float = 2.0) 
     return f"[computed: weight {weight} over {n} events, about {weight / weight_per_chapter:.1f} chapters at {weight_per_chapter:g} weight per chapter]"
 
 
+def act_capacity(act: dict, events: list[dict]) -> tuple[int, int, int, int]:
+    """(most chapters the act's events can supply, events, major events that may take a second chapter, minor complications that may be derived).
+
+    Every chapter needs an event of its own: one chapter per event, a second for each weight 3 event, and up to a third of the events again as
+    derived complications. An act asking for more chapters than that cannot be planned, however often the model tries."""
+    by_id = {e["id"]: e for e in events}
+    mine = [by_id[x] for x in act.get("events") or [] if x in by_id]
+    majors = sum(1 for e in mine if int(e.get("weight", 1)) >= 3)
+    derived = max(1, round(MAX_DERIVED_ACT_SHARE * len(mine))) if mine else 0
+    return len(mine) + majors + derived, len(mine), majors, derived
+
+
 def sizing_plausibility(acts: list[dict], events: list[dict], stage: str = "acts", weight_per_chapter: float = 2.0) -> list[Finding]:
     """The chapter count of an act must fit the weight of its events: about `weight_per_chapter` each, within 0.6x to 1.75x of it.
     Outside that the act is padded (too many chapters for the material) or crammed (too few). The weights are computed here from
@@ -298,6 +310,11 @@ def sizing_plausibility(acts: list[dict], events: list[dict], stage: str = "acts
             out.append(hard(stage, "implausible_chapter_count",
                             f"{a['id']}: its events weigh {weight} in total ({n_events} events; the ledger's weights, not your estimate) and you gave {n} chapters, "
                             f"{per:.1f} weight each: {kind}. At about {w:g} weight per chapter that is about {weight / w:.1f} chapters; give between {lo} and {hi}", [a["id"]]))
+        cap, n_ev, majors, derived = act_capacity(a, events)
+        if n > cap:
+            out.append(hard(stage, "chapter_count_exceeds_capacity",
+                            f"{a['id']} plans {n} chapters, but its {n_ev} events can supply at most {cap}: every chapter needs a new event of its own, a weight 3 event may take a second chapter "
+                            f"({majors} here) and up to {derived} minor complication(s) may be derived. Give at most {cap} chapters (or move events into this act)", [a["id"]]))
         if not a.get("sizing_reason"):
             out.append(soft(stage, "no_sizing_reason", f"{a['id']} gives no sizing_reason for its chapter count", [a["id"]]))
     return out
@@ -333,18 +350,35 @@ def check_chapters(chapters: list[dict], events: list[dict], acts: list[dict] | 
             act_of.setdefault(e["id"], act_of[e["parent"]])
     told: dict[str, str] = {}
     seen: set[str] = set()
+    span: dict[str, int] = {}  # chapters an event has taken so far
+    previous_active: set[str] = set()
     last_idx = -1
     for c in chapters:
         covered = c.get("events_covered") or []
+        continued = c.get("events_continued") or []
         new = [x for x in covered if x not in seen]
-        if not covered:
+        if not covered and not continued:
             out.append(hard(stage, "chapter_without_events", f"{c['id']} lists no events_covered", [c["id"]]))
+        for ev in continued:  # a major event that began in the chapter before and carries on here
+            if ev not in by_id:
+                out.append(hard(stage, "unknown_event", f"{c['id']} continues {ev}, which is not an event", [c["id"], ev]))
+            elif ev not in previous_active:
+                out.append(hard(stage, "continued_event_not_begun", f"{c['id']} continues {ev}, but the chapter before does not tell or continue it: an event is continued only in the chapter right after it begins", [c["id"], ev]))
+            elif int(by_id[ev].get("weight", 1)) < 3:
+                out.append(hard(stage, "only_major_events_continue", f"{c['id']} continues {ev}, which weighs {by_id[ev].get('weight', 1)}: only a weight 3 event (a climax, a confrontation, a turning point) may take a second chapter", [c["id"], ev]))
+            elif span.get(ev, 1) >= 2:
+                out.append(hard(stage, "event_spans_too_many_chapters", f"{c['id']} continues {ev} for a third chapter: no event takes more than two", [c["id"], ev]))
+            else:
+                span[ev] = span.get(ev, 1) + 1
+            if acts and act_of.get(ev) and c.get("act") and act_of[ev] != c["act"]:
+                out.append(hard(stage, "event_from_other_act", f"{c['id']} ({c['act']}) continues {ev}, which belongs to {act_of[ev]}: leave it for that act", [c["id"], ev]))
         for ev in covered:
             if ev not in by_id:
                 out.append(hard(stage, "unknown_event", f"{c['id']} covers {ev}, which is not an event", [c["id"], ev]))
                 continue
             if acts and act_of.get(ev) and c.get("act") and act_of[ev] != c["act"]:
                 out.append(hard(stage, "event_from_other_act", f"{c['id']} ({c['act']}) covers {ev}, which belongs to {act_of[ev]}: leave it for that act", [c["id"], ev]))
+            span.setdefault(ev, 1)
             if ev in told and by_id[ev].get("once_only", True):
                 out.append(hard(stage, "once_only_repeated", f"{ev} is once_only but is told in both {told[ev]} and {c['id']}", [ev, told[ev], c["id"]], [by_id[ev]["text"][:120]]))
             else:
@@ -358,9 +392,10 @@ def check_chapters(chapters: list[dict], events: list[dict], acts: list[dict] | 
                 out.append(hard(stage, "chapters_out_of_order", f"{c['id']} covers events that belong earlier in the story than the previous chapter", [c["id"]]))
         if idxs:
             last_idx = max(last_idx, max(idxs))
-        if covered and not new:
-            out.append(hard(stage, "chapter_nothing_new", f"{c['id']} brings no event that has not already happened: every chapter must move the story forward (add a new event, or a minor complication derived from one)", [c["id"]]))
+        if covered and not new and not continued:
+            out.append(hard(stage, "chapter_nothing_new", f"{c['id']} brings no event that has not already happened: every chapter must move the story forward (add a new event, continue a weight 3 event from the chapter before, or add a minor complication derived from an event)", [c["id"]]))
         seen.update(covered)
+        previous_active = set(covered) | set(continued)
     for e in events:
         if e["id"] not in seen and not e.get("carried_in") and (scope is None or e["id"] in scope):
             out.append(hard(stage, "event_not_covered", f"{e['id']} is covered by no chapter: {e['text'][:90]}", [e["id"]]))
@@ -371,7 +406,8 @@ def check_scenes_vs_chapters(scenes: list[dict], chapters: list[dict], events: l
     """Scenes carry end_state and the chapter's events: each event of a chapter is shown in a scene, a once_only one in exactly one."""
     out: list[Finding] = []
     once = {e["id"]: e.get("once_only", True) for e in events}
-    allowed = {c["id"]: list(c.get("events_covered") or []) for c in chapters}
+    allowed = {c["id"]: list(c.get("events_covered") or []) + list(c.get("events_continued") or []) for c in chapters}
+    begun = {c["id"]: list(c.get("events_covered") or []) for c in chapters}  # only these must be shown in a scene of the chapter
     by_chapter: dict[str, list[dict]] = defaultdict(list)
     for s in scenes:
         by_chapter[s.get("chapter") or s["id"].rsplit(".s", 1)[0]].append(s)
@@ -382,7 +418,7 @@ def check_scenes_vs_chapters(scenes: list[dict], chapters: list[dict], events: l
         for ev in s.get("events") or []:
             if ev not in allowed.get(ch, []):
                 out.append(hard(stage, "scene_event_not_in_chapter", f"{s['id']} uses {ev}, which is not an event of {ch}: it is told elsewhere or reserved for later", [s["id"], ev]))
-    for cid, evs in allowed.items():
+    for cid, evs in begun.items():
         if cid not in by_chapter:
             continue
         used: dict[str, list[str]] = defaultdict(list)
@@ -496,7 +532,7 @@ def check_chapter_texts(chapters: list[dict], events: list[dict], stage: str = "
     out: list[Finding] = []
     for i, c in enumerate(chapters):
         text = " ".join(str(c.get(k, "")) for k in ("purpose", "summary"))  # not the title: its capitalised words would read as names
-        mine = set(c.get("events_covered") or [])
+        mine = set(c.get("events_covered") or []) | set(c.get("events_continued") or [])
         others = [e for e in events if e["id"] not in mine and not e.get("carried_in")]
         where, soften = {}, set()
         for e in others:
@@ -504,7 +540,7 @@ def check_chapter_texts(chapters: list[dict], events: list[dict], stage: str = "
             where[e["id"]] = why
             if near:
                 soften.add(e["id"])
-        out += _event_text_checks(c["id"], text, list(mine), by_id, others, stage, "chapter", where, soften)
+        out += _event_text_checks(c["id"], text, list(c.get("events_covered") or []), by_id, others, stage, "chapter", where, soften)
     return out
 
 
@@ -518,7 +554,7 @@ def check_scene_texts(scenes: list[dict], chapters: list[dict], events: list[dic
     for s in scenes:
         ch = s.get("chapter") or s["id"].rsplit(".s", 1)[0]
         here = index.get(ch, -1)
-        mine = set(chapters[here].get("events_covered") or []) if here >= 0 else set()
+        mine = (set(chapters[here].get("events_covered") or []) | set(chapters[here].get("events_continued") or [])) if here >= 0 else set()
         text = " ".join([str(s.get("purpose", ""))] + [str(b) for b in s.get("beats") or []])
         others = [e for e in events if e["id"] not in mine and not e.get("carried_in")]
         where, soften = {}, set()
@@ -534,7 +570,7 @@ def check_scene_texts(scenes: list[dict], chapters: list[dict], events: list[dic
 def scene_count_plausibility(chapter: dict, scenes: list[dict], events: list[dict], stage: str = "scenes", max_scenes: int = 4) -> list[Finding]:
     """The number of scenes in a chapter must fit the weight of its events: about SCENE_WEIGHT each, within 0.2x..1.75x (padded or crammed)."""
     by_id = {e["id"]: e for e in events}
-    weight = sum(int(by_id[x].get("weight", 1)) for x in chapter.get("events_covered") or [] if x in by_id)
+    weight = sum(int(by_id[x].get("weight", 1)) for x in list(chapter.get("events_covered") or []) + list(chapter.get("events_continued") or []) if x in by_id)
     n = len(scenes)
     if not weight or not n:
         return []

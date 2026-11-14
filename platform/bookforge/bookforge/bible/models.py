@@ -96,7 +96,8 @@ class Chapter(_Record):
     setting: Slug
     tension: int = Field(ge=1, le=10)
     research: list[str] = []
-    events_covered: list[str] = []  # ledger event ids told in this chapter
+    events_covered: list[str] = []  # ledger event ids told in this chapter (begun here)
+    events_continued: list[str] = []  # a major event begun in the chapter before that carries on here (weight 3 only, at most two chapters in all)
     end_state: Loose = ""  # where things stand when the chapter ends: places, possessions, who knows what
 
 
