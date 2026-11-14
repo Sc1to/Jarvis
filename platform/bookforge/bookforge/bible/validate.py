@@ -197,7 +197,7 @@ def count_range(project: Project, layer: str) -> tuple[int, int]:
 # ── layer 5a: the cast and world ────────────────────────────────────────────
 
 def parse_cast(text: str, existing: Constants) -> tuple[Constants | None, list[str]]:
-    """The NEW entities and rules a reply proposes. `existing` entries must not be repeated."""
+    """The NEW entities and rules a reply proposes. Entries that are already there (or repeated in the reply) are ignored, not an error: a model that lists the cast again after it was saved must not fail the layer."""
     data, error = load_reply_yaml(text)
     if error:
         return None, [error]
@@ -211,8 +211,8 @@ def parse_cast(text: str, existing: Constants) -> tuple[Constants | None, list[s
         e = _validate(Entity, item, f"entities[{i}]", problems)
         if e is None:
             continue
-        if e.id in known:
-            problems.append(f"entities[{i}]: '{e.id}' already exists; list only new entities")
+        if e.id in known:  # listing what is already in the cast (or twice in one reply) does no harm: the first one stays, this one is ignored
+            continue
         known.add(e.id)
         entities.append(e)
     rules: list[Rule] = []
@@ -221,7 +221,7 @@ def parse_cast(text: str, existing: Constants) -> tuple[Constants | None, list[s
         if r is None:
             continue
         if r.id in known_rules:
-            problems.append(f"rules[{i}]: '{r.id}' already exists")
+            continue
         known_rules.add(r.id)
         rules.append(r)
     kinds = {e.kind for e in existing.entities} | {e.kind for e in entities}

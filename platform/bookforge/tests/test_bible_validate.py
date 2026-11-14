@@ -80,8 +80,9 @@ def test_cast_needs_a_character_and_a_place():
     assert has(parse_cast(dump(only_places), Constants())[1], "at least one character")
 
 
-def test_existing_entities_must_not_be_repeated(constants):
-    assert has(parse_cast(dump(cast()), constants)[1], "'anna' already exists")
+def test_existing_entities_that_are_listed_again_are_ignored_not_an_error(constants):
+    again, problems = parse_cast(dump(cast()), constants)  # a real run listed the whole saved cast again, ten entities
+    assert problems == [] and again.entities == [] and again.rules == []
     extra = {"entities": [{"id": "mira", "kind": "character", "name": "Mira", "facts": ["old"]}]}
     new, problems = parse_cast(dump(extra), constants)  # the existing cast already has a place
     assert problems == [] and [e.id for e in new.entities] == ["mira"]
@@ -96,10 +97,12 @@ def test_bad_entities_are_named(change):
     assert not parse_cast(dump(data), Constants())[1] == []
 
 
-def test_duplicate_ids_inside_one_reply():
+def test_duplicate_ids_inside_one_reply_keep_the_first():
     data = cast()
-    data["entities"].append(dict(data["entities"][0]))
-    assert has(parse_cast(dump(data), Constants())[1], "already exists")
+    data["entities"].append({**data["entities"][0], "facts": ["a different fact"]})
+    new, problems = parse_cast(dump(data), Constants())
+    assert problems == [] and [e.id for e in new.entities].count(data["entities"][0]["id"]) == 1
+    assert next(e for e in new.entities if e.id == data["entities"][0]["id"]).facts == data["entities"][0]["facts"]
 
 
 # ── chapters of one act ─────────────────────────────────────────────────────
