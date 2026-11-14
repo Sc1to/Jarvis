@@ -4,7 +4,7 @@ What each planning stage takes in, what it must produce, and what the validators
 `<series>/workbench/prompts/`) must keep these contracts. `tests/test_contracts.py` fails when a shipped prompt loses a slot or a
 phrase listed here; run `python -m bookforge suite` after any prompt, setting or validator change.
 
-Hard findings are fed back to the model (at most `qc.max_revision_rounds` times); one that survives stops the stage, and nothing flows
+Hard findings are fed back to the model (at most `qc.max_revision_rounds` times; the second round is firmer: it says the last correction did not fix them, marks each problem that is STILL PRESENT, and quotes the parts of the model's own reply the problems point at, `prompts/correct_again.md`); one that survives stops the stage, and nothing flows
 downstream. A hard finding you judge to be a false alarm can be accepted (dashboard: Stage checks, "Accept this finding"; `validation/accepted.json`): it stays in the report, marked accepted, and stops blocking that stage. Hard repeat findings are also put once to the critic (`qc.confirm_repeats`): only a clear "different events" downgrades them. Soft findings are recorded in `books/<book>/validation/<stage>.json` and shown in the dashboard (Workbench, Briefing tab,
 "Stage checks"). Every validator detects a pattern (repeats, regressions, missing coverage, flat tension), never story content.
 
