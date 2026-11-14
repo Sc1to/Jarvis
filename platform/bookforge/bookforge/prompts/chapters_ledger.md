@@ -73,7 +73,13 @@ chapters:
     setting: harbor
     tension: 4
     research: []        # optional ids of research notes this chapter relies on
-derived_events: []      # optional minor complications
+derived_events: []      # optional minor complications, each like this (and its id also in some chapter's events_covered):
+#  - id: e2.1
+#    text: one line, what the small delay or obstacle is
+#    parent: e2
+#    after: [e2]
+#    weight: 1
+#    kind: event
 tracks:
   - id: anna-shoulder-wound
     entity: anna

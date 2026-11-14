@@ -525,7 +525,7 @@ def _classify(first: dict, acts: dict, chapters: list[dict], here_idx: int, here
     """(why this unit may not use the event, whether it is only the next chapter(s) of the same act)."""
     at = first.get(ev_id)
     if at is None:
-        return "is reserved for a later act (no chapter tells it yet)", False
+        return "is reserved for a later act (no chapter tells it yet); a chapter with nothing new of its own continues a weight 3 event or adds a derived minor complication, it never borrows from another act", False
     if at < here_idx:
         return f"was already told in {chapters[at]['id']}", False
     if at > here_idx and here_act is not None and acts.get(at) == here_act:
