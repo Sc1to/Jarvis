@@ -276,3 +276,29 @@ def test_a_cast_that_was_saved_by_an_earlier_failed_run_and_is_listed_again_does
     summary = run(p, RuleLLM(rules()), HANDLERS, until="chapters")  # the scripted model lists the whole cast again
     assert summary.ran == ["acts", "chapters"], summary.detail
     assert len(store.load_constants(p).entities) == 5  # nothing duplicated
+
+
+def test_a_failed_layer_leaves_the_bible_exactly_as_it_was(project, monkeypatch):
+    from bookforge.layers import structure
+    p = project_ready(project)
+    before = {n: (f.read_bytes() if f.exists() else None) for n, f in (("constants", store.constants_path(p)), ("tracks", store.tracks_path(p)),
+                                                                      ("chapters", store.chapters_path(p)), ("ledger", store.ledger_path(p)))}
+    monkeypatch.setattr(structure, "validate_chapters_file", lambda project: ["the assembled chapters do not hold together (a test)"])
+    failed = run(p, RuleLLM(rules()), HANDLERS, until="chapters")
+    assert failed.stopped == "failed"
+    after = {n: (f.read_bytes() if f.exists() else None) for n, f in (("constants", store.constants_path(p)), ("tracks", store.tracks_path(p)),
+                                                                     ("chapters", store.chapters_path(p)), ("ledger", store.ledger_path(p)))}
+    assert after == before  # no cast, no track, no chapter, no derived event from the failed attempt
+    monkeypatch.undo()
+    assert run(p, RuleLLM(rules()), HANDLERS, until="chapters").ran == ["chapters"]  # and the saved pieces still make the rerun cheap
+
+
+def test_a_failed_scenes_layer_leaves_the_bible_exactly_as_it_was(project, monkeypatch):
+    from bookforge.layers import structure
+    p = project_ready(project)
+    run(p, RuleLLM(rules()), HANDLERS, until="chapters")
+    paths = {"constants": store.constants_path(p), "tracks": store.tracks_path(p), "timeline": store.timeline_path(p), "scenes": store.scenes_path(p)}
+    before = {n: (f.read_bytes() if f.exists() else None) for n, f in paths.items()}
+    monkeypatch.setattr(structure, "validate_scenes_file", lambda project: ["the assembled scenes do not hold together (a test)"])
+    assert run(p, RuleLLM(rules()), HANDLERS, until="scenes").stopped == "failed"
+    assert {n: (f.read_bytes() if f.exists() else None) for n, f in paths.items()} == before

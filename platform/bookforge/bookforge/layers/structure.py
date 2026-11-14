@@ -381,16 +381,16 @@ def _build_chapters(ctx: StepContext, files: list[str]) -> str:
 
     if ledger is not None:  # the whole-book checks come BEFORE anything is saved: a failure leaves the files as they were, so a rerun starts clean
         files.append(_book_chapter_checks(project, done, ledger, ctx))
-    store.save_constants(project, constants)
-    store.save_tracks(project, tracks)
-    store.save_chapters(project, done)
-    if ledger is not None:
-        store.save_ledger(project, ledger)
-        files.append("books/%s/ledger.yaml" % project.book)
-    problems = validate_chapters_file(project)
-    if problems:
-        store.chapters_path(project).unlink(missing_ok=True)  # keep the saved pieces so a rerun does not start over
-        raise LayerError("the assembled chapters do not hold together: " + "; ".join(problems[:6]))
+    with store.transaction([store.constants_path(project), store.tracks_path(project), store.chapters_path(project), store.ledger_path(project)]):
+        store.save_constants(project, constants)  # a failure anywhere in here puts every one of these files back as it was
+        store.save_tracks(project, tracks)
+        store.save_chapters(project, done)
+        if ledger is not None:
+            store.save_ledger(project, ledger)
+            files.append("books/%s/ledger.yaml" % project.book)
+        problems = validate_chapters_file(project)
+        if problems:  # the saved pieces stay, so a rerun does not start over
+            raise LayerError("the assembled chapters do not hold together: " + "; ".join(problems[:6]))
     _clean_work(project, "chapters")
     files += ["bible/constants.yaml", "bible/tracks.yaml"]
     if adopted:
@@ -598,16 +598,16 @@ def _build_scenes(ctx: StepContext, files: list[str]) -> str:
     if ledger is not None:  # the whole-book checks come BEFORE anything is saved, so a failure leaves the files as they were
         files.append(_book_scene_checks(project, ch_list, scenes_all, timeline_all, tracks, constants, ledger, ctx))
     kept = [t for t in store.load_timeline(project) if parse_position(t.id).book != project.book]
-    store.save_timeline(project, kept + timeline_all)
-    store.save_tracks(project, tracks)
-    if adopted:
-        store.save_constants(project, constants)
-        log.info("scenes: %d place(s) added to the cast: %s", len(adopted), ", ".join(adopted))
-    store.save_scenes(project, scenes_all)
-    problems = validate_scenes_file(project)
-    if problems:
-        store.scenes_path(project).unlink(missing_ok=True)  # keep the saved pieces so a rerun does not start over
-        raise LayerError("the assembled scenes do not hold together: " + "; ".join(problems[:6]))
+    with store.transaction([store.timeline_path(project), store.tracks_path(project), store.constants_path(project), store.scenes_path(project)]):
+        store.save_timeline(project, kept + timeline_all)  # a failure anywhere in here puts every one of these files back as it was
+        store.save_tracks(project, tracks)
+        if adopted:
+            store.save_constants(project, constants)
+            log.info("scenes: %d place(s) added to the cast: %s", len(adopted), ", ".join(adopted))
+        store.save_scenes(project, scenes_all)
+        problems = validate_scenes_file(project)
+        if problems:
+            raise LayerError("the assembled scenes do not hold together: " + "; ".join(problems[:6]))
     _clean_work(project, "scenes")
     files += ["bible/timeline.yaml", "bible/tracks.yaml"] + sorted(set(research_files))
     if adopted:

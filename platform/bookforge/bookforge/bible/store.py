@@ -1,5 +1,6 @@
 """Reading and writing the bible and structure files (YAML, written from validated records)."""
 
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterable
 
@@ -187,3 +188,35 @@ def active_ledger(project: Project) -> Ledger | None:
     if item is None or item.status != "accepted" or (item.note or "").startswith("not used"):
         return None
     return load_ledger(project)
+
+
+def tracks_path(project: Project) -> Path:
+    return project.root / "bible" / "tracks.yaml"
+
+
+def timeline_path(project: Project) -> Path:
+    return project.root / "bible" / "timeline.yaml"
+
+
+@contextmanager
+def transaction(paths: Iterable[Path]):
+    """All or nothing: if anything inside the block raises, every file in `paths` is put back exactly as it was (or removed if it did not exist).
+
+    A failed layer must not leave half of its output behind: an entity, a track or a chapter saved by an attempt that then failed would
+    stay in the bible, wrong or irrelevant, and the next attempt would start from it."""
+    before: dict[Path, bytes | None] = {}
+    for p in paths:
+        try:
+            before[p] = p.read_bytes()
+        except OSError:
+            before[p] = None
+    try:
+        yield
+    except BaseException:
+        for p, data in before.items():
+            if data is None:
+                p.unlink(missing_ok=True)
+            else:
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_bytes(data)
+        raise

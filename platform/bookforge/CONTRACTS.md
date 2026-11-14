@@ -25,6 +25,8 @@ The ledger's events cannot be edited in the Documents tab once the acts (or anyt
 
 The planner of one act's chapters sees the other acts by title only and its own act without its summary (a summary retells events and leaks the others: a real run turned act 2's "buried ship" into chapter 3 of act 1); the scene planner sees the chapter's act by purpose only. A derived complication written loosely (its text under `description`, no id, no `after`) is understood; a retelling of a reserved event says what to do instead.
 
+A failed layer saves nothing: the chapters and scenes layers write the cast, tracks, timeline, chapters, scenes and ledger inside one all-or-nothing block (`store.transaction`), so an attempt that fails leaves those files exactly as they were. (Research facts and saved pieces are kept on purpose, so a rerun does not repeat web searches or model calls.) A cast entity that is listed again is ignored, not an error.
+
 ## Load-bearing prompt text
 - Every ledger-mode planning prompt lists events as DONE / ASSIGNED / RESERVED FOR LATER and says reserved events must not be used.
 - Research is always labelled reference only: never a beat, an event, an obstacle or a plot device; at most three notes per chapter or scene.
