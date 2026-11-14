@@ -244,3 +244,11 @@ def test_book_level_prose_checks_are_saved_and_a_clean_book_passes(project):
         scenefiles.final_path(p, s.id).write_text(same * 5 + f"Then something unique {s.id} happened at last.")
     found, _ = prose_findings(p)
     assert "sentences_repeated" in {f.code for f in found}
+
+
+def test_a_payoff_chapter_may_echo_its_setup_chapter():
+    chapters = [dict(id="m.ch01", summary="Hale notices the clock stopped at ten past nine in the library.", events_covered=["e1"]),
+                dict(id="m.ch02", summary="Hale discovers that the clock was stopped on purpose at ten past nine in the library.", events_covered=["e2"])]
+    events = [dict(id="e1", kind="setup", once_only=True), dict(id="e2", kind="reveal", pays_off="e1", once_only=True)]
+    assert R.repeated_events(chapters, [], ledger_events=events) == []
+    assert R.repeated_events(chapters, [], ledger_events=[dict(id="e1", once_only=True), dict(id="e2", once_only=True)])  # unlinked: reported

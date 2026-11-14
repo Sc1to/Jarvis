@@ -116,6 +116,23 @@ def ledger_cmd(
     typer.echo(f"\nPreview written to {target}")
 
 
+@app.command("suite")
+def suite_cmd(
+    out: Path = typer.Option(Path("suite-report"), "--out", help="Folder for the report (and, with --live, the scratch series)"),
+    live: bool = typer.Option(False, "--live", help="Plan each test synopsis with the real models (slow); the default needs no model"),
+    case: Optional[str] = typer.Option(None, "--case", help="Only this case: thin, multi_pov, mystery, series_book2"),
+) -> None:
+    """Run the regression suite: known-bad fixtures, the test synopses, a report. Exit code 1 when any check fails."""
+    from .suite import run_suite
+    try:
+        path, ok = run_suite(out, live=live, only=case)
+    except (BookforgeError, OSError) as e:
+        _fail(e)
+    typer.echo(f"report: {path}")
+    typer.echo("all checks passed" if ok else "some checks FAILED, see the report")
+    raise typer.Exit(0 if ok else 1)
+
+
 @app.command("ledger-answer")
 def ledger_answer(path: Path = PathArg, question: str = typer.Argument(..., help="Question id, like q1"),
                   answer: str = typer.Argument(..., help="Your answer"), book: str = BookOpt) -> None:

@@ -289,3 +289,27 @@ def check_scenes_vs_chapters(scenes: list[dict], chapters: list[dict], events: l
             elif len(used[ev]) > 1 and once.get(ev, True):
                 out.append(hard(stage, "once_only_repeated", f"{ev} is once_only but is shown in {len(used[ev])} scenes of {cid} ({', '.join(used[ev])}): once", [ev] + used[ev]))
     return out
+
+
+def acts_text_coverage(acts: list[dict], synopsis: str, stage: str = "acts", min_recall: float = 0.4) -> list[Finding]:
+    """Without a ledger: every paragraph of the synopsis must be taken up by some act (its summary, purpose or turning point).
+
+    Recall = the share of the paragraph's content words found in the acts' own text. A paragraph that no act reflects, above all
+    the last one (the resolution), was dropped when the synopsis was cut into acts.
+    """
+    paras = paragraphs(synopsis)
+    if not paras or not acts:
+        return []
+    act_stems = set()
+    for a in acts:
+        act_stems |= set(content_stems(" ".join(str(a.get(k, "")) for k in ("title", "summary", "purpose", "turning_point"))))
+    out = []
+    for i, p in enumerate(paras):
+        stems = set(content_stems(p))
+        if not stems:
+            continue
+        recall = len(stems & act_stems) / len(stems)
+        if recall < min_recall:
+            last = " (the final paragraph: the resolution)" if i == len(paras) - 1 else ""
+            out.append(hard(stage, "synopsis_not_in_acts", f"paragraph {i + 1} of the synopsis{last} is taken up by no act ({recall:.0%} of its words appear in the acts): {p[:100]}...", [f"paragraph {i + 1}"]))
+    return out

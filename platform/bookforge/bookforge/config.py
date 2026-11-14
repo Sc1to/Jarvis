@@ -92,7 +92,7 @@ def _default_layers() -> dict[str, LayerSettings]:
         "acts": LayerSettings(model="critic", checkpoint="structure"),
         "chapters": LayerSettings(model="critic", checkpoint="structure"),
         "scenes": LayerSettings(model="critic", checkpoint="structure"),
-        "prose": LayerSettings(model="writer", drafts=2, words=(1500, 3000)),
+        "prose": LayerSettings(model="writer", drafts=2),
     }
 
 
