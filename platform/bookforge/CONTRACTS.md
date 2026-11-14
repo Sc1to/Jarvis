@@ -19,6 +19,8 @@ downstream. A hard finding you judge to be a false alarm can be accepted (dashbo
 
 Inherited state: what the series ledger says is true when the book begins reaches the acts, chapters and scenes prompts (`{carried}`) and every scene briefing of a ledger book. The critic's plan review also gets the ledger status. Times of day are compared as parts of the day (`dusk` = `evening`), and the semantic repeat check also runs on the written scene summaries.
 
+Whole-book checks (after every act or chapter is planned) run before anything is saved. A hard finding drops the saved pieces it names (acts for the chapters stage, chapters for the scenes stage), puts the findings in the layer's note (under the author's own words, which still reach the ledger-mode prompts) and stops; the next Run plans just those pieces again with the findings in their prompt, instead of reusing them and failing the same way. A chapter continuing a weight 3 event sees it as CONTINUING, not DONE; scenes of one chapter that tell the same thing are caught; a chapter heavier than four scenes can carry is refused.
+
 ## Load-bearing prompt text
 - Every ledger-mode planning prompt lists events as DONE / ASSIGNED / RESERVED FOR LATER and says reserved events must not be used.
 - Research is always labelled reference only: never a beat, an event, an obstacle or a plot device; at most three notes per chapter or scene.

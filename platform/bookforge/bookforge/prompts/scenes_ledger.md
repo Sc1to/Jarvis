@@ -53,7 +53,7 @@ Plan the SCENES of one chapter, when they happen, and how they pin down the stat
 Plan the scenes of this chapter, {first_scene} onward: as many as the chapter's events need, from 1 to 4, and no more. A chapter with little to tell gets one or two scenes; never stretch it. Each scene has:
 - a purpose: what changes in this scene and why it is needed;
 - a point-of-view character, a setting (a place from the cast) and the characters present (ids from the cast);
-- `events`: the ledger events of this chapter that happen in this scene. Every event of the chapter is shown in a scene, and a once_only event in exactly one;
+- `events`: the ledger events of this chapter that happen in this scene. Every event of the chapter is shown in a scene, and a once_only event in exactly one. An event listed under CONTINUING FROM THE CHAPTER BEFORE is carried on in this chapter: take it up where the chapter before left it (you may list it in the scene that carries it on, but need not), and never start it again;
 - beats: the things that happen, in order, as many as the scene needs (at least one), saying WHAT happens and WHY it matters, not how it is written. No dialogue, no description of style. A scene begins where the story so far stands: never restart a situation that is already underway (the people are already inside, the door is already open, the decision is already made), and never repeat a beat of an earlier chapter;
 - `end_state`: where things stand when the scene ends: locations, what people hold, who knows what;
 - when it happens: the story day (a whole number; days never go backwards except for a flashback), the time of day, and optionally a calendar date and a travel note;

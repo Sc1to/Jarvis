@@ -155,3 +155,74 @@ def test_state_inherited_from_earlier_books_reaches_every_planning_prompt_and_th
     assert any(s.heading.startswith("Already true when this book begins") and "debt contract" in s.body for s in b.sections)
     q = project_ready(__import__("conftest").Project.create(p.root.parent / "first", "x\n"))
     assert "nothing: this is the first book" in __import__("bookforge.ledger_view", fromlist=["x"]).carried_for_prompt(q)
+
+
+# ── downstream of the chapters: continued events, notes, whole-book retries, scenes within a chapter ──
+
+def test_a_continued_event_is_shown_to_the_scene_planner_as_continuing_not_done():
+    from bookforge.bible.models import Chapter, Ledger
+    from bookforge.ledger_view import status_text
+    from ledger_structure_fakes import events as fake_events
+    ledger = Ledger(events=fake_events())
+    ch1 = Chapter(id="b1.ch01", act="b1.act1", title="t", purpose="p", summary="s", pov="anna", setting="harbor", tension=3, events_covered=["e1"])
+    text = status_text(ledger, {"e2"}, [ch1], "SHOWN IN THIS CHAPTER", continuing={"e1"})
+    done, rest = text.split("CONTINUING FROM THE CHAPTER BEFORE")
+    assert "e1 (" not in done and "e1 (" in rest.split("SHOWN IN THIS CHAPTER")[0] and "begun in b1.ch01" in rest
+    assert "CONTINUING" not in status_text(ledger, {"e2"}, [ch1], "SHOWN IN THIS CHAPTER")
+
+
+def test_the_authors_note_reaches_the_ledger_mode_chapter_and_scene_prompts(project):
+    from bookforge import steering
+    p = project_ready(project)
+    steering.write(p, "chapters", "Make the harbor feel colder.")
+    steering.write(p, "scenes", "Keep every scene short.")
+    llm = RuleLLM(rules())
+    run(p, llm, HANDLERS, until="scenes")
+    prompts = [next(m["content"] for m in c["messages"] if m["role"] == "user") for c in llm.calls]
+    assert any("Make the harbor feel colder." in t and "Plan exactly 2 chapters" in t for t in prompts)
+    assert any("Keep every scene short." in t and "Scene ids are consecutive" in t for t in prompts)
+
+
+def test_a_whole_book_failure_plans_the_involved_acts_again_with_the_findings(project, monkeypatch):
+    from bookforge import steering
+    from bookforge.validators import findings as F, tension
+    p = project_ready(project)
+    calls = {"n": 0}
+
+    def flat_once(chapters, stage="chapters", spread=2):
+        calls["n"] += 1
+        return [F.hard("chapters", "flat_tension", "tension is flat for 4 chapters", ["b1.ch03", "b1.ch04"])] if calls["n"] == 1 else []
+
+    monkeypatch.setattr(tension, "flat_stretches", flat_once)
+    first = run(p, RuleLLM(rules()), HANDLERS, until="chapters")
+    assert first.stopped == "failed" and "act2 will be planned again" in first.detail
+    note = steering.read(p, "chapters")
+    assert steering.CHECKS_MARKER in note and "flat_tension" in note
+    llm = RuleLLM(rules())
+    second = run(p, llm, HANDLERS, until="chapters")
+    assert second.ran == ["chapters"], second.detail
+    asked = [next(m["content"] for m in c["messages"] if m["role"] == "user") for c in llm.calls]
+    act2 = [t for t in asked if "Plan exactly 2 chapters, b1.ch03 to b1.ch04" in t]
+    assert act2 and "Why the previous attempt was rejected" in act2[0] and "flat_tension" in act2[0]
+    assert not any("Plan exactly 2 chapters, b1.ch01 to b1.ch02" in t for t in asked)  # act 1 was fine: its saved piece is reused
+    assert steering.read(p, "chapters") == ""  # the note is gone once the layer is accepted
+
+
+def test_a_whole_book_scene_failure_plans_only_the_chapters_it_names_again(project, monkeypatch):
+    from bookforge.validators import findings as F, repeats
+    p = project_ready(project)
+    state = {"n": 0}
+
+    def action_once(scenes, chapters, names=frozenset(), stage="scenes"):
+        state["n"] += 1
+        return [F.hard("scenes", "action_pattern_repeated", "the same action recurs", ["b1.ch02", "b1.ch03.s1"])] if state["n"] == 1 else []
+
+    monkeypatch.setattr(repeats, "action_patterns", action_once)
+    first = run(p, RuleLLM(rules()), HANDLERS, until="scenes")
+    assert first.stopped == "failed" and "Chapters ch02, ch03 will be planned again" in first.detail
+    llm = RuleLLM(rules())
+    second = run(p, llm, HANDLERS, until="scenes")
+    assert second.ran == ["scenes"], second.detail
+    asked = " ".join(next(m["content"] for m in c["messages"] if m["role"] == "user") for c in llm.calls)
+    assert "Scene ids are consecutive: b1.ch02.s1" in asked and "Scene ids are consecutive: b1.ch03.s1" in asked
+    assert "Scene ids are consecutive: b1.ch01.s1" not in asked and "Scene ids are consecutive: b1.ch04.s1" not in asked

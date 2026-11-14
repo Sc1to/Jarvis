@@ -577,6 +577,9 @@ def scene_count_plausibility(chapter: dict, scenes: list[dict], events: list[dic
     per = weight / n
     lo = max(1, math.ceil(weight / (1.75 * SCENE_WEIGHT)))
     hi = min(max_scenes, max(lo, math.floor(weight / (0.2 * SCENE_WEIGHT))))
+    if lo > max_scenes:
+        return [hard(stage, "chapter_overloaded", f"{chapter['id']}: its events weigh {weight} in total, more than {max_scenes} scenes can carry (about {1.75 * SCENE_WEIGHT:.0f} each at most). "
+                     "The chapter holds too much: move some of its events to a neighbouring chapter of the act", [chapter["id"]])]
     crammed, padded = per > 1.75 * SCENE_WEIGHT, per < 0.2 * SCENE_WEIGHT and n >= 3
     if crammed or padded:
         kind = "crammed: too few scenes for this material" if crammed else "padded: too many scenes for this material"
@@ -651,4 +654,15 @@ def resolution_in_summary(acts: list[dict], events: list[dict], stage: str = "ac
         if recall < DESCRIBES_MIN:
             out.append(soft(stage, "act_summary_omits_resolution", f"{final['id']} is the last act, but its summary never describes the resolution event {ev_id} "
                             f"('{ev['text'][:90]}'): say how the book ends", [final["id"], ev_id]))
+    return out
+
+
+def heavy_chapters(chapters: list[dict], events: list[dict], weight_per_chapter: float = 2.0, stage: str = "chapters", factor: float = 3.0) -> list[Finding]:
+    """Soft: a chapter whose events weigh much more than the usual chapter will not fit its scenes (at most four)."""
+    by_id = {e["id"]: e for e in events}
+    out = []
+    for c in chapters:
+        weight = sum(int(by_id[x].get("weight", 1)) for x in list(c.get("events_covered") or []) + list(c.get("events_continued") or []) if x in by_id)
+        if weight > factor * weight_per_chapter:
+            out.append(soft(stage, "heavy_chapter", f"{c['id']} carries events weighing {weight} (a usual chapter about {weight_per_chapter:g}): consider moving some to the next chapter", [c["id"]]))
     return out

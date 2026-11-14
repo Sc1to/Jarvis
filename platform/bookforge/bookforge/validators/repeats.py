@@ -125,3 +125,24 @@ def action_patterns(scenes: list[dict], chapters: list[dict], names: set[str] = 
                         "give later chapters a different obstacle or a different way through",
                         sorted(chs), [example[pair]]))
     return out
+
+
+def scene_repeats_in_chapters(scenes: list[dict], names: set[str] = frozenset(), stage: str = "scenes") -> list[Finding]:
+    """Two scenes of the same chapter whose beats tell the same thing again (the event repeat check compares only different chapters)."""
+    out: list[Finding] = []
+    by_chapter: dict[str, list[Unit]] = defaultdict(list)
+    for sc in scenes:
+        ch = sc.get("chapter") or sc["id"].rsplit(".s", 1)[0]
+        for i, b in enumerate(sc.get("beats", []) or [], 1):
+            by_chapter[ch].append(Unit(f"{sc['id']}.b{i}", sc["id"], str(b), set(names)))
+    for ch, units in by_chapter.items():
+        seen: set[frozenset] = set()
+        for a, b in combinations(units, 2):
+            if a.chapter == b.chapter or frozenset((a.chapter, b.chapter)) in seen:
+                continue
+            if similar(a, b, 0.6, 3):
+                seen.add(frozenset((a.chapter, b.chapter)))
+                strong = dice(a.stems, b.stems) >= 0.8 and len(a.stems & b.stems) >= 4
+                out.append((hard if strong else soft)(stage, "scene_repeats_scene", f"{a.chapter} and {b.chapter} (both in {ch}) tell the same thing: each scene must move on from the one before",
+                                                      [a.chapter, b.chapter], [a.text[:120], b.text[:120]]))
+    return out
