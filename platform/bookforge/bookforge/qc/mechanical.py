@@ -290,6 +290,11 @@ def check_scene(text: str, ctx: CheckContext) -> MechanicalReport:
         if len(shared) >= 3:
             issues.append(Issue("recap", WARN, "the opening repeats the end of the previous scene", " ".join(shared[0])))
 
+    # a scene that ends by summing itself up (a note: recorded, never counted)
+    from ..validators.prose import wrap_up_endings
+    for f in wrap_up_endings([("scene", text)]):
+        issues.append(Issue("wrap_up_ending", NOTE, f.message, f.evidence[0] if f.evidence else ""))
+
     # tense, point of view and head-hopping (English heuristics)
     if _is_english(ctx.language):
         _check_voice(narr, text, ctx, issues)

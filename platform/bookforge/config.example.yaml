@@ -71,7 +71,7 @@ book:
 
 briefing:
   max_tokens: 16000
-  previous_scene_words: 1500           # tail of the previous scene given verbatim
+  previous_scene_words: 250            # tail of the previous scene given verbatim: enough to continue the moment, too little to copy
   sample_passages: 2                   # style/samples/*.md files included
   recent_chapters_full: 2              # chapters before this one summarised scene by scene; older ones in a line each
 

@@ -4,6 +4,7 @@ and the good ledger must pass. Patterns, not story content: the same checks run 
 import copy
 from pathlib import Path
 
+import pytest
 import yaml
 
 from bookforge.validators import HARD, SOFT
@@ -223,3 +224,23 @@ def test_a_payoff_that_resolves_something_else_is_flagged_softly():
     next(e for e in ev if e["id"] == "e9")["text"] = "A storm passes over the harbor"
     f = [x for x in L.check_ledger(ev, SYN) if x.code == "payoff_unrelated_to_setup"]
     assert f and f[0].severity == SOFT
+
+
+@pytest.mark.real_prose_checks
+def test_book_level_prose_checks_are_saved_and_a_clean_book_passes(project):
+    from bookforge import scenefiles
+    from bookforge.bible import store
+    from bookforge.validators.book import prose_findings
+    from structure_fakes import ready, rules, small
+    from conftest import RuleLLM
+    from bookforge.layers import HANDLERS
+    from bookforge.layers.runner import run
+    p = ready(project)
+    run(p, RuleLLM(rules()), HANDLERS, until="scenes")
+    sc = store.load_scenes(p)
+    same = "The harbor was quiet and Anna walked along the wet planks toward the vestry door. "
+    for s in sc[:3]:
+        scenefiles.scene_dir(p, s.id).mkdir(parents=True, exist_ok=True)
+        scenefiles.final_path(p, s.id).write_text(same * 5 + f"Then something unique {s.id} happened at last.")
+    found, _ = prose_findings(p)
+    assert "sentences_repeated" in {f.code for f in found}

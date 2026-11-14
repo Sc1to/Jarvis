@@ -49,7 +49,7 @@ def input_findings(project: Project, scene_id: str) -> list[dict]:
         add("warn", "no_style_guide", "there is no style guide: the writer follows only the tone of the north stars")
     if not any(h.startswith("Sample passages") for h in sections):
         add("warn", "no_samples", "there are no sample passages to match the voice against")
-    if scenes and scenes[0].id != scene_id and not any(h.startswith("The end of the previous scene") for h in sections):
+    if scenes and scenes[0].id != scene_id and not any(h.startswith("How the previous scene ended") for h in sections):
         add("warn", "no_previous_text", "the previous scene has no text yet, so nothing links this scene to it")
     if not any(h == "When this scene happens" for h in sections):
         add("warn", "no_timeline", "the scene has no timeline entry: the writer does not know when it happens")

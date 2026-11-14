@@ -268,7 +268,7 @@ def test_later_scenes_see_the_earlier_ones_text_and_summaries(book):
     go(book, llm, until="prose")
     second = scene_calls(llm, "b1.ch01.s2")[0]["messages"][1]["content"]
     final_one = scenefiles.final_path(book, "b1.ch01.s1").read_text().split()
-    assert "The end of the previous scene (b1.ch01.s1), verbatim" in second and " ".join(final_one[-8:]) in second
+    assert "How the previous scene ended (b1.ch01.s1)" in second and " ".join(final_one[-8:]) in second
     assert f"Earlier in this chapter (b1.ch01):\n  - b1.ch01.s1: {SUMMARY}" in second
 
 
@@ -370,3 +370,17 @@ def test_cli_briefing_and_check(book):
     assert bad.exit_code == 1 and "[block] banned_phrase: banned phrase: 'a testament to'" in bad.output
     assert runner.invoke(cli.app, ["check", str(book.root), "b1.ch09.s1"]).exit_code == 1
     assert "has no text yet" in runner.invoke(cli.app, ["check", str(book.root), "b1.ch03.s1"]).output
+
+
+@pytest.mark.real_prose_checks
+def test_copied_sentences_across_scenes_stop_the_prose_layer_from_being_accepted(book):
+    """The scripted writer gives every scene similar text: the whole-book checks refuse it (a real book would be revised)."""
+    from bookforge.validators import store as findings
+    p = book
+    llm = RuleLLM(prose_rules())
+    go(p, llm, until="prose")
+    p.state.approve_checkpoint("voice")
+    p.save_state()
+    go(p, llm, until="prose")
+    saved = findings.load(p, "prose")
+    assert saved["summary"]["hard"] >= 1 and p.state.layers["prose"].status == "flagged"

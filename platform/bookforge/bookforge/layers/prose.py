@@ -407,8 +407,18 @@ def prose(ctx: StepContext) -> StepResult:
     flagged = [s.id for s in scenes if items.get(s.id, Item()).status == "flagged"]
     accepted_n = sum(1 for s in scenes if items.get(s.id, Item()).status == "accepted")
     note = f"{accepted_n}/{len(scenes)} scenes accepted" + (f", {len(flagged)} need you: {', '.join(flagged)}" if flagged else "") + (f", {len(stale)} stale (run `stale --fix`)" if stale else "")
+    try:  # whole-book checks on the accepted text: copied sentences and chapter openings, wrap-up endings, tic words
+        from ..validators.book import hard_lines, save_prose_findings
+        found, rel = save_prose_findings(project)
+        files.append(rel)
+        hard_prose = hard_lines(found)
+    except Exception as e:  # never lose a run to a failed report
+        log.warning("prose checks could not run: %s", e)
+        hard_prose = []
+    if hard_prose:
+        note += f"; {len(hard_prose)} prose check(s) failed: " + "; ".join(hard_prose[:3])
     if voice != "approved":
         return StepResult(files=files, note=note, outcome="partial", checkpoint="voice")
-    if flagged:
+    if flagged or hard_prose:
         return StepResult(files=files, note=note, outcome="flagged")
     return StepResult(files=files, note=note)
