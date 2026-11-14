@@ -34,7 +34,7 @@ List every event of the synopsis, in the order it happens, as numbered events e1
 - `kind`: event, setup (a secret, promise, clue or threat planted for later), reveal or payoff (it resolves a setup: put the setup's id in `pays_off`), or flashback (told out of story order). A setup is something deliberately planted that the story later pays off (a secret, a promise, a clue, a threat): an ordinary event is not a setup. Every setup needs a payoff that resolves exactly what was planted, and a payoff or reveal never comes before its setup. Do not link events that are merely related.
 - `ending: true` on exactly ONE event: the one that resolves the story (if the resolution unfolds over several events, the last of them). A departure, a launch or an arrival that leads to it is not the ending.
 - `decision: true` on exactly one event: the central decision the whole story turns on, the choice its protagonist makes that cannot be undone.
-- Every sentence of the synopsis that says what happens must be quoted by some event's `excerpt`, not just every paragraph.
+- Every sentence of the synopsis that says what happens must be quoted by some event's `excerpt`, not just every paragraph. A sentence that is only description, theme or commentary and changes nothing in the story (what a place is like, what something represents, how a character feels in general) needs no event: list it under `no_event_needed` with its exact words and a short reason. When in doubt about a sentence that says what happens, give it an event.
 - If a sentence says one thing happens ONLY if, in exchange for, or because of another, the condition or cause is the earlier event and the other lists it in `after`; do not list them in the order the sentence happens to mention them.
 - `pov`: the character whose view tells it, only if the book uses several viewpoints.
 - `carried_in: true` only for something the synopsis treats as already true at the start (see the carried-over state above).
@@ -60,6 +60,9 @@ events:
     decision: false
     pays_off: ""      # the ID of the setup this event resolves, like e5 (never the setup's text); empty for most events
     source: synopsis
+no_event_needed:   # only description or commentary, never something that happens
+  - quote: exact words of a synopsis sentence
+    reason: why it changes nothing in the story
 questions: []
 ```
 

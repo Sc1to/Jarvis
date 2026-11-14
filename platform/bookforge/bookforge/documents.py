@@ -136,7 +136,7 @@ def _ledger_problems(project: Project, text: str) -> list[str]:
         synopsis = (project.book_dir / "synopsis.md").read_text(encoding="utf-8")
     except OSError:
         synopsis = ""
-    return [f.line() for f in ledger_checks.check_ledger([e.model_dump() for e in ledger.events], synopsis) if f.severity == HARD]
+    return [f.line() for f in ledger_checks.check_ledger([e.model_dump() for e in ledger.events], synopsis, no_event_needed=ledger.no_event_needed) if f.severity == HARD]
 
 
 _EVENT_KEYS = ("id", "text", "once_only", "after", "kind", "weight", "ending", "pays_off", "source", "parent", "excerpt", "carried_in")

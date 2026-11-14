@@ -187,5 +187,6 @@ class Ledger(_Record):
     thin: bool = False  # the synopsis carries too little for a novel: nothing was invented, see questions
     capacity: dict = {}  # the numbers behind the "thin" decision, for the report
     revision: int = 1  # bumped when the author's answers revised the ledger
+    no_event_needed: list[dict] = []  # synopsis sentences that are description or commentary and need no event: [{quote, reason}]
     last_run: dict = {}  # what the last ledger run changed: {"at", "kind", "revision", "applied", "added", "revised", "new_questions", "events"}
     audit: dict = {}  # what the synopsis audit found: {"revision": n, "findings": {type: count}}

@@ -194,3 +194,33 @@ def test_a_reversed_pair_is_repaired_and_an_unpaid_setup_becomes_a_question(proj
     assert any(q.question.startswith("Setup e5 ") for q in open_q)  # asked, not failed
     report = json.loads((p.book_dir / "validation" / "ledger.json").read_text())
     assert "auto_repaired" in report["summary"]["codes"] and "setup_without_payoff" in report["summary"]["codes"]
+
+
+def test_paraphrased_excerpts_are_repaired_without_a_correction_round(project_with_ledger):
+    p = prepared(project_with_ledger)
+    p.config.ledger.min_chapters = 4
+    sloppy = copy.deepcopy(GOOD)
+    sloppy["events"][2]["excerpt"] = "Mara breaks into the ferry ... and finds the data drive"  # joined fragments, not a quotation
+    sloppy["events"][3]["excerpt"] = "She finds a data drive that names Corso as a smuggler."  # another wording
+    summary, llm = run_ledger(p, [sloppy])
+    assert summary.ran == ["ledger"] and len(extraction_calls(llm)) == 1  # no correction round
+    led = store.load_ledger(p)
+    assert led.events[2].excerpt.startswith("She forces her way into the ferry")
+    report = json.loads((p.book_dir / "validation" / "ledger.json").read_text())
+    assert report["summary"]["hard"] == 0 and any(f["code"] == "auto_repaired" and "excerpt" in f["message"] for f in report["findings"])
+
+
+def test_a_sentence_listed_as_needing_no_event_is_kept_with_its_reason(project_with_ledger):
+    p = prepared(project_with_ledger)
+    p.config.ledger.min_chapters = 4
+    dropped = copy.deepcopy(GOOD)
+    dropped["events"] = [e for e in dropped["events"] if e["id"] != "e2"]  # the sentence about the derelict ferry loses its event
+    dropped["events"][1]["after"] = []
+    summary, llm = run_ledger(p, [dropped])
+    assert len(extraction_calls(llm)) >= 2  # refused: a sentence of the synopsis has no event
+    fixed = copy.deepcopy(dropped)
+    fixed["no_event_needed"] = [{"quote": "she finds a derelict ferry rusting in the harbor yard", "reason": "scene-setting"}]
+    p2 = prepared(__import__("conftest").Project.create(p.root.parent / "second", "x\n"))
+    p2.config.ledger.min_chapters = 4
+    summary2, llm2 = run_ledger(p2, [fixed])
+    assert summary2.ran == ["ledger"] and store.load_ledger(p2).no_event_needed[0]["reason"] == "scene-setting"

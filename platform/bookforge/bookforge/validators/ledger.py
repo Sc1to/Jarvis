@@ -12,8 +12,12 @@ MAX_DERIVED_SHARE = 0.4
 MAX_DERIVED_ACT_SHARE = 0.34  # derived complications in one act, as a share of its events
 
 
+_QUOTES = str.maketrans({"\u2019": "'", "\u2018": "'", "\u201c": '"', "\u201d": '"', "\u2010": "-", "\u2011": "-", "\u2013": "-", "\u2014": "-"})
+
+
 def _norm(text: str) -> str:
-    return " ".join(w.lower() for w in WORD.findall(text))
+    """Words in lower case with the typographic quotes and dashes a model or an editor swaps for plain ones made plain: a quotation is judged by its words."""
+    return " ".join(w.lower() for w in WORD.findall(text.translate(_QUOTES)))
 
 
 def paragraphs(synopsis: str) -> list[str]:
@@ -138,6 +142,31 @@ def _score(setup: dict, event: dict) -> float:
     return dice(need, _stems_wo_names(event.get("text", "")) | _stems_wo_names(event.get("excerpt", ""))) or 1e-9
 
 
+def repair_excerpts(raw_events: list, synopsis: str) -> list[str]:
+    """An excerpt that is not a verbatim quotation of the synopsis is replaced by the synopsis sentence it was meant to quote (the one sharing most of its
+    content words, at least half of them). Models paraphrase, join two fragments with an ellipsis or change a quotation mark; none of that changes which
+    sentence the event comes from, so it should not stop the stage. Events are changed in place; returns what was done."""
+    from .text import sentences
+    paras = paragraphs(synopsis)
+    norm_paras = [_norm(p) for p in paras]
+    pool = [(s_, set(content_stems(s_))) for p in paras for s_ in sentences(p)]
+    notes = []
+    for e in raw_events:
+        if not isinstance(e, dict) or str(e.get("source", "synopsis")) != "synopsis" or e.get("carried_in"):
+            continue
+        excerpt = str(e.get("excerpt") or "").strip()
+        if excerpt and any(_norm(excerpt) in p for p in norm_paras):
+            continue
+        stems = set(content_stems(excerpt or str(e.get("text", ""))))
+        if not stems or not pool:
+            continue
+        best, recall = max(((s_, len(stems & st) / len(stems)) for s_, st in pool), key=lambda t: t[1])
+        if recall >= 0.5:
+            e["excerpt"] = best
+            notes.append(f"{e.get('id')}: its excerpt was not a quotation of the synopsis; it now quotes the sentence it came from ({best[:70]}...)")
+    return notes
+
+
 def unpaid_setup_question(event: dict, candidates: list[dict] | None = None) -> dict:
     """A question about a setup nothing resolves: it quotes the setup's words, and offers a candidate when there is one. Only asked after the
     meaning search found no clear payoff."""
@@ -149,7 +178,7 @@ def unpaid_setup_question(event: dict, candidates: list[dict] | None = None) -> 
                 options=options[:4], type="unpaid_setup", quotes=[quote])
 
 
-def check_ledger(events: list[dict], synopsis: str = "", stage: str = "ledger") -> list[Finding]:
+def check_ledger(events: list[dict], synopsis: str = "", stage: str = "ledger", no_event_needed: list | tuple = ()) -> list[Finding]:
     """Structure of the ledger. `events` are plain dicts (as in ledger.yaml), in narrative order."""
     out: list[Finding] = []
     ids = [e["id"] for e in events]
@@ -246,7 +275,7 @@ def check_ledger(events: list[dict], synopsis: str = "", stage: str = "ledger") 
     out += causal_order(events, stage)
     # the words of the synopsis
     if synopsis.strip():
-        out += _synopsis_coverage(events, synopsis, stage)
+        out += _synopsis_coverage(events, synopsis, stage, no_event_needed)
     return out
 
 
@@ -300,6 +329,7 @@ def causal_order(events: list[dict], stage: str = "ledger") -> list[Finding]:
         if not parts:
             continue
         main, marker, rest = parts
+        hits = []
         for other in events:
             if other["id"] == e["id"] or other.get("kind") == "flashback" or e.get("kind") == "flashback":
                 continue
@@ -317,9 +347,15 @@ def causal_order(events: list[dict], stage: str = "ledger") -> list[Finding]:
             shared = a & b
             if not shared or len(shared) / min(len(a), len(b)) < 0.5:
                 continue
-            make = hard if len(shared) >= 2 else soft  # one shared word is a hint, two a match
-            out.append(make(stage, "causal_order", f"{what}: the cause or condition must come first (put it before, and list it in 'after')", [e["id"], other["id"]],
-                            [e["excerpt"][:140], other.get("text", "")[:120]]))
+            hits.append((len(shared) / min(len(a), len(b)), len(shared), other, what))
+        if not hits:
+            continue
+        hits.sort(key=lambda h: (-h[0], -h[1]))
+        top = hits[0]
+        clear = len(hits) == 1 or top[0] >= 1.25 * hits[1][0]  # several events fit the clause about as well: the match is a guess, never a verdict
+        make = hard if top[1] >= 2 and clear else soft
+        out.append(make(stage, "causal_order", f"{top[3]}: the cause or condition must come first (put it before, and list it in 'after')" + ("" if clear else f" ({len(hits)} earlier events fit the condition's words; check which one it is)"),
+                        [e["id"], top[2]["id"]], [e["excerpt"][:140], top[2].get("text", "")[:120]]))
     return out
 
 
@@ -344,7 +380,7 @@ def _cycles(by_id: dict, stage: str) -> list[Finding]:
     return found
 
 
-def _synopsis_coverage(events: list[dict], synopsis: str, stage: str) -> list[Finding]:
+def _synopsis_coverage(events: list[dict], synopsis: str, stage: str, no_event_needed: list | tuple = ()) -> list[Finding]:
     out: list[Finding] = []
     paras = paragraphs(synopsis)
     norm_paras = [_norm(p) for p in paras]
@@ -361,7 +397,7 @@ def _synopsis_coverage(events: list[dict], synopsis: str, stage: str) -> list[Fi
             out.append(hard(stage, "excerpt_not_in_synopsis", f"{e['id']}: its excerpt is not a verbatim quotation of the synopsis. Quote exact words", [e["id"]], [e["excerpt"][:100]]))
         for i in hits:
             covered[i] = True
-    out += _sentence_coverage(events, paras, stage)
+    out += _sentence_coverage(events, paras, stage, no_event_needed)
     for i, ok in enumerate(covered):
         if not ok:
             last = " (the final paragraph: the resolution)" if i == len(paras) - 1 else ""
@@ -375,26 +411,27 @@ SENTENCE_RECALL = 0.5  # share of a sentence's content words the events quoting 
 MIN_SENTENCE_WORDS = 6  # shorter sentences are a heading, a transition or an aside
 
 
-def _sentence_coverage(events: list[dict], paras: list[str], stage: str) -> list[Finding]:
+def _sentence_coverage(events: list[dict], paras: list[str], stage: str, no_event_needed: list | tuple = ()) -> list[Finding]:
     """Every sentence that carries plot is quoted by an event. A paragraph with one event would hide a dropped sentence; this does not.
     Pure description is accepted per finding (validation/accepted.json) rather than guessed at."""
     from .text import sentences
     quotes = [(_norm(e["excerpt"]), set(content_stems(e["excerpt"]))) for e in events if e.get("source", "synopsis") == "synopsis" and (e.get("excerpt") or "").strip()]
     out = []
+    waived = [_norm(str(q.get("quote", "") if isinstance(q, dict) else q)) for q in no_event_needed]  # description and commentary the author or the model said needs no event
     for para in paras:
         pn = _norm(para)
         for sent in sentences(para):
             if len(WORD.findall(sent)) < MIN_SENTENCE_WORDS:
                 continue
             sn, stems = _norm(sent), set(content_stems(sent))
-            if not stems:
+            if not stems or any(w and (w in sn or sn in w) for w in waived):
                 continue
             got: set = set()
             for en, es in quotes:
                 if en in sn or sn in en or (en in pn and len(es & stems) >= 3):
                     got |= es & stems
             if len(got) / len(stems) < SENTENCE_RECALL:
-                out.append(hard(stage, "sentence_not_covered", f"this sentence of the synopsis is quoted by no event: \"{sent[:140]}\". Add an event that quotes it, or widen the excerpt of the event that tells it", [sent[:60]], [sent[:140]]))
+                out.append(hard(stage, "sentence_not_covered", f"this sentence of the synopsis is quoted by no event: \"{sent[:140]}\". Add an event that quotes it, or widen the excerpt of the event that tells it. If it is only description or commentary that changes nothing in the story, list it under `no_event_needed` with its exact words and a reason instead", [sent[:60]], [sent[:140]]))
     return out
 
 
