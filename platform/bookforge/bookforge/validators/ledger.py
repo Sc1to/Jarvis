@@ -26,6 +26,39 @@ def paragraphs(synopsis: str) -> list[str]:
     return out
 
 
+def resolve_references(raw_events: list) -> int:
+    """A model sometimes writes an event's text where an id belongs (pays_off, after, parent). Replace such a value with the id of the
+    event whose text or excerpt it matches exactly (ignoring case and punctuation), when exactly one does. Returns how many were fixed.
+    The raw events are changed in place; anything that still does not resolve is left for the validator to report."""
+    ids = {str(e.get("id")) for e in raw_events if isinstance(e, dict) and e.get("id")}
+    by_text: dict[str, set] = defaultdict(set)
+    for e in raw_events:
+        if isinstance(e, dict) and e.get("id"):
+            for key in ("text", "excerpt"):
+                if e.get(key):
+                    by_text[_norm(str(e[key]))].add(str(e["id"]))
+
+    def fix(value):
+        if not isinstance(value, str) or not value or value in ids:
+            return value
+        hit = by_text.get(_norm(value), set())
+        return next(iter(hit)) if len(hit) == 1 else value
+
+    fixed = 0
+    for e in raw_events:
+        if not isinstance(e, dict):
+            continue
+        for field in ("pays_off", "parent"):
+            new = fix(e.get(field))
+            if new != e.get(field):
+                e[field], fixed = new, fixed + 1
+        if isinstance(e.get("after"), list):
+            new_after = [fix(a) for a in e["after"]]
+            fixed += sum(a != b for a, b in zip(new_after, e["after"]))
+            e["after"] = new_after
+    return fixed
+
+
 def check_ledger(events: list[dict], synopsis: str = "", stage: str = "ledger") -> list[Finding]:
     """Structure of the ledger. `events` are plain dicts (as in ledger.yaml), in narrative order."""
     out: list[Finding] = []
@@ -57,7 +90,8 @@ def check_ledger(events: list[dict], synopsis: str = "", stage: str = "ledger") 
             out.append(hard(stage, "payoff_without_setup", f"{e['id']} is a {e['kind']} but names no setup (pays_off)", [e["id"]]))
         if target:
             if target not in by_id:
-                out.append(hard(stage, "unknown_event", f"{e['id']}.pays_off names {target}, which is not an event", [e["id"], target]))
+                out.append(hard(stage, "unknown_event", f"{e['id']}.pays_off names '{target[:60]}', which is not an event id. pays_off takes the ID of the setup event it resolves (for example e5), never its text. "
+                                f"Known ids: {', '.join(ids[:40])}", [e["id"]]))
                 continue
             if by_id[target].get("kind") != "setup":
                 out.append(hard(stage, "payoff_target_not_setup", f"{e['id']} pays off {target}, which is not a setup", [e["id"], target]))
@@ -70,7 +104,7 @@ def check_ledger(events: list[dict], synopsis: str = "", stage: str = "ledger") 
                                 [e["id"], target], [by_id[target]["text"][:100], e["text"][:100]]))
     for e in events:
         if e.get("kind") == "setup" and not payoffs.get(e["id"]):
-            out.append(hard(stage, "setup_without_payoff", f"setup {e['id']} is never paid off: add the payoff event or drop the setup", [e["id"]], [e["text"][:120]]))
+            out.append(hard(stage, "setup_without_payoff", f"setup {e['id']} is never paid off. Either set `pays_off: {e['id']}` on the event that resolves it, or, if nothing in the synopsis pays it off, change {e['id']} to kind: event (a setup is only something planted for a later payoff)", [e["id"]], [e["text"][:120]]))
 
     # the resolution
     if not any(e.get("ending") for e in events):

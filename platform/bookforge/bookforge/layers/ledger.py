@@ -59,6 +59,7 @@ def parse_ledger(text: str, synopsis: str, project, prior: Ledger | None = None)
     problems: list[str] = []
     if not isinstance(data, dict) or not isinstance(data.get("events"), list):
         return None, ["the top level must be a mapping with an 'events:' list"], []
+    ledger_checks.resolve_references(data["events"])  # an event's text written where its id belongs is mapped back to the id
     events: list[StoryEvent] = []
     for i, raw in enumerate(data["events"]):
         try:

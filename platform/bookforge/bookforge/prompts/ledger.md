@@ -24,6 +24,7 @@ List every event of the synopsis, in the order it happens, as numbered events e1
 - Every paragraph of the synopsis must yield at least one event, including the last one (the resolution).
 - `excerpt`: the exact words of the synopsis this event comes from, copied character for character (a phrase or sentence, no more than 30 words).
 - `once_only: true` for an event that can happen only once (a discovery, a death, a departure, a decision). `false` only for something that genuinely recurs.
+- `after` and `pays_off` hold event IDS (e1, e5), never the text of an event.
 - `after`: ids of the events that must already have happened (cause and effect). The list order is the order of telling; an event never comes before one in its `after` list unless it is a flashback.
 - `weight`: how much story the event carries: 1 minor, 2 ordinary, 3 major (a turning point, a reveal, a climax). The number of chapters will follow from the total.
 - `kind`: event, setup (a secret, promise, clue or threat planted for later), reveal or payoff (it resolves a setup: put the setup's id in `pays_off`), or flashback (told out of story order). A setup is something deliberately planted that the story later pays off (a secret, a promise, a clue, a threat): an ordinary event is not a setup. Every setup needs a payoff that resolves exactly what was planted, and a payoff or reveal never comes before its setup. Do not link events that are merely related.
@@ -49,7 +50,7 @@ events:
     weight: 2
     pov: ""
     ending: false
-    pays_off: ""
+    pays_off: ""      # the ID of the setup this event resolves, like e5 (never the setup's text); empty for most events
     source: synopsis
 questions: []
 ```
