@@ -335,7 +335,7 @@ def test_a_run_that_reaches_a_checkpoint_sends_a_notification(book, sent):
     finish(data(client.post(f"{B}/run", json={"until": "prose"}), 202))
     [call] = sent
     p = json.loads(call["data"])
-    assert p["title"] == "Bookforge: waiting for you" and "voice" in p["body"] and p["url"] == "/bookforge/#/series/series/b1"
+    assert p["title"] == "Bookforge: waiting for you" and "voice" in p["body"] and p["url"] == "/bookforge/#/series/series/b1/inbox"
 
 
 def test_a_failed_job_sends_a_notification(sent, monkeypatch):

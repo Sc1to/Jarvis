@@ -4,6 +4,7 @@ import { useAction, useApi } from '../lib/hooks'
 import { href } from '../lib/route'
 import type { BookStatus, ChangeRequest, Need, Stance, StaleReport } from '../lib/types'
 import { Button, Card, Empty, ErrorBanner, Loading, Markdown } from '../components/ui'
+import InboxItems from './InboxItems'
 
 export function ChangeDiff({ cr, series, book, onDone, locked }: { cr: ChangeRequest; series: string; book: string; onDone: () => void; locked: boolean }) {
   const act = useAction()
@@ -109,6 +110,7 @@ export default function Inbox({ series, book, status, reload }: { series: string
 
   return (
     <div className="space-y-3">
+      <InboxItems series={series} book={book} status={status} reload={reload} />
       <Card title={`Decisions about the world (${waiting.length} waiting)`}>
         <p className="mb-2 text-xs text-slate-600">Rules, assumptions and deliberate changes the model proposes. Nothing here reaches the writer until you approve it.</p>
         {needs.error && <ErrorBanner message={needs.error} />}

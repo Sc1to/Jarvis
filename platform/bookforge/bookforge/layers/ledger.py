@@ -202,8 +202,7 @@ def report_text(ledger: Ledger, findings: list[Finding]) -> str:
     return "\n".join(lines)
 
 
-def answer_question(project, question_id: str, answer: str) -> Ledger:
-    """Record the author's answer to a ledger question. The next run revises the ledger from it."""
+def _question(project, question_id: str):
     from ..errors import BookforgeError
     ledger = store.load_ledger(project)
     if ledger is None:
@@ -211,11 +210,49 @@ def answer_question(project, question_id: str, answer: str) -> Ledger:
     q = next((x for x in ledger.questions if x.id == question_id), None)
     if q is None:
         raise BookforgeError(f"no question {question_id} (have: {', '.join(x.id for x in ledger.questions) or 'none'})")
+    return ledger, q
+
+
+def answer_question(project, question_id: str, answer: str) -> Ledger:
+    """Record the author's answer to a ledger question (or change an answer the next run has not applied yet). The next run works it in.
+    The one function behind `ledger-answer`, the Inbox and the workbench: nothing else writes an answer."""
+    from ..errors import BookforgeError
+    ledger, q = _question(project, question_id)
     if not answer.strip():
         raise BookforgeError("the answer is empty")
-    q.answer, q.status, q.applied = answer.strip(), "answered", False
+    if q.applied:
+        raise BookforgeError(f"{question_id} was already worked into the ledger by a run; it can no longer be changed here (edit ledger.yaml, or answer a new question)")
+    q.answer, q.status, q.applied, q.dismiss_reason = answer.strip(), "answered", False, ""
     store.save_ledger(project, ledger)
     return ledger
+
+
+def dismiss_question(project, question_id: str, reason: str = "") -> Ledger:
+    """Dismiss a question: a false alarm, or one not worth an answer. The reason (optional) is kept and the dismissal counts toward its type's rate."""
+    from ..errors import BookforgeError
+    ledger, q = _question(project, question_id)
+    if q.applied:
+        raise BookforgeError(f"{question_id} was already worked into the ledger by a run; it can no longer be dismissed")
+    q.status, q.answer, q.dismiss_reason = "dismissed", "", " ".join(reason.split())[:300]
+    store.save_ledger(project, ledger)
+    return ledger
+
+
+def diff_events(before: list[StoryEvent], after: list[StoryEvent]) -> tuple[list[dict], list[dict]]:
+    """(events that are new, events whose text changed) between two versions of the ledger."""
+    old = {e.id: e for e in before}
+    added = [{"id": e.id, "text": e.text, "source": e.source} for e in after if e.id not in old]
+    revised = [{"id": e.id, "before": old[e.id].text, "after": e.text} for e in after if e.id in old and old[e.id].text != e.text]
+    return added, revised
+
+
+def _last_run(kind: str, before: Ledger | None, after: Ledger, applied: list[str]) -> dict:
+    """What this run changed, for the Inbox: the answers it applied, the events it added or revised, the questions it raised."""
+    from datetime import datetime, timezone
+    added, revised = diff_events(before.events if before else [], after.events)
+    known = {q.id for q in before.questions} if before else set()
+    return {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "kind": kind, "revision": after.revision, "applied": applied, "added": added, "revised": revised,
+            "new_questions": [q.id for q in after.questions if q.id not in known], "events": len(after.events)}
 
 
 def ledger(ctx: StepContext) -> StepResult:
@@ -238,21 +275,26 @@ def ledger(ctx: StepContext) -> StepResult:
         questions = prior + new_q
         blockers = audit_mod.blocking(questions)
         if blockers:
-            led = Ledger(events=[], questions=questions, audit={**summary, "revision": 1 + int((existing.audit if existing else {}).get("revision", 0))})
+            questions = [q.model_copy(update={"applied": True}) if q.status == "answered" else q for q in questions]  # their notes went into this audit
+            led = Ledger(events=[], questions=questions, last_run=_last_run("audit", existing, Ledger(events=[], questions=questions), [q.id for q in prior if q.status == "answered" and not q.applied]), audit={**summary, "revision": 1 + int((existing.audit if existing else {}).get("revision", 0))})
             store.save_ledger(project, led)
             files = [rel, findings_store.save(project, "ledger", [soft_finding("synopsis_audit", f"{q.id} ({q.type}): {q.question}") for q in blockers])]
             return StepResult(files=files, outcome="partial", checkpoint="ledger",
-                              note=f"the synopsis audit found {len(blockers)} problem(s) in the synopsis itself: answer them with `ledger-answer`, then run again "
+                              note=f"the synopsis audit found {len(blockers)} problem(s) in the synopsis itself: answer them in the Inbox (or with `ledger-answer`), then run again "
                                    f"(or approve the ledger checkpoint to go on as it is): " + "; ".join(f"{q.id} {q.type}" for q in blockers))
+        applied_now = [q.id for q in questions if q.status == "answered" and not q.applied]
         answered = [q.model_copy(update={"applied": True}) if q.status == "answered" else q for q in questions]
         led, findings = generate(ctx, synopsis, audit_mod.notes_text(answered))
         base = audit_mod.next_question_id(answered)
         renumbered = [q.model_copy(update={"id": f"q{base + i}", "type": q.type or "thin"}) for i, q in enumerate(led.questions)]  # the extraction's own questions continue the numbering
         led.questions = answered + renumbered
         led.audit = {**summary, "revision": 1 + int((existing.audit if existing else {}).get("revision", 0))}
+        led.last_run = _last_run("extract", existing, led, applied_now)
         note = "extracted from the synopsis"
     elif any(q.status == "answered" and not q.applied for q in existing.questions):
+        applied_now = [q.id for q in existing.questions if q.status == "answered" and not q.applied]
         led, findings = revise(ctx, synopsis, existing)
+        led.last_run = _last_run("revise", existing, led, applied_now)
         note = f"revised from your answers (revision {led.revision})"
     else:
         led = existing

@@ -3,6 +3,7 @@ import { api, bookPath, post } from '../lib/api'
 import { useAction, useApi } from '../lib/hooks'
 import type { BookStatus, JobActivity, SceneRow } from '../lib/types'
 import { href } from '../lib/route'
+import { CHECKPOINT_STAGES } from './InboxItems'
 import { Button, Card, Dot, ErrorBanner, StatusBadge, fmtTime } from '../components/ui'
 import RedoPanel from '../components/RedoPanel'
 
@@ -144,8 +145,15 @@ export default function Overview({ series, book, status, reload }: { series: str
             {cp === 'voice' && <a href={href({ series, book, tab: 'tree' })} className="inline-flex min-h-10 items-center rounded-md border border-slate-300 bg-white px-3 text-sm underline">Chapter 1 scenes (Progress)</a>}
             {cp === 'final' && <a href={href({ series, book, tab: 'read' })} className="inline-flex min-h-10 items-center rounded-md border border-slate-300 bg-white px-3 text-sm underline">The manuscript (Read)</a>}
           </div>
-          <Button kind="primary" disabled={act.busy || busy}
-            onClick={() => window.confirm(`Approve the ${cp} checkpoint?`) && go(() => post(`${base}/approve/${cp}`))}>Approve {cp}</Button>
+          {(() => {
+            const openHere = (CHECKPOINT_STAGES[cp] ?? []).reduce((n, st) => n + (status.inbox?.by_stage?.[st] ?? 0), 0)
+            return openHere > 0 ? (
+              <a href={href({ series, book, tab: 'inbox' })} className="inline-flex min-h-11 items-center rounded-md bg-slate-900 px-4 text-sm font-medium text-white">Open the Inbox ({openHere} open)</a>
+            ) : (
+              <Button kind="primary" disabled={act.busy || busy}
+                onClick={() => window.confirm(`Approve the ${cp} checkpoint?`) && go(() => post(`${base}/approve/${cp}`))}>Approve {cp}</Button>
+            )
+          })()}
         </Card>
       ))}
 
