@@ -87,6 +87,7 @@ events:
   parent: ''
   id: e7
   text: Mara signs the deal but secretly keeps a copy
+  decision: true
   excerpt: Mara signs the deal but secretly keeps a copy of the drive
   weight: 3
 - once_only: true
@@ -107,7 +108,7 @@ events:
   - e8
   kind: payoff
   pov: ''
-  ending: true
+  ending: false
   pays_off: e7
   source: synopsis
   parent: ''

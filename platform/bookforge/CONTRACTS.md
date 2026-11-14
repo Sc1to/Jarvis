@@ -40,3 +40,9 @@ Each book has its own bible (`books/<book>/bible/`); a track may carry `starts_a
 
 ## Cast editor (`cast.py`)
 Input: entity id, kind (character/place/object/group/concept), name, facts (at least one). Invariants: a change that would add a validation problem is refused and nothing is written; delete is refused while any chapter, scene, ledger event, track or character rule refers to the entity; rename is all-or-nothing across those files and refused on a shared bible.
+
+## Judging the input (2026-11-14)
+- **ledger stage:** first the synopsis audit (`layers/audit.py`): findings with verbatim quotes become author questions (`type`, `quotes`); hard kinds (`contradiction`, `unestablished_object`, `cast_conflict`) stop at the ledger checkpoint with no events until answered or approved; answers travel as notes into the audit and extraction prompts (`{notes}`). Extraction then requires: one `ending`, at most one `decision`, varied weights, every plot sentence quoted, causes and conditions first.
+- **acts:** `sizing_reason` agrees with the real weight and `chapter_count` (or starts `override:`); the counts add up to within `ledger.count_tolerance` of the ledger estimate; the last act turns on the decision or the resolution. `chapter_count` is an estimate: the chapters stage decides the real number from the events and writes it back.
+- **chapters:** summary and end_state claim only their own and earlier events' changes (`end_state_overreach`); the POV character is in the text and its main person; names resolve to the cast.
+

@@ -110,6 +110,8 @@ class RuleLLM:
         for marker, reply in self.rules:
             if marker in first:
                 return reply(messages) if callable(reply) else reply
+        if "Read this synopsis as a careful editor" in first:  # the synopsis audit: nothing to report unless a test scripts something else
+            return '{"findings": []}'
         if "Audit the facts below" in first:  # the claim audit: clean unless a test scripts something else
             return '{"unsupported": []}'
         if "A reader flagged a possible contradiction" in first:  # the second check: confirms the flag unless a test scripts otherwise

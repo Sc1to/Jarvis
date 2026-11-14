@@ -193,7 +193,8 @@ def parse_acts(text: str, project: Project, ledger=None) -> tuple[list[Act] | No
         problems.append(f"the chapter_count values add up to {total}; they must add up to between {clo} and {chi}")
     if ledger is not None and acts and len(acts) == len(raw):
         from ..validators import HARD, ledger as ledger_checks
-        findings = ledger_checks.check_acts([a.model_dump() for a in acts], [e.model_dump() for e in ledger.events], weight_per_chapter=project.config.ledger.weight_per_chapter)
+        findings = ledger_checks.check_acts([a.model_dump() for a in acts], [e.model_dump() for e in ledger.events], weight_per_chapter=project.config.ledger.weight_per_chapter,
+                                             capacity_estimate=(ledger.capacity or {}).get("estimated_chapters"), tolerance=project.config.ledger.count_tolerance)
         problems += accepted.hard_lines(project, findings, "acts")
     return (None, problems) if problems else (acts, [])
 
@@ -403,7 +404,7 @@ def parse_chapters(
                            allowed_from=allowed, prefix="tracks", problems=problems)
     derived: list = []
     if ledger is not None:
-        derived = _ledger_chapter_checks(project, data, chapters, act, ledger, chapters_before or [], acts or [], problems, ctx)
+        derived = _ledger_chapter_checks(project, data, chapters, act, ledger, chapters_before or [], acts or [], problems, ctx, constants)
     if raw and not any(t.plan for t in tracks):
         # Without tracks the story's changes (injuries, who knows what, where people are) are neither planned nor checked later.
         problems.append(f"{act.id} defines no state tracks: add a 'tracks:' list with at least one track created or extended in these chapters "
@@ -443,7 +444,7 @@ def normalize_derived(raw, per_parent: dict[str, int]) -> dict:
     return raw
 
 
-def _ledger_chapter_checks(project, data, chapters: list[Chapter], act: Act, ledger, before: list[Chapter], acts: list[Act], problems: list[str], ctx=None) -> list:
+def _ledger_chapter_checks(project, data, chapters: list[Chapter], act: Act, ledger, before: list[Chapter], acts: list[Act], problems: list[str], ctx=None, constants=None) -> list:
     """Ledger rules for the chapters of one act: derived complications, events told once, in order, each chapter with something new."""
     from ..validators import HARD, hard, ledger as ledger_checks, repeats
     from .models import StoryEvent
@@ -478,6 +479,11 @@ def _ledger_chapter_checks(project, data, chapters: list[Chapter], act: Act, led
     findings += [f for f in repeats.repeated_events(before_plain + now, [], names=set(), ledger_events=plain)
                  if f.severity == HARD and set(f.items) & {c["id"] for c in now}]
     findings += [f for f in ledger_checks.check_chapter_texts(before_plain + now, plain) if f.severity == HARD and f.items and f.items[0] in {c['id'] for c in now}]
+    from ..validators import names as name_checks, state_claims
+    if constants is not None:
+        findings += name_checks.pov_findings(now, constants, "chapters") + name_checks.unknown_names(now, constants, "chapters")
+    findings += [f for f in state_claims.end_state_overreach(before_plain + now, plain) if f.items and f.items[0] in {c['id'] for c in now}]
+    findings += [f for f in state_claims.state_change_repeated(before_plain + now, plain) if set(f.items[:2]) & {c['id'] for c in now}]
     limit = max(1, round(ledger_checks.MAX_DERIVED_ACT_SHARE * len(act.events)))
     if len(derived) > limit:
         findings.append(hard("chapters", "too_many_derived", f"{len(derived)} derived complications in {act.id}, which has {len(act.events)} events: at most {limit}. "

@@ -238,7 +238,8 @@ def _ledger_acts(ctx: StepContext, ledger) -> StepResult:
         layer="acts", prompt="acts_ledger", out_path="books/{book}/acts.yaml",
         validate=lambda text: parse_acts(text, project, ledger)[1], max_tokens=3500, strip_preamble=False,
         slots=lambda c: {**stars, "ledger_events": events_text(ledger.events), "constraints": _forced_counts(project), "carried": carried_for_prompt(project),
-                         "weight_per_chapter": f"{project.config.ledger.weight_per_chapter:g}"},
+                         "weight_per_chapter": f"{project.config.ledger.weight_per_chapter:g}",
+                         "capacity_estimate": f"{(ledger.capacity or {}).get('estimated_chapters', '?')}", "tolerance": f"{project.config.ledger.count_tolerance:.0%}"},
         normalize=normalize, research_scope="book",
         review=_reviewer(ctx, "acts", "acts of the book", stars["synopsis"], "none yet", stars, events_text(ledger.events)) if project.config.qc.review_structure else None,
         research_focus="Rarely needed: only real-world facts that the large-scale structure of the story depends on.",
@@ -246,7 +247,7 @@ def _ledger_acts(ctx: StepContext, ledger) -> StepResult:
     result = generate_document(ctx, spec)
     act_list = store.load_acts(project)
     from ..validators import accepted
-    findings = accepted.apply(project, ledger_checks.check_acts([a.model_dump() for a in act_list], plain_events, weight_per_chapter=project.config.ledger.weight_per_chapter), "acts")
+    findings = accepted.apply(project, ledger_checks.check_acts([a.model_dump() for a in act_list], plain_events, weight_per_chapter=project.config.ledger.weight_per_chapter, capacity_estimate=(ledger.capacity or {}).get("estimated_chapters"), tolerance=project.config.ledger.count_tolerance), "acts")
     hard_left = [f.line() for f in findings if f.severity == "hard"]
     if hard_left:  # an adopted (hand-edited) file passes through the same checks
         raise LayerError("acts.yaml does not fit the ledger: " + "; ".join(hard_left[:6]))
@@ -316,6 +317,27 @@ def chapters(ctx: StepContext) -> StepResult:
     return StepResult(files=files, note=note)
 
 
+def _child_events_note(act: Act, ledger) -> str:
+    """When the act's estimate asks for more chapters than its events supply, the planner is told how many local complications (child events) to propose."""
+    from ..validators import ledger as ledger_checks
+    plain = [e.model_dump() for e in ledger.events]
+    _, n_events, majors, derived = ledger_checks.act_capacity(act.model_dump(), plain)
+    direct = n_events + majors
+    if act.chapter_count <= direct:
+        return "none needed: the act's own events fill its chapters."
+    return (f"The act's {n_events} events supply about {direct} chapters and the estimate is {act.chapter_count}. Propose up to {derived} child events in `derived_events` for the chapters "
+            "that would otherwise have too little to tell: a local obstacle, setback or reversal that grows out of what the story already has (a consequence of its parent event, "
+            "never a new character, a new goal or a new turning point). Use them only where a chapter truly needs one.")
+
+
+def _resized(act: Act, count: int) -> Act:
+    """The act with the chapter count its events made. When that is not the estimate, the sizing reason says so, so the file never contradicts itself."""
+    reason = act.sizing_reason
+    if abs(count - act.chapter_count) > 1 and not reason.lower().lstrip().startswith("override:"):
+        reason = f"override: the chapter planner needed {count} chapters for this act's events (the estimate was {act.chapter_count}). {reason}".strip()
+    return act.model_copy(update={"chapter_count": count, "sizing_reason": reason})
+
+
 def _build_chapters(ctx: StepContext, files: list[str]) -> str:
     project = ctx.project
     if ctx.llm is None:
@@ -368,7 +390,7 @@ def _build_chapters(ctx: StepContext, files: list[str]) -> str:
                     project, "chapters_ledger", act=act_for_chapters(act), acts_overview=acts_overview_for_chapters(act_list, act),
                     ledger_status=status_text(ledger, set(act.events), before), story_so_far=chapters_end_digest(before), carried=carried_for_prompt(project),
                     cast=cast_digest(constants), tracks_so_far=tracks_digest(tracks), research_notes=notes_text(project, act_text),
-                    chapter_count=str(act.chapter_count), max_chapters=str(limit), first_chapter=_ch(project, first), last_chapter=_ch(project, last), **stars),
+                    chapter_count=str(act.chapter_count), max_chapters=str(limit), child_events=_child_events_note(act, ledger), first_chapter=_ch(project, first), last_chapter=_ch(project, last), **stars),
                 lambda text, act=act, first=first, before=before, ledger=ledger, limit=limit: parse_chapters(
                     text, project=project, act=act, first_number=first, constants=constants, tracks_so_far=tracks,
                     fact_ids=_fact_ids(project), ledger=ledger, chapters_before=before, acts=act_list, ctx=ctx, max_chapters=limit),
@@ -382,7 +404,7 @@ def _build_chapters(ctx: StepContext, files: list[str]) -> str:
         if ledger is not None:  # the act is as long as its events made it, not as the estimate or the ceiling said
             if len(bundle.chapters) != act.chapter_count:
                 log.info("chapters: %s took %d chapters (estimated %d)", act.id, len(bundle.chapters), act.chapter_count)
-                act_list = [a.model_copy(update={"chapter_count": len(bundle.chapters)}) if a.id == act.id else a for a in act_list]
+                act_list = [_resized(a, len(bundle.chapters)) if a.id == act.id else a for a in act_list]
             last = first + len(bundle.chapters) - 1
         if bundle.new_entities:  # places the planner needed that the cast did not list: they join the cast
             adopted += [e.id for e in bundle.new_entities if e.id not in {x.id for x in constants.entities}]
@@ -427,12 +449,13 @@ def _redo_pieces(project, layer: str, hard_findings, pieces_of_item, all_pieces:
 
 def _book_chapter_checks(project, chapters: list[Chapter], ledger, ctx=None) -> str:
     """Whole-book checks once every act is planned: events and flat stretches. Hard findings stop the layer (the pieces are kept)."""
-    from ..validators import HARD, accepted, ledger as ledger_checks, repeats, store as findings_store, tension
+    from ..validators import HARD, accepted, ledger as ledger_checks, repeats, state_claims, store as findings_store, tension
     ch = [c.model_dump() for c in chapters]
     ev = [e.model_dump() for e in ledger.events]
     acts_plain = [a.model_dump() for a in store.load_acts(project)]
     findings = (ledger_checks.check_chapters(ch, ev, acts_plain) + ledger_checks.check_chapter_texts(ch, ev) + repeats.repeated_events(ch, [], ledger_events=ev)
                 + tension.flat_stretches(ch) + ledger_checks.heavy_chapters(ch, ev, project.config.ledger.weight_per_chapter)
+                + state_claims.end_state_overreach(ch, ev) + state_claims.state_change_repeated(ch, ev) + ledger_checks.thin_chapters(ch, ev)
                 + [f for f in ledger_checks.check_ledger(ev) if f.severity == "soft"])
     from ..qc.repeat_confirm import confirm_repeats
     findings = accepted.apply(project, confirm_repeats(ctx, findings), "chapters")
@@ -469,7 +492,7 @@ def story_so_far_planning(project, chapters_before: list[Chapter], scenes_before
 
 def _book_scene_checks(project, chapters: list[Chapter], scenes_all: list, timeline: list, tracks: list[Track], constants, ledger, ctx=None) -> str:
     """Whole-book checks on the planned scenes. Hard findings stop the layer (the pieces are kept for a rerun)."""
-    from ..validators import HARD, accepted, ledger as ledger_checks, repeats, research_leak, state as state_checks, store as findings_store
+    from ..validators import HARD, accepted, ledger as ledger_checks, names as name_checks, repeats, research_leak, state as state_checks, store as findings_store
     ch = [c.model_dump() for c in chapters]
     sc = [s.model_dump() for s in scenes_all]
     tl = [t.model_dump() for t in timeline]
@@ -481,7 +504,8 @@ def _book_scene_checks(project, chapters: list[Chapter], scenes_all: list, timel
     tracks_plain = [to_plain(t) for t in tracks]
     findings = (ledger_checks.check_scenes_vs_chapters(sc, ch, ev) + ledger_checks.check_scene_texts(sc, ch, ev) + repeats.repeated_events(ch, sc, names, ev, stage="scenes")
                 + repeats.action_patterns(sc, ch, names) + research_leak.research_in_beats(sc, claims, story_texts)
-                + state_checks.track_regressions(tracks_plain) + state_checks.location_conflicts(sc, tl, tracks_plain) + state_checks.day_regressions(sc, tl))
+                + state_checks.track_regressions(tracks_plain) + state_checks.location_conflicts(sc, tl, tracks_plain) + state_checks.day_regressions(sc, tl)
+                + name_checks.pov_findings(sc, constants, "scenes", ("purpose",)) + name_checks.unknown_names(sc, constants, "scenes", ("purpose",)))
     from ..qc.repeat_confirm import confirm_repeats
     findings = accepted.apply(project, confirm_repeats(ctx, findings), "scenes")
     rel = findings_store.save(project, "scenes", findings)

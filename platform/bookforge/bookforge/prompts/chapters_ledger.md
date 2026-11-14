@@ -46,6 +46,8 @@ Plan the chapters this act's events need, {first_chapter} onward, covering this 
 
 The number of chapters follows from the events, not the other way round. One chapter per event; a weight 3 event (a climax, a confrontation) may take a second chapter that continues it; a minor complication derived from an event may be added to the odd chapter that has too little to tell. The acts stage estimated {chapter_count} chapters: that is a guess, not an order. Write as few or as many as the events need, never more than {max_chapters} ({first_chapter} to {last_chapter}). Every chapter needs an event of its own: when the act's events are all told, STOP. Never fill chapters by retelling an event or borrowing one from another act.
 
+Child events: {child_events}
+
 Each chapter has:
 - a title and a purpose: what the chapter changes, for the plot or for a character;
 - `events_covered`: the ledger event ids it tells. Use only events from "ASSIGNED HERE" (or minor complications you derive below). A `once_only` event is told in exactly ONE chapter: never retell an event listed as DONE, and never touch one RESERVED FOR LATER. Together the chapters cover every event assigned here, in ledger order;

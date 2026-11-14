@@ -89,10 +89,64 @@ def repair_setups(raw_events: list) -> list[str]:
     return notes
 
 
-def unpaid_setup_question(event: dict) -> dict:
-    return dict(question=f"Setup {event['id']} is planted but never paid off: {event['text'][:140]}",
-                why="Something planted for later should be resolved before the book ends, but nothing in the synopsis resolves it.",
-                options=[f"Add a payoff: describe the event that resolves {event['id']}", f"It is only atmosphere: change {event['id']} to a plain event"])
+PAYOFF_MIN_SHARED = 3  # content words a later event must share with the setup to be taken for its payoff
+PAYOFF_MIN_DICE = 0.25
+
+
+def payoff_candidates(setup: dict, events: list[dict]) -> list[dict]:
+    """Later events that resolve the setup by meaning: they share its content words (names left out), best first. An event that already pays
+    off another setup, or is itself a setup, is not a candidate."""
+    need = _stems_wo_names(setup.get("excerpt") or setup.get("text", "")) | _stems_wo_names(setup.get("text", ""))
+    index = {e["id"]: n for n, e in enumerate(events)}
+    scored = []
+    for e in events[index[setup["id"]] + 1:]:
+        if e.get("pays_off") or e.get("kind") == "setup":
+            continue
+        have = _stems_wo_names(e.get("text", "")) | _stems_wo_names(e.get("excerpt", ""))
+        shared = need & have
+        d = dice(need, have)
+        if len(shared) >= PAYOFF_MIN_SHARED and d >= PAYOFF_MIN_DICE:
+            scored.append((d, e))
+    scored.sort(key=lambda x: -x[0])
+    return [e for _, e in scored]
+
+
+def link_payoffs_by_meaning(events: list[dict]) -> tuple[list[str], dict[str, list[dict]]]:
+    """Setups nothing names as paid off, but a later event clearly resolves: link them instead of asking the author (events changed in place).
+    Returns (notes on what was linked, the setups still unresolved with their candidates). One clearly best candidate links; several close
+    ones are left for the author, who is shown them."""
+    paid = {e.get("pays_off") for e in events if e.get("pays_off")}
+    notes, open_ = [], {}
+    for e in events:
+        if e.get("kind") != "setup" or e["id"] in paid:
+            continue
+        cands = payoff_candidates(e, events)
+        if cands and (len(cands) == 1 or _score(e, cands[0]) >= 1.5 * _score(e, cands[1])):
+            target = cands[0]
+            target["pays_off"] = e["id"]
+            if target.get("kind", "event") == "event":
+                target["kind"] = "payoff"
+            paid.add(e["id"])
+            notes.append(f"{target['id']} resolves the setup {e['id']} by meaning, so it was linked as its payoff ({target['text'][:70]})")
+        else:
+            open_[e["id"]] = cands[:3]
+    return notes, open_
+
+
+def _score(setup: dict, event: dict) -> float:
+    need = _stems_wo_names(setup.get("excerpt") or setup.get("text", "")) | _stems_wo_names(setup.get("text", ""))
+    return dice(need, _stems_wo_names(event.get("text", "")) | _stems_wo_names(event.get("excerpt", ""))) or 1e-9
+
+
+def unpaid_setup_question(event: dict, candidates: list[dict] | None = None) -> dict:
+    """A question about a setup nothing resolves: it quotes the setup's words, and offers a candidate when there is one. Only asked after the
+    meaning search found no clear payoff."""
+    quote = (event.get("excerpt") or event.get("text", ""))[:200]
+    options = [f"{c['id']} resolves it ('{c['text'][:80]}'): link it as the payoff" for c in candidates or []]
+    options += [f"Add an event that resolves what '{quote[:80]}' planted", f"It is only atmosphere: change {event['id']} to a plain event"]
+    return dict(question=f"Setup {event['id']} is planted but nothing resolves it: \"{quote}\"",
+                why="Something planted for later should be resolved before the book ends; no later event shares its meaning.",
+                options=options[:4], type="unpaid_setup", quotes=[quote])
 
 
 def check_ledger(events: list[dict], synopsis: str = "", stage: str = "ledger") -> list[Finding]:
@@ -142,13 +196,23 @@ def check_ledger(events: list[dict], synopsis: str = "", stage: str = "ledger") 
         if e.get("kind") == "setup" and not payoffs.get(e["id"]):
             out.append(soft(stage, "setup_without_payoff", f"setup {e['id']} is never paid off: the author is asked (add the payoff event, or change it to a plain event)", [e["id"]], [e["text"][:120]]))
 
-    # the resolution
-    if not any(e.get("ending") for e in events):
+    # the resolution: exactly one event, and at most one central decision
+    endings = [e["id"] for e in events if e.get("ending")]
+    if not endings:
         out.append(hard(stage, "no_resolution", "no event is marked ending: true. The synopsis's resolution must be a ledger event"))
     else:
-        first_end = min(index[e["id"]] for e in events if e.get("ending"))
+        first_end = min(index[x] for x in endings)
+        if len(endings) > 1:
+            out.append(hard(stage, "several_endings", f"{', '.join(endings)} are all marked ending: true, but a book has one resolution. Keep ending: true on the event that resolves the story "
+                            "(the last of them if it unfolds over several) and mark the others as ordinary events", endings))
         if first_end < 0.6 * len(events):
             out.append(soft(stage, "early_resolution", "the first ending event comes in the first 60% of the events; check the order", [ids[first_end]]))
+    decisions = [e["id"] for e in events if e.get("decision")]
+    if len(decisions) > 1:
+        out.append(hard(stage, "several_decisions", f"{', '.join(decisions)} are all marked decision: true; the book's central decision is one event (the choice the story turns on)", decisions))
+    elif not decisions and len(events) >= 6:
+        out.append(soft(stage, "no_central_decision", "no event is marked decision: true: name the choice the story turns on (it is what the last act's turning point should be)"))
+    out += weights_flat(events, stage)
 
     # derived events: minor complications only
     derived = [e for e in events if e.get("source") == "derived"]
@@ -179,9 +243,83 @@ def check_ledger(events: list[dict], synopsis: str = "", stage: str = "ledger") 
             out.append(soft(stage, "event_text_not_in_excerpt", f"{e['id']}: its text says more than its excerpt does ('{e['text'][:80]}'): keep the event to what the quoted words say",
                             [e["id"]], [e["excerpt"][:120]]))
 
+    out += causal_order(events, stage)
     # the words of the synopsis
     if synopsis.strip():
         out += _synopsis_coverage(events, synopsis, stage)
+    return out
+
+
+WEIGHT_MAX_SHARE = 0.7  # no weight may be given to more than this share of the events: the weights must tell events apart
+
+
+def weights_flat(events: list[dict], stage: str = "ledger") -> list[Finding]:
+    """The weights size the book, so they have to discriminate: one value on nearly every event carries no information."""
+    mine = [e for e in events if e.get("source", "synopsis") != "derived" and not e.get("carried_in")]
+    if len(mine) < 6:
+        return []
+    counts: dict[int, int] = defaultdict(int)
+    for e in mine:
+        counts[int(e.get("weight", 1))] += 1
+    weight, n = max(counts.items(), key=lambda kv: kv[1])
+    if n / len(mine) > WEIGHT_MAX_SHARE:
+        return [hard(stage, "weights_flat", f"{n} of {len(mine)} events have weight {weight}: weights that hardly vary say nothing about how much story each event carries. "
+                     "Use the scale: 1 a beat inside a scene, 2 an event that changes a situation and fills a scene, 3 a chapter-sized event (a reveal, a reversal, a decision, a confrontation); "
+                     "reserve 3 for the few events the story turns on, and give small events 1", [])]
+    return []
+
+
+_CONDITIONAL = ("only if", "only on the condition", "on the condition that", "on the condition", "in exchange for", "in return for", "provided that", "unless", "but only", "only when", "only once", "only after")
+_CAUSE = ("because", "as a result of", "so that")
+
+
+def _plain_stems(text: str) -> set:
+    """Stems of the content words with every capitalised word (names) left out."""
+    return set(content_stems(text, drop={w.lower() for w in WORD.findall(text) if w[0].isupper()}))
+
+
+def _split_marker(excerpt: str):
+    """(main clause, marker, clause after the marker) for the first causal marker in the excerpt, else None."""
+    from .audit import CAUSAL
+    m = CAUSAL.search(excerpt)
+    if not m:
+        return None
+    return excerpt[:m.start()], m.group(1).lower(), excerpt[m.end():]
+
+
+def causal_order(events: list[dict], stage: str = "ledger") -> list[Finding]:
+    """A condition comes before what it conditions, a cause before its effect. The marker in an event's own excerpt says which way:
+    "A, but only on the condition that B": this event grants A on condition B, so the event that IS A comes after it, never before;
+    "A because B": the event that is B comes before this one. Falls silent when no other event clearly matches the clause."""
+    out: list[Finding] = []
+    index = {e["id"]: n for n, e in enumerate(events)}
+    for e in events:
+        if e.get("source", "synopsis") != "synopsis" or not e.get("excerpt"):
+            continue
+        parts = _split_marker(e["excerpt"])
+        if not parts:
+            continue
+        main, marker, rest = parts
+        for other in events:
+            if other["id"] == e["id"] or other.get("kind") == "flashback" or e.get("kind") == "flashback":
+                continue
+            if marker in _CONDITIONAL:
+                clause, wrong = main, index[other["id"]] < index[e["id"]]  # the thing it conditions already happened
+                what = f"{e['id']} sets a condition on {other['id']} ('{marker}') but is listed after it, when {other['id']} has already happened and the condition has nothing left to hold over"
+            elif marker in _CAUSE:
+                clause, wrong = rest, index[other["id"]] > index[e["id"]]
+                what = f"{e['id']} happens because of {other['id']} ('{marker}') but is listed before it"
+            else:
+                continue
+            if not wrong:
+                continue
+            a, b = _plain_stems(clause), _plain_stems(other.get("text", ""))
+            shared = a & b
+            if not shared or len(shared) / min(len(a), len(b)) < 0.5:
+                continue
+            make = hard if len(shared) >= 2 else soft  # one shared word is a hint, two a match
+            out.append(make(stage, "causal_order", f"{what}: the cause or condition must come first (put it before, and list it in 'after')", [e["id"], other["id"]],
+                            [e["excerpt"][:140], other.get("text", "")[:120]]))
     return out
 
 
@@ -223,6 +361,7 @@ def _synopsis_coverage(events: list[dict], synopsis: str, stage: str) -> list[Fi
             out.append(hard(stage, "excerpt_not_in_synopsis", f"{e['id']}: its excerpt is not a verbatim quotation of the synopsis. Quote exact words", [e["id"]], [e["excerpt"][:100]]))
         for i in hits:
             covered[i] = True
+    out += _sentence_coverage(events, paras, stage)
     for i, ok in enumerate(covered):
         if not ok:
             last = " (the final paragraph: the resolution)" if i == len(paras) - 1 else ""
@@ -232,9 +371,37 @@ def _synopsis_coverage(events: list[dict], synopsis: str, stage: str) -> list[Fi
     return out
 
 
+SENTENCE_RECALL = 0.5  # share of a sentence's content words the events quoting it must carry
+MIN_SENTENCE_WORDS = 6  # shorter sentences are a heading, a transition or an aside
+
+
+def _sentence_coverage(events: list[dict], paras: list[str], stage: str) -> list[Finding]:
+    """Every sentence that carries plot is quoted by an event. A paragraph with one event would hide a dropped sentence; this does not.
+    Pure description is accepted per finding (validation/accepted.json) rather than guessed at."""
+    from .text import sentences
+    quotes = [(_norm(e["excerpt"]), set(content_stems(e["excerpt"]))) for e in events if e.get("source", "synopsis") == "synopsis" and (e.get("excerpt") or "").strip()]
+    out = []
+    for para in paras:
+        pn = _norm(para)
+        for sent in sentences(para):
+            if len(WORD.findall(sent)) < MIN_SENTENCE_WORDS:
+                continue
+            sn, stems = _norm(sent), set(content_stems(sent))
+            if not stems:
+                continue
+            got: set = set()
+            for en, es in quotes:
+                if en in sn or sn in en or (en in pn and len(es & stems) >= 3):
+                    got |= es & stems
+            if len(got) / len(stems) < SENTENCE_RECALL:
+                out.append(hard(stage, "sentence_not_covered", f"this sentence of the synopsis is quoted by no event: \"{sent[:140]}\". Add an event that quotes it, or widen the excerpt of the event that tells it", [sent[:60]], [sent[:140]]))
+    return out
+
+
 # ── acts, chapters and scenes against the ledger ─────────────────────────────
 
-def check_acts(acts: list[dict], events: list[dict], stage: str = "acts", weight_per_chapter: float = 2.0) -> list[Finding]:
+def check_acts(acts: list[dict], events: list[dict], stage: str = "acts", weight_per_chapter: float = 2.0, capacity_estimate: float | None = None,
+               tolerance: float = 0.2) -> list[Finding]:
     out: list[Finding] = []
     by_id = {e["id"]: e for e in events}
     index = {e["id"]: n for n, e in enumerate(events)}
@@ -266,10 +433,16 @@ def check_acts(acts: list[dict], events: list[dict], stage: str = "acts", weight
     if acts:
         final = acts[-1]
         endings = [e["id"] for e in events if e.get("ending")]
+        decisions = [e["id"] for e in events if e.get("decision")]
+        tp_final = final.get("turning_point_event") or ""
+        if decisions and tp_final and tp_final not in decisions + endings:
+            out.append(hard(stage, "final_turning_point_is_transition", f"the last act's turning point is {tp_final}, but the book turns on {', '.join(decisions)}: the final turning point is the central decision "
+                            f"or the resolution, not a transition such as a departure or an arrival. Use {decisions[0]} (or the ending {', '.join(endings)})", [final["id"], tp_final]))
         missing = [x for x in endings if x not in (final.get("events") or [])]
         if endings and missing:
             out.append(hard(stage, "resolution_not_in_last_act", f"the last act ({final['id']}) must contain the resolution; missing: {', '.join(missing)}", [final["id"]] + missing))
     out += sizing_plausibility(acts, events, stage, weight_per_chapter)
+    out += sizing_consistency(acts, events, stage) + acts_vs_capacity(acts, capacity_estimate, tolerance, stage)
     out += turning_point_texts(acts, events, stage)
     out += turning_point_positions(acts, events, stage) + check_act_texts(acts, events, stage) + lopsided_acts(acts, stage)
     out += resolution_in_summary(acts, events, stage)
@@ -326,6 +499,46 @@ def sizing_plausibility(acts: list[dict], events: list[dict], stage: str = "acts
         if not a.get("sizing_reason"):
             out.append(soft(stage, "no_sizing_reason", f"{a['id']} gives no sizing_reason for its chapter count", [a["id"]]))
     return out
+
+
+_CHAPTERS_SAID = re.compile(r"(\d+(?:\.\d+)?)\s*(?:-\s*\d+(?:\.\d+)?\s*)?chapters?", re.I)
+_WEIGHT_SAID = re.compile(r"weigh(?:s|ts|t)?\s*(?:of|is|at|about|:)?\s*(\d+)(?!\s*(?:each|per|apiece|a piece|or|/))", re.I)  # "weight 2 each" is one event's, not the act's
+OVERRIDE = "override:"
+
+
+def sizing_consistency(acts: list[dict], events: list[dict], stage: str = "acts") -> list[Finding]:
+    """What an act says about its own size must agree with its numbers: the weight it quotes is the ledger's weight, the chapters it names are its
+    chapter_count (one chapter of slack). The computed note the system appends is not the model's reasoning and is left out. An act that means to
+    differ from the estimate says so: a sizing_reason starting `override:`."""
+    out: list[Finding] = []
+    for a in acts:
+        reason = str(a.get("sizing_reason") or "").split("[computed:")[0].strip()
+        if not reason or reason.lower().startswith(OVERRIDE):
+            continue
+        weight, _ = act_weight(a, events)
+        said_w = _WEIGHT_SAID.search(reason)
+        if said_w and weight and int(said_w.group(1)) != weight:
+            out.append(hard(stage, "sizing_reason_mismatch", f"{a['id']}: its sizing_reason says weight {said_w.group(1)} but the ledger's weights for its events add up to {weight}. "
+                            f"Quote the real weight, or start the reason with '{OVERRIDE}' if you mean to depart from it", [a["id"]], [reason[:140]]))
+        said_c = _CHAPTERS_SAID.search(reason)
+        n = a.get("chapter_count")
+        if said_c and n and abs(float(said_c.group(1)) - int(n)) > 1:
+            out.append(hard(stage, "sizing_reason_mismatch", f"{a['id']}: its sizing_reason talks of {said_c.group(1)} chapters but chapter_count is {n}. "
+                            f"Make them agree, or start the reason with '{OVERRIDE}' and say why the count differs", [a["id"]], [reason[:140]]))
+    return out
+
+
+def acts_vs_capacity(acts: list[dict], estimate: float | None, tolerance: float = 0.2, stage: str = "acts") -> list[Finding]:
+    """The acts' chapters add up to about what the ledger said the story carries. A difference beyond the tolerance needs a stated reason."""
+    if not estimate or not acts:
+        return []
+    total = sum(int(a.get("chapter_count") or 0) for a in acts)
+    if abs(total - estimate) / estimate <= tolerance:
+        return []
+    if any(str(a.get("sizing_reason") or "").strip().lower().startswith(OVERRIDE) for a in acts):
+        return []
+    return [hard(stage, "acts_differ_from_capacity", f"the acts plan {total} chapters in total but the ledger's own estimate is {estimate:g} (its weights over the weight-per-chapter figure). "
+                 f"Bring them within {tolerance:.0%}, or start the sizing_reason of the act that departs with '{OVERRIDE}' and say why", [a["id"] for a in acts])]
 
 
 def turning_point_texts(acts: list[dict], events: list[dict], stage: str = "acts") -> list[Finding]:
@@ -551,6 +764,26 @@ def check_chapter_texts(chapters: list[dict], events: list[dict], stage: str = "
                 soften.add(e["id"])
         out += _event_text_checks(c["id"], text, list(c.get("events_covered") or []), by_id, others, stage, "chapter", where, soften)
     return out
+
+
+def one_sentence_chapters(chapters: list[dict], events: list[dict]) -> list[str]:
+    """Ids of chapters that tell exactly one event of the synopsis and nothing else (no continued event, no complication of their own)."""
+    by_id = {e["id"]: e for e in events}
+    out = []
+    for c in chapters:
+        covered = c.get("events_covered") or []
+        if len(covered) == 1 and not c.get("events_continued") and by_id.get(covered[0], {}).get("source", "synopsis") == "synopsis":
+            out.append(c["id"])
+    return out
+
+
+def thin_chapters(chapters: list[dict], events: list[dict], stage: str = "chapters") -> list[Finding]:
+    """When most chapters are one synopsis sentence each, the middle of the book is thin: the material was carried over, not worked out (soft)."""
+    ids = one_sentence_chapters(chapters, events)
+    if len(chapters) >= 4 and len(ids) / len(chapters) > 0.5:
+        return [soft(stage, "chapters_one_sentence_each", f"{len(ids)} of {len(chapters)} chapters tell exactly one synopsis event and nothing of their own (no continued event, no local complication): "
+                     "the plan follows the synopsis sentence by sentence. Local obstacles, setbacks and reversals (child events) would give the chapters something to do", ids[:8])]
+    return []
 
 
 def check_scene_texts(scenes: list[dict], chapters: list[dict], events: list[dict], stage: str = "scenes") -> list[Finding]:

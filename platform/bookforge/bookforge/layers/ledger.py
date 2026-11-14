@@ -34,6 +34,7 @@ from ..validators import store as findings_store
 from .. import steering
 from .direction import _ledger_text
 from .document import prompt_values
+from . import audit as audit_mod
 from .runner import StepContext, StepResult
 
 log = logging.getLogger("platform_bookforge.layers")
@@ -82,6 +83,9 @@ def parse_ledger(text: str, synopsis: str, project, prior: Ledger | None = None)
         return None, problems, []
 
     plain = [to_plain(e) for e in events]
+    links, unresolved = ledger_checks.link_payoffs_by_meaning(plain)  # a payoff the extraction left unlinked is linked by meaning, not asked about
+    if links:
+        events = [StoryEvent.model_validate(p) for p in plain]
     if prior is not None:
         now = {e.id: e for e in events}
         for old in prior.events:
@@ -95,7 +99,7 @@ def parse_ledger(text: str, synopsis: str, project, prior: Ledger | None = None)
             problems.append("new questions need new ids (continue the numbering); do not repeat existing questions")
     findings = ledger_checks.check_ledger(plain, synopsis)
     problems += accepted.hard_lines(project, findings, "ledger")
-    findings += [soft_finding("auto_repaired", note) for note in repairs]
+    findings += [soft_finding("auto_repaired", note) for note in repairs + links]
     # A setup nothing pays off is the author's call, not a failure: it becomes a question (once per setup).
     known = [q.question for q in questions] + ([q.question for q in prior.questions] if prior else [])
     next_n = 1 + max([int(q.id[1:]) for q in questions + (prior.questions if prior else [])] or [0])
@@ -103,7 +107,7 @@ def parse_ledger(text: str, synopsis: str, project, prior: Ledger | None = None)
         if f.code == "setup_without_payoff":
             event = next(e for e in plain if e["id"] == f.items[0])
             if not any(q.startswith(f"Setup {event['id']} ") for q in known):
-                questions.append(AuthorQuestion(id=f"q{next_n}", **ledger_checks.unpaid_setup_question(event)))
+                questions.append(AuthorQuestion(id=f"q{next_n}", **ledger_checks.unpaid_setup_question(event, unresolved.get(event["id"]))))
                 next_n += 1
 
     cfg = project.config.ledger
@@ -133,13 +137,13 @@ def _options(ctx: StepContext) -> dict:
     return options
 
 
-def generate(ctx: StepContext, synopsis: str) -> tuple[Ledger, list[Finding]]:
+def generate(ctx: StepContext, synopsis: str, notes: str = "none") -> tuple[Ledger, list[Finding]]:
     project = ctx.project
     if ctx.llm is None:
         raise LayerError("no model client available")
     stars = {"series_north_star": (project.root / "north-star.md").read_text(encoding="utf-8").strip(),
              "book_north_star": (project.book_dir / "north-star.md").read_text(encoding="utf-8").strip()}
-    messages = _messages(project, "ledger", synopsis=synopsis, carried=_ledger_text_for(ctx), **stars)
+    messages = _messages(project, "ledger", synopsis=synopsis, carried=_ledger_text_for(ctx), notes=notes, **stars)
     box: dict = {}
 
     def validate(text: str) -> list[str]:
@@ -185,10 +189,12 @@ def report_text(ledger: Ledger, findings: list[Finding]) -> str:
         flags = [f for f in (("once" if e.once_only else "repeatable"), e.kind, f"w{e.weight}", "ENDING" if e.ending else "",
                              f"pays {e.pays_off}" if e.pays_off else "", e.source if e.source != "synopsis" else "") if f]
         lines.append(f"  {e.id:<6} {', '.join(flags):<32} {e.text}")
+    if ledger.audit:
+        lines.append(f"\nSynopsis audit: {sum((ledger.audit.get('findings') or {}).values())} finding(s) {ledger.audit.get('findings') or {}}; {ledger.audit.get('dropped', 0)} dropped (no exact quote)")
     if ledger.questions:
         lines.append("\nQuestions for the author:")
         for q in ledger.questions:
-            lines.append(f"  {q.id} [{q.status}] {q.question}\n      why: {q.why}" + "".join(f"\n      - {o}" for o in q.options)
+            lines.append(f"  {q.id} [{q.status}{', ' + q.type if q.type else ''}] {q.question}\n      why: {q.why}" + "".join(f"\n      - {o}" for o in q.options)
                          + (f"\n      answer: {q.answer}" if q.answer else ""))
     if findings:
         lines.append("\nChecks:")
@@ -223,8 +229,27 @@ def ledger(ctx: StepContext) -> StepResult:
     except store.BibleError as e:
         raise LayerError(f"{e} (fix the file, or delete it to have it regenerated)") from e
 
-    if existing is None:
-        led, findings = generate(ctx, synopsis)
+    if existing is None or not existing.events:
+        # The synopsis audit comes first. Contradictions, missing prerequisites and cast conflicts stop here, at the checkpoint, until answered.
+        prior = existing.questions if existing else []
+        if prior and project.state.checkpoints["ledger"].status == "approved":
+            prior = [q.model_copy(update={"status": "dismissed"}) if q.status == "open" else q for q in prior]  # approving means: go on as it is
+        new_q, summary = audit_mod.audit(ctx, synopsis, prior)
+        questions = prior + new_q
+        blockers = audit_mod.blocking(questions)
+        if blockers:
+            led = Ledger(events=[], questions=questions, audit={**summary, "revision": 1 + int((existing.audit if existing else {}).get("revision", 0))})
+            store.save_ledger(project, led)
+            files = [rel, findings_store.save(project, "ledger", [soft_finding("synopsis_audit", f"{q.id} ({q.type}): {q.question}") for q in blockers])]
+            return StepResult(files=files, outcome="partial", checkpoint="ledger",
+                              note=f"the synopsis audit found {len(blockers)} problem(s) in the synopsis itself: answer them with `ledger-answer`, then run again "
+                                   f"(or approve the ledger checkpoint to go on as it is): " + "; ".join(f"{q.id} {q.type}" for q in blockers))
+        answered = [q.model_copy(update={"applied": True}) if q.status == "answered" else q for q in questions]
+        led, findings = generate(ctx, synopsis, audit_mod.notes_text(answered))
+        base = audit_mod.next_question_id(answered)
+        renumbered = [q.model_copy(update={"id": f"q{base + i}", "type": q.type or "thin"}) for i, q in enumerate(led.questions)]  # the extraction's own questions continue the numbering
+        led.questions = answered + renumbered
+        led.audit = {**summary, "revision": 1 + int((existing.audit if existing else {}).get("revision", 0))}
         note = "extracted from the synopsis"
     elif any(q.status == "answered" and not q.applied for q in existing.questions):
         led, findings = revise(ctx, synopsis, existing)

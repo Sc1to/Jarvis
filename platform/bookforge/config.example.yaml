@@ -60,8 +60,10 @@ research:
   scene_questions: 2                   # questions researched per chapter before its scenes are planned (0 = none)
 
 ledger:
-  weight_per_chapter: 2.0              # story weight one chapter carries (events weigh 1 minor, 2 ordinary, 3 major)
-  min_chapters: 12                     # less story than this many chapters' worth is 'thin': the ledger asks you questions instead of padding
+  weight_per_chapter: 2.0              # story weight one chapter carries (events weigh 1 a beat inside a scene, 2 a scene-sized change, 3 a chapter-sized event: about two scenes of ordinary weight make a chapter)
+  min_chapters: 12                     # less story than this many chapters' worth is 'thin': the ledger asks you questions instead of padding. A short novel is about 12-15 chapters; the suite report shows how the verdict moves with these two numbers
+  count_tolerance: 0.2                 # how far the acts' chapters may stray from the ledger's estimate before a reason is demanded
+  audit: true                          # read the synopsis for contradictions, missing prerequisites and cast conflicts before extracting events
 
 style:                                 # the suggested style guide: made when the synopsis is accepted and there is no guide yet; you edit it
   auto_suggest: true
