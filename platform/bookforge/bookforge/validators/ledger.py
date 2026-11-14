@@ -264,6 +264,7 @@ def check_acts(acts: list[dict], events: list[dict], stage: str = "acts", weight
     out += sizing_plausibility(acts, events, stage, weight_per_chapter)
     out += turning_point_texts(acts, events, stage)
     out += turning_point_positions(acts, events, stage) + check_act_texts(acts, events, stage) + lopsided_acts(acts, stage)
+    out += resolution_in_summary(acts, events, stage)
     return out
 
 
@@ -545,4 +546,30 @@ def lopsided_acts(acts: list[dict], stage: str = "acts", high: float = 0.45, low
         if share > high or share < low:
             out.append(soft(stage, "lopsided_acts", f"{a['id']} holds {a.get('chapter_count')} of {total} chapters ({share:.0%}): "
                             + ("consider moving some of its events into a neighbouring act" if share > high else "it is very short next to the others"), [a["id"]]))
+    return out
+
+
+def resolution_in_summary(acts: list[dict], events: list[dict], stage: str = "acts") -> list[Finding]:
+    """Soft: the last act's own text (summary, purpose, turning point) should describe the events that make up the resolution.
+
+    The ending is what the whole book builds toward; a summary of the final act that never mentions it reads as an act that stops short.
+    """
+    if not acts:
+        return []
+    final = acts[-1]
+    by_id = {e["id"]: e for e in events}
+    text = " ".join(str(final.get(k, "")) for k in ("summary", "purpose", "turning_point"))
+    unit = _stems_wo_names(text)
+    out = []
+    for ev_id in final.get("events") or []:
+        ev = by_id.get(ev_id)
+        if not ev or not ev.get("ending"):
+            continue
+        need = _stems_wo_names(ev.get("text", ""))
+        if len(need) < 3:
+            continue
+        recall = len(need & unit) / len(need)
+        if recall < DESCRIBES_MIN:
+            out.append(soft(stage, "act_summary_omits_resolution", f"{final['id']} is the last act, but its summary never describes the resolution event {ev_id} "
+                            f"('{ev['text'][:90]}'): say how the book ends", [final["id"], ev_id]))
     return out

@@ -374,7 +374,7 @@ REAL = {1: "Eli arrives at Erebus-7 and steps onto the asteroid surface", 2: "El
         11: "Mara intervenes to protect the data drive, injuring Halloway in the process", 12: "Eli uploads the data, triggering a lockdown and worsening Mara's condition",
         13: "Eli accepts he cannot save Mara and she succumbs to her condition", 14: "Eli launches the Kestrel and escapes as Halloway seals the sector",
         15: "The corporation allows Eli to escape in exchange for a non-disclosure agreement and debt contract", 16: "Eli lands on an unclaimed moon, realizing survival requires compromise and the system remains intact"}
-REAL_EVENTS = [dict(id=f"e{i}", text=t, weight=3 if i >= 7 or i == 4 else 2, once_only=True, kind="event") for i, t in REAL.items()]
+REAL_EVENTS = [dict(id=f"e{i}", text=t, weight=3 if i >= 7 or i == 4 else 2, once_only=True, kind="event", ending=i >= 14) for i, t in REAL.items()]
 
 
 def real_acts():
@@ -413,3 +413,14 @@ def test_an_act_holding_half_the_chapters_is_flagged_softly():
     f = L.lopsided_acts(real_acts())
     assert [(x.code, x.severity, x.items[0]) for x in f] == [("lopsided_acts", SOFT, "b2.act3")] and "50%" in f[0].message
     assert L.lopsided_acts([dict(id="a", chapter_count=3), dict(id="b", chapter_count=3)]) == []  # two acts: not judged
+
+
+def test_the_last_acts_summary_must_describe_the_resolution_softly():
+    acts = real_acts()
+    acts[2]["summary"] = ("Eli decides to broadcast contamination data, and Mara intervenes to protect the data drive. Eli uploads the data and accepts he cannot save her. "
+                          "Eli launches the Kestrel and escapes as Halloway seals the sector. The corporation allows it only for a non-disclosure agreement and debt contract.")
+    f = [x for x in L.resolution_in_summary(acts, REAL_EVENTS)]
+    assert [(x.code, x.severity, x.items[1]) for x in f] == [("act_summary_omits_resolution", SOFT, "e16")]  # e14 and e15 are described, the landing is not
+    acts[2]["summary"] += " He lands on an unclaimed moon, realizing survival requires compromise and the system remains intact."
+    assert L.resolution_in_summary(acts, REAL_EVENTS) == []
+    assert L.resolution_in_summary([], REAL_EVENTS) == []
