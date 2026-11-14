@@ -508,7 +508,7 @@ def _event_text_checks(unit_id: str, unit_text: str, listed: list[str], by_id: d
             make = hard if recall >= RETELLS_HARD and ev["id"] not in (soften or set()) else soft
             why = (where or {}).get(ev["id"], "belongs elsewhere")
             out.append(make(stage, f"{what}_retells_event", f"{unit_id} describes {ev['id']} ('{ev['text'][:90]}'), which {why}: do not tell, show or hint at it here", [unit_id, ev["id"]],
-                            [unit_text[:120]]))
+                            [f"{what} text: {unit_text[:240]}", f"event {ev['id']}: {ev['text'][:200]}"]))  # both, so the critic can say whether the unit really tells it
     return out
 
 

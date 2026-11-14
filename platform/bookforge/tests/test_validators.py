@@ -306,6 +306,7 @@ def test_a_chapter_that_retells_another_chapters_event_is_a_hard_finding():
                 dict(id="t.ch02", title="Warehouse", purpose="p", summary="Again the harbor master seizes the smuggled cargo at dawn, before Teresa bribes the night watchman.", events_covered=["e2"])]
     f = L.check_chapter_texts(chapters, TEXT_EVENTS)
     assert any(x.code == "chapter_retells_event" and x.severity == HARD and "e1" in x.items for x in f)
+    assert all(len(x.evidence) == 2 for x in f if x.code == "chapter_retells_event")  # chapter text and event, so the critic can confirm
     ok = [chapters[0], dict(chapters[1], summary="Teresa bribes the night watchman to open the customs warehouse.")]
     assert [x for x in L.check_chapter_texts(ok, TEXT_EVENTS) if x.severity == HARD] == []
 
