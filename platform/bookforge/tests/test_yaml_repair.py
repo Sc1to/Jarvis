@@ -117,3 +117,10 @@ def test_a_text_field_given_the_wrong_shape_says_what_it_got_and_how_to_fix_it()
         Scene.model_validate({**base, "beats": ["fine", {"a": "b", "c": "d"}]})
     [problem] = problems_from(e.value)
     assert problem == "beats.1: must be one piece of text but is a mapping (key: value); write it as a single sentence inside double quotes"
+
+
+def test_a_stray_json_answer_after_the_yaml_is_ignored():
+    from bookforge.bible.validate import load_reply_yaml
+    text = 'scenes:\n  - id: b2.ch07.s1\n    purpose: "x"\n{"keep": [1, 2], "drop": [{"n": 3, "why": "about IT scans crashing PLCs"}]}\n'
+    data, error = load_reply_yaml(text)
+    assert error is None and data["scenes"][0]["id"] == "b2.ch07.s1"
