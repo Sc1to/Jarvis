@@ -7,7 +7,7 @@ import { Button, Card, Dot, ErrorBanner, StatusBadge, fmtTime } from '../compone
 
 // The files to read before approving each checkpoint: [document key, label]
 const REVIEW: Record<string, [string, string][]> = {
-  direction: [['series_north_star', 'Series north star'], ['book_north_star', 'Book north star'], ['synopsis', 'Synopsis']],
+  direction: [['series_north_star', 'Series north star'], ['book_north_star', 'Book north star'], ['synopsis', 'Synopsis'], ['style_guide', 'Style guide (suggested)']],
   ledger: [['ledger', 'Story events'], ['synopsis', 'Synopsis']],
   structure: [['ledger', 'Story events'], ['acts', 'Acts'], ['chapters', 'Chapters'], ['scenes', 'Scene plans'], ['constants', 'Cast'], ['tracks', 'State tracks'], ['timeline', 'Timeline']],
   voice: [['style_guide', 'Style guide']],

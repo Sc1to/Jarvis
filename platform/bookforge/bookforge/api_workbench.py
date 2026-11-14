@@ -21,9 +21,9 @@ class Helpers:
     """What the router needs from api.py (kept as plain callables so this module does not import it)."""
 
     def __init__(self, open_project: Callable, series_root: Callable, require_idle: Callable, start_job: Callable,
-                 make_llm: Callable, ok: Callable):
+                 make_llm: Callable, ok: Callable, make_web: Callable | None = None):
         self.open_project, self.series_root, self.require_idle, self.start_job = open_project, series_root, require_idle, start_job
-        self.make_llm, self.ok = make_llm, ok
+        self.make_llm, self.ok, self.make_web = make_llm, ok, make_web
 
 
 class TestRuleBody(BaseModel):
@@ -42,6 +42,10 @@ class XrayBody(BaseModel):
 
 class AnswerBody(BaseModel):
     answer: str = Field(min_length=1, max_length=4000)
+
+
+class StyleSuggestBody(BaseModel):
+    replace: bool = False  # replace the guide you have (it is committed first)
 
 
 class AcceptBody(BaseModel):
@@ -135,6 +139,33 @@ def register(router: APIRouter, h: Helpers) -> None:
             return rules_ai.propose_rule(ctx, body.scene, body.passage, body.comment)
 
         return h.start_job(series, book, "rule-propose", {"scene": body.scene}, job)
+
+    # ── the suggested style guide ────────────────────────────────────────────
+
+    S = "/series/{series}/books/{book}/style"
+
+    @router.get(S)
+    def style_state(series: str, book: str):
+        """What the last style suggestion was based on (genre, checked titles, sources), and whether the series has a guide of its own."""
+        from . import style
+        p = h.open_project(series, book)
+        return h.ok({"has_guide": not style.guide_is_empty(p), "suggestion": style.load_suggestion(p)})
+
+    @router.post(S + "/suggest", status_code=202)
+    def style_suggest(series: str, book: str, body: StyleSuggestBody):
+        """Suggest a style guide (a background job: it searches the web and reads pages). A guide you have is kept unless `replace`."""
+        from . import style
+        h.open_project(series, book)
+        root = h.series_root(series)
+
+        def job() -> dict:
+            project = Project.open(root, book)
+            web = h.make_web(project) if h.make_web else None
+            ctx = StepContext(project=project, layer="synopsis", llm=h.make_llm()(project), web=web)
+            s = style.suggest_style_guide(ctx, web, body.replace)
+            return {"file": s.path, "words": s.words, "verified": s.verified, "web": s.web, "problems": s.problems}
+
+        return h.start_job(series, book, "style-suggest", {"replace": body.replace}, job)
 
     # ── stage checks and the ledger ──────────────────────────────────────────
 

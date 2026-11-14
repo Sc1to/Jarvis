@@ -63,6 +63,13 @@ ledger:
   weight_per_chapter: 2.0              # story weight one chapter carries (events weigh 1 minor, 2 ordinary, 3 major)
   min_chapters: 12                     # less story than this many chapters' worth is 'thin': the ledger asks you questions instead of padding
 
+style:                                 # the suggested style guide: made when the synopsis is accepted and there is no guide yet; you edit it
+  auto_suggest: true
+  comparables: 4                       # successful titles of the same genre to learn from (checked on the web)
+  queries: 5                           # web searches about their prose style
+  pages_per_query: 2
+  words: [350, 900]                    # length of the guide
+
 book:
   target_words: 90000
   pov: third-limited

@@ -30,7 +30,7 @@ STATE_SCHEMA_VERSION = 1
 # Files you review at each checkpoint ({book} is the book id; * matches any name). `run` lists the ones that exist.
 CHECKPOINT_REVIEW_FILES = {
     "direction": ("north-star.md", "books/{book}/north-star.md", "books/{book}/synopsis.md",
-                  "research/needs.md", "books/{book}/research/needs.md"),
+                  "research/needs.md", "books/{book}/research/needs.md", "style/guide.md"),
     "ledger": ("books/{book}/ledger.yaml", "books/{book}/synopsis.md", "books/{book}/validation/ledger.json"),
     "voice": ("books/{book}/scenes/ch01/s*/final.md", "style/guide.md", "style/banned.txt"),
     "structure": ("books/{book}/acts.yaml", "books/{book}/chapters.yaml", "books/{book}/scenes.yaml",

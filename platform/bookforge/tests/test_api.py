@@ -739,3 +739,16 @@ def test_a_finding_can_be_accepted_and_unaccepted_through_the_api(full):
     data(client.post(f"{WB}/validation/unaccept", json={"fingerprint": got["fingerprint"]}))
     assert data(client.get(f"{WB}/validation"))["accepted"] == []
     error(client.post(f"{WB}/validation/unaccept", json={"fingerprint": got["fingerprint"]}), 404)
+
+
+def test_the_style_state_and_a_suggestion_job_are_served(full, monkeypatch):
+    from test_style import IDENTIFY, NOTES_A, NOTES_B, guide, web
+    from bookforge.llm import FakeLLMClient
+    got = data(client.get(f"{B}/style"))
+    assert got["has_guide"] is False and got["suggestion"] is None
+    monkeypatch.setattr(api, "make_web", lambda project: web())
+    monkeypatch.setattr(api, "make_llm", lambda project: FakeLLMClient({"critic": [IDENTIFY, guide()], "research": [NOTES_A, NOTES_B]}))
+    done = finish(data(client.post(f"{B}/style/suggest", json={}), 202))
+    assert done["status"] == "done" and done["result"]["verified"] == ["Orbit Falls"] and done["result"]["file"] == "style/guide.md"
+    after = data(client.get(f"{B}/style"))
+    assert after["has_guide"] and after["suggestion"]["genre"] == "hard science fiction"

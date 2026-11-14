@@ -160,3 +160,10 @@ export interface ValidationResult { stages: Record<'ledger' | 'acts' | 'chapters
 export interface LedgerEvent { id: string; text: string; once_only: boolean; kind: string; weight: number; ending: boolean; source: string; parent: string; pays_off: string }
 export interface LedgerQuestion { id: string; question: string; why: string; options: string[]; answer: string; status: 'open' | 'answered' | 'dismissed'; applied: boolean }
 export interface LedgerView { events: LedgerEvent[]; questions: LedgerQuestion[]; thin: boolean; capacity: Record<string, any>; revision: number }
+
+export interface StyleSuggestion {
+  at: string; file: string; genre: string; subgenres: string[]; intended_style: string; web: boolean
+  verified_titles: { title: string; author: string; why: string; sources: string[] }[]; unchecked_titles: string[]
+  sources: { url: string; title: string }[]; problems: string[]; words: number
+}
+export interface StyleState { has_guide: boolean; suggestion: StyleSuggestion | null }

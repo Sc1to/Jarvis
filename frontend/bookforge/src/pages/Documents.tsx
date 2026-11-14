@@ -1,8 +1,8 @@
 import { useRef, useState } from 'react'
 import { api, bookPath } from '../lib/api'
-import { useAction, useApi } from '../lib/hooks'
+import { useAction, useApi, useJob } from '../lib/hooks'
 import { href } from '../lib/route'
-import type { DocumentFull, DocumentInfo } from '../lib/types'
+import type { DocumentFull, DocumentInfo, StyleState } from '../lib/types'
 import { Button, Card, Empty, ErrorBanner, Loading, Markdown } from '../components/ui'
 
 async function copyToClipboard(text: string): Promise<void> {
@@ -35,6 +35,41 @@ function CopyButton({ getText, label = 'Copy', title }: { getText: () => Promise
   )
 }
 
+/** Suggest a style guide from the genre: the model names successful titles of the same genre, reads what the web says about their prose style, and writes a guide to edit. */
+function StyleSuggest({ series, book, onDone }: { series: string; book: string; onDone: () => void }) {
+  const base = bookPath(series, book)
+  const state = useApi<StyleState>(`${base}/style`)
+  const job = useJob<{ file: string; words: number; verified: string[]; web: boolean; problems: string[] }>(base)
+  const s = state.data
+  const sug = s?.suggestion
+  const start = async (replace: boolean) => {
+    if (replace && !window.confirm('Replace your style guide with a new suggestion? What is there now is kept in the series history.')) return
+    await job.run('/style/suggest', { replace })
+    state.reload(); onDone()
+  }
+  return (
+    <Card title="Suggested style guide">
+      <p className="text-sm text-slate-700">Bookforge names the genre, picks successful titles of the same genre, reads what critics and readers say about their prose style, and writes a guide in its own words. It never copies their sentences, and you edit the result.</p>
+      <ErrorBanner message={job.error} />
+      <div className="mt-2 flex flex-wrap gap-2">
+        <Button disabled={job.busy} kind="primary" onClick={() => start(false)}>{job.busy ? 'Reading the web and writing…' : s?.has_guide ? 'Suggest another (kept beside yours)' : 'Suggest a style guide'}</Button>
+        {s?.has_guide && <Button disabled={job.busy} onClick={() => start(true)}>Replace mine with a suggestion</Button>}
+      </div>
+      {job.busy && <p className="mt-2 text-xs text-slate-600">This searches the web and reads several pages; it can take a few minutes. You can leave the page.</p>}
+      {sug && (
+        <div className="mt-3 space-y-1 border-t border-slate-200 pt-3 text-sm">
+          <p><span className="font-medium">{sug.genre}</span>{sug.subgenres.length > 0 && ` (${sug.subgenres.join(', ')})`}{sug.intended_style && `: ${sug.intended_style}`}</p>
+          {sug.verified_titles.length > 0
+            ? <ul className="list-disc space-y-0.5 pl-5 text-xs">{sug.verified_titles.map((t) => <li key={t.title}><span className="font-medium">{t.title}</span> by {t.author}: {t.why}</li>)}</ul>
+            : <p className="text-xs text-slate-600">{sug.web ? 'No title could be checked on the web, so none is named.' : 'The web was not used, so no title is named.'}</p>}
+          <p className="text-xs text-slate-600">Written to {sug.file} ({sug.words} words) from {sug.sources.length} page(s).</p>
+          {sug.problems.length > 0 && <p className="break-words text-xs text-amber-800">Not everything worked: {sug.problems.slice(0, 3).join('; ')}</p>}
+        </div>
+      )}
+    </Card>
+  )
+}
+
 /** The files you review at the checkpoints. You can edit them here: an edit is checked first and refused, with the reason, if it breaks the structure. */
 export default function Documents({ series, book, docKey }: { series: string; book: string; docKey?: string }) {
   const base = `${bookPath(series, book)}/documents`
@@ -50,6 +85,7 @@ export default function Documents({ series, book, docKey }: { series: string; bo
     return (
       <div className="space-y-3">
         <a className="text-sm text-slate-600 underline" onClick={() => { setDraft(null); save.clear() }} href={href({ series, book, tab: 'documents' })}>← All documents</a>
+        {(d.key === 'style_guide' || d.key === 'style_suggested') && <StyleSuggest series={series} book={book} onDone={doc.reload} />}
         <Card title={d.title} right={<span className="flex items-center gap-2 text-xs text-slate-500">{d.group}
             {d.exists && <CopyButton getText={() => (draft !== null ? draft : d.text)} label={d.truncated ? 'Copy first part' : 'Copy'}
               title={d.truncated ? 'The file is long: only the part shown here is copied' : draft !== null ? 'Copy the text you are editing' : undefined} />}</span>}>

@@ -101,4 +101,11 @@ def book_north_star(ctx: StepContext) -> StepResult:
 
 
 def synopsis(ctx: StepContext) -> StepResult:
-    return generate_document(ctx, SYNOPSIS)
+    result = generate_document(ctx, SYNOPSIS)
+    from .. import style  # the style guide is suggested once the synopsis is there, so it can be read and edited at the direction checkpoint
+    files, note = style.maybe_suggest(ctx)
+    if files:
+        result.files += files
+    if note:
+        result.note = f"{result.note}; {note}" if result.note else note
+    return result

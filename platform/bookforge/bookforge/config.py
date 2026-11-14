@@ -202,12 +202,23 @@ class LedgerSettings(_Strict):
     min_chapters: int = Field(12, ge=1)  # fewer chapters' worth of story than this is "thin": ask the author, never pad
 
 
+class StyleSettings(_Strict):
+    """The suggested style guide (bookforge/style.py): made once, at the direction checkpoint, from the north stars, the synopsis and what
+    the web says about the prose style of successful books in the same genre. You edit it; nothing overwrites a guide you have."""
+    auto_suggest: bool = True  # suggest a guide when the synopsis is accepted and there is none yet
+    comparables: int = Field(4, ge=1, le=8)  # successful titles of the same genre to learn from
+    queries: int = Field(5, ge=1, le=10)  # web searches about their style
+    pages_per_query: int = Field(2, ge=1, le=4)  # pages read per search
+    words: tuple[int, int] = (350, 900)  # length of the guide
+
+
 class Config(_Strict):
     data_dir: str = "/opt/platform/data/bookforge"
     models: Models = Models()
     layers: dict[str, LayerSettings] = _default_layers()
     research: Research = Research()
     ledger: LedgerSettings = LedgerSettings()
+    style: StyleSettings = StyleSettings()
     book: BookSettings = BookSettings()
     briefing: Briefing = Briefing()
     qc: QC = QC()

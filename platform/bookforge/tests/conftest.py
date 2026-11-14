@@ -36,6 +36,14 @@ def lenient_book_prose_checks(request, monkeypatch):
         monkeypatch.setattr("bookforge.validators.book.prose_findings", lambda project: ([], {}))
 
 
+@pytest.fixture(autouse=True)
+def no_automatic_style_guide(request, monkeypatch):
+    """Most tests script the model for the layers only: the style guide that is suggested after the synopsis is switched off, unless a
+    test asks for it with the `real_style` marker."""
+    if "real_style" not in request.keywords:
+        monkeypatch.setattr("bookforge.style.maybe_suggest", lambda ctx: ([], ""))
+
+
 @pytest.fixture
 def project_with_ledger(tmp_path) -> Project:
     return Project.create(tmp_path / "series", "A clerk finds a ledger that predicts deaths.\n")
