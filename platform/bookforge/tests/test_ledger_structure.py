@@ -124,3 +124,34 @@ def test_too_many_derived_complications_for_an_act_are_refused(project):
     padded["chapters"][0]["events_covered"] = ["e1", "e1.1", "e1.2"]
     s = run(p, RuleLLM([("Plan exactly 2 chapters, b1.ch01 to b1.ch02", dump(padded))] + rules()), HANDLERS, until="chapters")
     assert s.stopped == "failed" and "too_many_derived" in s.detail
+
+
+def test_the_plan_review_sees_the_ledger(project):
+    from bookforge.project import Project
+    from qc_fakes import PLAN_REVIEW, plan_review
+    from structure_fakes import SMALL_CONFIG
+    p = ready(project)
+    (p.root / "config.yaml").write_text(SMALL_CONFIG.replace("review_structure: false", "review_structure: true"))
+    p = Project.open(p.root)
+    install_ledger(p)
+    llm = RuleLLM([(PLAN_REVIEW, plan_review(None))] + rules())
+    run(p, llm, HANDLERS, until="chapters")
+    prompts = [next(m["content"] for m in c["messages"] if m["role"] == "user") for c in llm.calls]
+    reviews = [t for t in prompts if PLAN_REVIEW in t]
+    assert reviews and all("RESERVED FOR LATER" in t or "- e1 (" in t for t in reviews)
+    assert any("RESERVED FOR LATER" in t and "tells every event assigned here" in t for t in reviews)
+
+
+def test_state_inherited_from_earlier_books_reaches_every_planning_prompt_and_the_briefing(project):
+    from bookforge.briefing import build_briefing
+    p = project_ready(project)
+    (p.root / "ledger.yaml").write_text("open_threads: []\nend_of_book_states:\n  book1: Captain Rhee signed a debt contract with the harbor board.\n")
+    llm = RuleLLM(rules())
+    run(p, llm, HANDLERS, until="scenes")
+    prompts = [next(m["content"] for m in c["messages"] if m["role"] == "user") for c in llm.calls]
+    planning = [t for t in prompts if "Already true when this book begins" in t]
+    assert len(planning) >= 1 + 2 + 4 and all("signed a debt contract" in t for t in planning)  # acts, both chapter calls, every scene call
+    b = build_briefing(p, "b1.ch01.s1")
+    assert any(s.heading.startswith("Already true when this book begins") and "debt contract" in s.body for s in b.sections)
+    q = project_ready(__import__("conftest").Project.create(p.root.parent / "first", "x\n"))
+    assert "nothing: this is the first book" in __import__("bookforge.ledger_view", fromlist=["x"]).carried_for_prompt(q)

@@ -332,3 +332,33 @@ def test_scene_counts_follow_the_weight_of_the_chapter():
     light = dict(id="t.ch02", events_covered=["e1"])  # weight 2
     four = L.scene_count_plausibility(light, [dict(id=str(i)) for i in range(4)], ev)
     assert four and "padded" in four[0].message
+
+
+def test_times_of_day_are_compared_as_parts_of_the_day():
+    assert S.time_part("just after midnight") == "midnight" and S.time_part("Evening") == S.time_part("dusk") and S.time_part("midday") == "noon"
+    scenes = [dict(id="t.ch01.s1", setting="a", characters=["x"]), dict(id="t.ch01.s2", setting="b", characters=["x"])]
+    tl = [dict(id="t.ch01.s1", day=3, time="evening"), dict(id="t.ch01.s2", day=3, time="at dusk")]
+    assert "two_places_at_once" in codes(S.location_conflicts(scenes, tl))
+
+
+@pytest.mark.real_prose_checks
+def test_prose_summaries_that_retell_an_event_in_new_words_are_caught(project):
+    from bookforge import scenefiles
+    from bookforge.bible import store
+    from bookforge.validators.book import prose_findings
+    from structure_fakes import ready, rules
+    from conftest import RuleLLM
+    from bookforge.layers import HANDLERS
+    from bookforge.layers.runner import run
+    p = ready(project)
+    run(p, RuleLLM(rules()), HANDLERS, until="scenes")
+    sc = store.load_scenes(p)
+    texts = {sc[0].id: "Anna pries open the rusted lock on the cargo hatch and slips inside the ferry.",
+             sc[2].id: "Anna forces the rusted lock of the cargo hatch and slips inside the ferry once more.",
+             sc[4].id: "Anna pries the rusted lock on the cargo hatch and slips inside the ferry yet again."}
+    for sid, t in texts.items():
+        scenefiles.scene_dir(p, sid).mkdir(parents=True, exist_ok=True)
+        scenefiles.final_path(p, sid).write_text(t + " The rest of the scene follows.")
+        scenefiles.summary_path(p, sid).write_text(t)
+    found, _ = prose_findings(p)
+    assert any(f.code == "event_repeated" and f.stage == "prose" for f in found)

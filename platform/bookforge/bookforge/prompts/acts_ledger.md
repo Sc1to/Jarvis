@@ -16,6 +16,10 @@ Divide the book into ACTS by assigning the story events of its ledger to them. T
 
 {ledger_events}
 
+## Already true when this book begins (inherited from the books before it; not events of this book, but every plan must agree with it)
+
+{carried}
+
 ## Research notes (reference only: for accuracy and texture, never a source of events)
 
 {research_notes}

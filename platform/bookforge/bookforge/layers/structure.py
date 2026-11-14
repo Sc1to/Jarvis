@@ -22,7 +22,7 @@ from ..bible.validate import (
 )
 from ..constants import REDO_NOTE
 from ..errors import LayerError
-from ..ledger_view import status_text
+from ..ledger_view import carried_for_prompt, status_text
 from ..prompts import render
 from ..qc.plan_review import review_plan
 from ..research.notes import stores_for
@@ -173,9 +173,10 @@ def _north_stars(project) -> dict[str, str]:
     }
 
 
-def _reviewer(ctx: StepContext, label: str, what: str, parent: str, tracks_text: str, stars: dict[str, str]):
-    """A soft check for get_piece / generate_document: the critic's review of a plan against its parent."""
-    return lambda text: review_plan(ctx, label, what, parent, text, tracks_text, stars)
+def _reviewer(ctx: StepContext, label: str, what: str, parent: str, tracks_text: str, stars: dict[str, str], ledger_text: str | None = None):
+    """A soft check for get_piece / generate_document: the critic's review of a plan against its parent (and the ledger, when there is one)."""
+    extra = {} if ledger_text is None else {"ledger": ledger_text}
+    return lambda text: review_plan(ctx, label, what, parent, text, tracks_text, stars, **extra)
 
 
 def _note_reviews(project, layer: str, note: str, files: list[str]) -> str:
@@ -219,10 +220,10 @@ def _ledger_acts(ctx: StepContext, ledger) -> StepResult:
     spec = DocumentSpec(
         layer="acts", prompt="acts_ledger", out_path="books/{book}/acts.yaml",
         validate=lambda text: parse_acts(text, project, ledger)[1], max_tokens=3500, strip_preamble=False,
-        slots=lambda c: {**stars, "ledger_events": events_text(ledger.events), "constraints": _forced_counts(project),
+        slots=lambda c: {**stars, "ledger_events": events_text(ledger.events), "constraints": _forced_counts(project), "carried": carried_for_prompt(project),
                          "weight_per_chapter": f"{project.config.ledger.weight_per_chapter:g}"},
         normalize=normalize, research_scope="book",
-        review=_reviewer(ctx, "acts", "acts of the book", stars["synopsis"], "none yet", stars) if project.config.qc.review_structure else None,
+        review=_reviewer(ctx, "acts", "acts of the book", stars["synopsis"], "none yet", stars, events_text(ledger.events)) if project.config.qc.review_structure else None,
         research_focus="Rarely needed: only real-world facts that the large-scale structure of the story depends on.",
     )
     result = generate_document(ctx, spec)
@@ -342,14 +343,15 @@ def _build_chapters(ctx: StepContext, files: list[str]) -> str:
                 ctx, "chapters", act.id.split(".")[-1],
                 lambda act=act, first=first, last=last, before=before, ledger=ledger: _messages(
                     project, "chapters_ledger", act=dump_yaml(to_plain(act)), acts_overview=acts_digest(act_list),
-                    ledger_status=status_text(ledger, set(act.events), before), story_so_far=chapters_end_digest(before),
+                    ledger_status=status_text(ledger, set(act.events), before), story_so_far=chapters_end_digest(before), carried=carried_for_prompt(project),
                     cast=cast_digest(constants), tracks_so_far=tracks_digest(tracks), research_notes=notes_text(project, act_text),
                     chapter_count=str(act.chapter_count), first_chapter=_ch(project, first), last_chapter=_ch(project, last), **stars),
                 lambda text, act=act, first=first, before=before, ledger=ledger: parse_chapters(
                     text, project=project, act=act, first_number=first, constants=constants, tracks_so_far=tracks,
                     fact_ids=_fact_ids(project), ledger=ledger, chapters_before=before, acts=act_list),
                 max_tokens=7000,
-                review=_reviewer(ctx, f"chapters {act.id}", f"chapters of {act.id}", dump_yaml(to_plain(act)), tracks_digest(tracks), stars),
+                review=_reviewer(ctx, f"chapters {act.id}", f"chapters of {act.id}", dump_yaml(to_plain(act)), tracks_digest(tracks), stars,
+                                 status_text(ledger, set(act.events), before)),
             )
             if bundle.derived:  # minor complications join the ledger, so later acts and the validators see them
                 ledger = ledger.model_copy(update={"events": merge_derived(ledger.events, bundle.derived)})
@@ -503,7 +505,7 @@ def _build_scenes(ctx: StepContext, files: list[str]) -> str:
                 return _messages(
                     project, "scenes_ledger", chapter=dump_yaml(to_plain(chapter)), act=act_line,
                     ledger_status=status_text(ledger, set(chapter.events_covered), ch_list[:idx], "SHOWN IN THIS CHAPTER: plan scenes for these"),
-                    story_so_far=story_so_far_planning(project, ch_list[:idx], scenes_so_far),
+                    story_so_far=story_so_far_planning(project, ch_list[:idx], scenes_so_far), carried=carried_for_prompt(project),
                     cast=cast_digest(constants), tracks_in_chapter=tracks_in_chapter_digest(tracks, project.book, ch_num),
                     other_tracks="\n".join(f"- {t.id} (owner {t.entity})" for t in others) or "none",
                     previous_time=prev_when, research_notes=notes_text(project, dump_yaml(to_plain(chapter))),
@@ -525,7 +527,8 @@ def _build_scenes(ctx: StepContext, files: list[str]) -> str:
                 fact_ids=_fact_ids(project), ledger=ledger, all_chapters=ch_list),
             max_tokens=3500, before=before,
             review=_reviewer(ctx, f"scenes {chapter.id}", f"scenes of {chapter.id}",
-                             dump_yaml(to_plain(chapter)), tracks_in_chapter_digest(tracks, project.book, ch_num), stars),
+                             dump_yaml(to_plain(chapter)), tracks_in_chapter_digest(tracks, project.book, ch_num), stars,
+                             None if ledger is None else status_text(ledger, set(chapter.events_covered), ch_list[:idx], "SHOWN IN THIS CHAPTER")),
         )
         if bundle.new_entities:  # places the planner needed that the cast did not list: they join the cast
             adopted += [e.id for e in bundle.new_entities if e.id not in {x.id for x in constants.entities}]

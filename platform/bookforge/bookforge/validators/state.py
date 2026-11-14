@@ -8,6 +8,20 @@ from .findings import Finding, hard, soft
 from .text import content_stems, dice
 
 
+_PARTS = (("midnight", ("midnight", "small hours", "witching")), ("night", ("night", "late", "after dark")), ("dawn", ("dawn", "sunrise", "daybreak", "first light")),
+          ("morning", ("morning", "forenoon", "breakfast")), ("noon", ("noon", "midday", "lunch")), ("afternoon", ("afternoon",)),
+          ("dusk", ("dusk", "sunset", "twilight", "evening", "nightfall", "supper")))
+
+
+def time_part(text: str) -> str:
+    """A time of day as a part of the day, so 'dusk' and 'evening' are the same moment and 'noon' and 'midday' too."""
+    low = str(text).strip().lower()
+    for part, words in _PARTS:
+        if any(w in low for w in words):
+            return part
+    return low
+
+
 def _pos(text: str):
     try:
         return parse_position(text).key
@@ -38,7 +52,7 @@ def track_regressions(tracks: list[dict], stage: str = "state") -> list[Finding]
 def location_conflicts(scenes: list[dict], timeline: list[dict], tracks: list[dict] | None = None, stage: str = "state") -> list[Finding]:
     """The same character in two settings at the same story moment (same day and time), or two location tracks that disagree."""
     out: list[Finding] = []
-    when = {t["id"]: (t.get("day"), str(t.get("time", "")).strip().lower(), bool(t.get("flashback"))) for t in timeline}
+    when = {t["id"]: (t.get("day"), time_part(t.get("time", "")), bool(t.get("flashback"))) for t in timeline}
     seen: dict[tuple, tuple[str, str]] = {}
     for s in scenes:
         w = when.get(s["id"])

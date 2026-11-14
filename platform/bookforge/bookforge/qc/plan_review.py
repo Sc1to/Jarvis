@@ -24,10 +24,10 @@ def _check(data: dict) -> list[str]:
     return [] if problems else ['"ok" is false but no problems are listed']
 
 
-def review_plan(ctx, label: str, what: str, parent: str, proposed: str, tracks: str, north_stars: dict[str, str]) -> list[str]:
+def review_plan(ctx, label: str, what: str, parent: str, proposed: str, tracks: str, north_stars: dict[str, str], ledger: str = "none (this book has no ledger)") -> list[str]:
     try:
         data = ask_json(ctx, f"{label} review", "critic", "plan_review", _check, max_tokens=900, what=what, parent=parent,
-                        proposed=proposed, tracks=tracks, series_north_star=north_stars["series_north_star"],
+                        proposed=proposed, tracks=tracks, ledger=ledger, series_north_star=north_stars["series_north_star"],
                         book_north_star=north_stars["book_north_star"])
     except BookforgeError:
         return []
