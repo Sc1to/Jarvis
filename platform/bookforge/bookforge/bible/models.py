@@ -61,6 +61,7 @@ class Constants(_Record):
 class PlanEntry(_Record):
     from_: str = Field(alias="from")  # a chapter id (from the start of the chapter) or a scene id
     value: Annotated[str, BeforeValidator(as_text), StringConstraints(strip_whitespace=True, min_length=1, max_length=300)]
+    cause: Loose = ""  # what makes the state return to an earlier value (an event id or a few words); empty for a normal change
     must_show: bool = False  # the change itself must happen on the page in that scene
 
 
@@ -80,6 +81,9 @@ class Act(_Record):
     purpose: Text
     turning_point: Text
     chapter_count: int = Field(ge=1, le=60)
+    events: list[str] = []  # ledger event ids that belong to this act (every event to exactly one act)
+    turning_point_event: str = ""  # the ledger event that ends the act
+    sizing_reason: Loose = ""  # why this many chapters, one line
 
 
 class Chapter(_Record):
@@ -92,6 +96,8 @@ class Chapter(_Record):
     setting: Slug
     tension: int = Field(ge=1, le=10)
     research: list[str] = []
+    events_covered: list[str] = []  # ledger event ids told in this chapter
+    end_state: Loose = ""  # where things stand when the chapter ends: places, possessions, who knows what
 
 
 class Scene(_Record):
@@ -101,8 +107,10 @@ class Scene(_Record):
     pov: Slug
     setting: Slug
     characters: list[Slug] = Field(min_length=1)
-    beats: list[Text] = Field(min_length=2, max_length=10)
+    beats: list[Text] = Field(min_length=1, max_length=10)
     research: list[str] = []
+    events: list[str] = []  # ledger event ids this scene carries
+    end_state: Loose = ""  # where things stand when the scene ends
 
 
 class TimelineEntry(_Record):

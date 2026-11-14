@@ -26,7 +26,7 @@ List every event of the synopsis, in the order it happens, as numbered events e1
 - `once_only: true` for an event that can happen only once (a discovery, a death, a departure, a decision). `false` only for something that genuinely recurs.
 - `after`: ids of the events that must already have happened (cause and effect). The list order is the order of telling; an event never comes before one in its `after` list unless it is a flashback.
 - `weight`: how much story the event carries: 1 minor, 2 ordinary, 3 major (a turning point, a reveal, a climax). The number of chapters will follow from the total.
-- `kind`: event, setup (a secret, promise, clue or threat planted for later), reveal or payoff (it resolves a setup: put the setup's id in `pays_off`), or flashback (told out of story order). Every setup needs a payoff, and a payoff or reveal never comes before its setup.
+- `kind`: event, setup (a secret, promise, clue or threat planted for later), reveal or payoff (it resolves a setup: put the setup's id in `pays_off`), or flashback (told out of story order). A setup is something deliberately planted that the story later pays off (a secret, a promise, a clue, a threat): an ordinary event is not a setup. Every setup needs a payoff that resolves exactly what was planted, and a payoff or reveal never comes before its setup. Do not link events that are merely related.
 - `ending: true` on the events that make up the resolution of the book.
 - `pov`: the character whose view tells it, only if the book uses several viewpoints.
 - `carried_in: true` only for something the synopsis treats as already true at the start (see the carried-over state above).

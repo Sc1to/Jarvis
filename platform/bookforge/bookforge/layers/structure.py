@@ -18,13 +18,15 @@ from ..bible.positions import parse_position
 from ..bible.store import dump_yaml, to_plain
 from .. import review_notes, steering
 from ..bible.validate import (
-    add_entities, merge_constants, parse_acts, parse_cast, parse_chapters, parse_scenes, validate_bible,
+    add_entities, count_range, merge_constants, merge_derived, parse_acts, parse_cast, parse_chapters, parse_scenes, validate_bible,
 )
 from ..constants import REDO_NOTE
 from ..errors import LayerError
+from ..ledger_view import status_text
 from ..prompts import render
 from ..qc.plan_review import review_plan
 from ..research.notes import stores_for
+from ..research.select import notes_text
 from ..research.step import run_research
 from .document import DocumentSpec, ask_until_valid, generate_document, prompt_values, research_layer
 from .runner import StepContext, StepResult
@@ -60,6 +62,11 @@ def acts_digest(acts: list[Act]) -> str:
 
 def chapters_digest(chapters: list[Chapter]) -> str:
     return "\n".join(f"- {c.id} {c.title} (tension {c.tension}): {_short(c.summary)}" for c in chapters) or "none yet (this is the first act)"
+
+
+def chapters_end_digest(chapters: list[Chapter]) -> str:
+    """Where each chapter left things: the story so far, from the plan's end states."""
+    return "\n".join(f"- {c.id} {c.title}: {c.end_state or _short(c.summary)}" for c in chapters) or "none yet (this is the first act)"
 
 
 def tracks_digest(tracks: list[Track]) -> str:
@@ -185,8 +192,52 @@ def _adopt_problems(project, extra: list[str]) -> list[str]:
 
 # ── layer 4: acts ───────────────────────────────────────────────────────────
 
+def _forced_counts(project) -> str:
+    cfg = project.config.layers
+    parts = []
+    if cfg["acts"].count:
+        parts.append(f"The author requires {cfg['acts'].count[0]} to {cfg['acts'].count[1]} acts.")
+    if cfg["chapters"].count:
+        parts.append(f"The author requires the chapter counts to add up to between {cfg['chapters'].count[0]} and {cfg['chapters'].count[1]}.")
+    return " ".join(parts)
+
+
+def _ledger_acts(ctx: StepContext, ledger) -> StepResult:
+    from ..ledger_view import events_text
+    from ..validators import ledger as ledger_checks, store as findings_store
+    project = ctx.project
+    stars = _north_stars(project)
+    plain_events = [e.model_dump() for e in ledger.events]
+
+    def normalize(text: str) -> str:
+        parsed, _ = parse_acts(text, project, ledger)
+        return dump_yaml({"acts": [to_plain(a) for a in parsed]})
+
+    spec = DocumentSpec(
+        layer="acts", prompt="acts_ledger", out_path="books/{book}/acts.yaml",
+        validate=lambda text: parse_acts(text, project, ledger)[1], max_tokens=3500, strip_preamble=False,
+        slots=lambda c: {**stars, "ledger_events": events_text(ledger.events), "constraints": _forced_counts(project)},
+        normalize=normalize, research_scope="book",
+        review=_reviewer(ctx, "acts", "acts of the book", stars["synopsis"], "none yet", stars) if project.config.qc.review_structure else None,
+        research_focus="Rarely needed: only real-world facts that the large-scale structure of the story depends on.",
+    )
+    result = generate_document(ctx, spec)
+    act_list = store.load_acts(project)
+    findings = ledger_checks.check_acts([a.model_dump() for a in act_list], plain_events)
+    hard_left = [f.line() for f in findings if f.severity == "hard"]
+    if hard_left:  # an adopted (hand-edited) file passes through the same checks
+        raise LayerError("acts.yaml does not fit the ledger: " + "; ".join(hard_left[:6]))
+    result.files.append(findings_store.save(project, "acts", findings))
+    total = sum(a.chapter_count for a in act_list)
+    result.note += f"; {len(act_list)} acts, {total} chapters planned from {len(ledger.events)} events"
+    return result
+
+
 def acts(ctx: StepContext) -> StepResult:
     project = ctx.project
+    ledger = store.active_ledger(project)
+    if ledger is not None:
+        return _ledger_acts(ctx, ledger)
     lo, hi = project.config.layers["acts"].count or (3, 4)
     clo, chi = project.config.layers["chapters"].count or (25, 35)
 
@@ -212,7 +263,7 @@ def acts(ctx: StepContext) -> StepResult:
 def validate_chapters_file(project) -> list[str]:
     chapters = store.load_chapters(project)
     problems = _adopt_problems(project, [] if chapters else ["chapters.yaml has no chapters"])
-    lo, hi = project.config.layers["chapters"].count or (25, 35)
+    lo, hi = count_range(project, "chapters")
     if chapters and not lo <= len(chapters) <= hi:
         problems.append(f"chapters.yaml has {len(chapters)} chapters, expected {lo} to {hi}")
     return problems
@@ -261,23 +312,43 @@ def _build_chapters(ctx: StepContext, files: list[str]) -> str:
     constants = merge_constants(existing, cast_new)
 
     tracks = store.load_tracks(project)
+    ledger = store.active_ledger(project)
     done: list[Chapter] = []
     adopted: list[str] = []
     first = 1
     for act in act_list:
         last = first + act.chapter_count - 1
-        bundle = get_piece(
-            ctx, "chapters", act.id.split(".")[-1],
-            lambda act=act, first=first, last=last: _messages(
-                project, "chapters", act=dump_yaml(to_plain(act)), acts_overview=acts_digest(act_list),
-                cast=cast_digest(constants), tracks_so_far=tracks_digest(tracks), previous_chapters=chapters_digest(done),
-                chapter_count=str(act.chapter_count), first_chapter=_ch(project, first), last_chapter=_ch(project, last), **stars),
-            lambda text, act=act, first=first: parse_chapters(
-                text, project=project, act=act, first_number=first, constants=constants, tracks_so_far=tracks,
-                fact_ids=_fact_ids(project)),
-            max_tokens=6000,
-            review=_reviewer(ctx, f"chapters {act.id}", f"chapters of {act.id}", dump_yaml(to_plain(act)), tracks_digest(tracks), stars),
-        )
+        if ledger is None:
+            bundle = get_piece(
+                ctx, "chapters", act.id.split(".")[-1],
+                lambda act=act, first=first, last=last: _messages(
+                    project, "chapters", act=dump_yaml(to_plain(act)), acts_overview=acts_digest(act_list),
+                    cast=cast_digest(constants), tracks_so_far=tracks_digest(tracks), previous_chapters=chapters_digest(done),
+                    chapter_count=str(act.chapter_count), first_chapter=_ch(project, first), last_chapter=_ch(project, last), **stars),
+                lambda text, act=act, first=first: parse_chapters(
+                    text, project=project, act=act, first_number=first, constants=constants, tracks_so_far=tracks,
+                    fact_ids=_fact_ids(project)),
+                max_tokens=6000,
+                review=_reviewer(ctx, f"chapters {act.id}", f"chapters of {act.id}", dump_yaml(to_plain(act)), tracks_digest(tracks), stars),
+            )
+        else:
+            before = list(done)
+            act_text = dump_yaml(to_plain(act)) + "\n".join(e.text for e in ledger.events if e.id in act.events)
+            bundle = get_piece(
+                ctx, "chapters", act.id.split(".")[-1],
+                lambda act=act, first=first, last=last, before=before, ledger=ledger: _messages(
+                    project, "chapters_ledger", act=dump_yaml(to_plain(act)), acts_overview=acts_digest(act_list),
+                    ledger_status=status_text(ledger, set(act.events), before), story_so_far=chapters_end_digest(before),
+                    cast=cast_digest(constants), tracks_so_far=tracks_digest(tracks), research_notes=notes_text(project, act_text),
+                    chapter_count=str(act.chapter_count), first_chapter=_ch(project, first), last_chapter=_ch(project, last), **stars),
+                lambda text, act=act, first=first, before=before, ledger=ledger: parse_chapters(
+                    text, project=project, act=act, first_number=first, constants=constants, tracks_so_far=tracks,
+                    fact_ids=_fact_ids(project), ledger=ledger, chapters_before=before, acts=act_list),
+                max_tokens=7000,
+                review=_reviewer(ctx, f"chapters {act.id}", f"chapters of {act.id}", dump_yaml(to_plain(act)), tracks_digest(tracks), stars),
+            )
+            if bundle.derived:  # minor complications join the ledger, so later acts and the validators see them
+                ledger = ledger.model_copy(update={"events": merge_derived(ledger.events, bundle.derived)})
         done += bundle.chapters
         if bundle.new_entities:  # places the planner needed that the cast did not list: they join the cast
             adopted += [e.id for e in bundle.new_entities if e.id not in {x.id for x in constants.entities}]
@@ -288,6 +359,10 @@ def _build_chapters(ctx: StepContext, files: list[str]) -> str:
     store.save_constants(project, constants)
     store.save_tracks(project, tracks)
     store.save_chapters(project, done)
+    if ledger is not None:
+        store.save_ledger(project, ledger)
+        files.append("books/%s/ledger.yaml" % project.book)
+        files.append(_book_chapter_checks(project, done, ledger))
     problems = validate_chapters_file(project)
     if problems:
         store.chapters_path(project).unlink(missing_ok=True)  # keep the saved pieces so a rerun does not start over
@@ -298,6 +373,61 @@ def _build_chapters(ctx: StepContext, files: list[str]) -> str:
         log.info("chapters: %d place(s) added to the cast: %s", len(adopted), ", ".join(adopted))
     return (f"{len(done)} chapters, {len(constants.entities)} entities, {len(tracks)} tracks"
             + (f"; added to the cast because chapters used them: {', '.join(adopted)}" if adopted else ""))
+
+
+def _book_chapter_checks(project, chapters: list[Chapter], ledger) -> str:
+    """Whole-book checks once every act is planned: events and flat stretches. Hard findings stop the layer (the pieces are kept)."""
+    from ..validators import HARD, ledger as ledger_checks, repeats, store as findings_store, tension
+    ch = [c.model_dump() for c in chapters]
+    ev = [e.model_dump() for e in ledger.events]
+    acts_plain = [a.model_dump() for a in store.load_acts(project)]
+    findings = (ledger_checks.check_chapters(ch, ev, acts_plain) + repeats.repeated_events(ch, [], ledger_events=ev) + tension.flat_stretches(ch))
+    rel = findings_store.save(project, "chapters", findings)
+    hard_left = [f.line() for f in findings if f.severity == HARD]
+    if hard_left:
+        store.chapters_path(project).unlink(missing_ok=True)  # keep the saved pieces so a rerun does not start over
+        raise LayerError("the chapters do not hold together: " + "; ".join(hard_left[:6]) + f" (all findings: {rel})")
+    return rel
+
+
+def story_so_far_planning(project, chapters_before: list[Chapter], scenes_before: list) -> str:
+    """The story so far for the scene planner: from written scene summaries where the prose exists, else from the planned end states."""
+    from .. import scenefiles
+    by_chapter: dict[str, list] = {}
+    for s in scenes_before:
+        by_chapter.setdefault(s.chapter, []).append(s)
+    lines = []
+    for c in chapters_before:
+        scs = by_chapter.get(c.id, [])
+        written = [t for s in scs if (t := scenefiles.read(scenefiles.summary_path(project, s.id)))]
+        if written:
+            lines.append(f"- {c.id} {c.title} (written): " + " ".join(t.strip() for t in written))
+        else:
+            lines.append(f"- {c.id} {c.title} (planned): {(scs[-1].end_state if scs and scs[-1].end_state else c.end_state) or _short(c.summary)}")
+    return "\n".join(lines) or "nothing yet: this is the first chapter"
+
+
+def _book_scene_checks(project, chapters: list[Chapter], scenes_all: list, timeline: list, tracks: list[Track], constants, ledger) -> str:
+    """Whole-book checks on the planned scenes. Hard findings stop the layer (the pieces are kept for a rerun)."""
+    from ..validators import HARD, ledger as ledger_checks, repeats, research_leak, state as state_checks, store as findings_store
+    ch = [c.model_dump() for c in chapters]
+    sc = [s.model_dump() for s in scenes_all]
+    tl = [t.model_dump() for t in timeline]
+    ev = [e.model_dump() for e in ledger.events]
+    names = {e.id for e in constants.entities} | {w.lower() for e in constants.entities if e.kind == "character" for w in e.name.split()}
+    claims = [f.claim for s in stores_for(project).values() for f in s.facts()]
+    story_texts = [_read(project, f"books/{project.book}/synopsis.md"), _read(project, "north-star.md"), _read(project, f"books/{project.book}/north-star.md"),
+                   " ".join(e.text for e in ledger.events), " ".join(" ".join(e.facts) + " " + e.name for e in constants.entities)]
+    tracks_plain = [to_plain(t) for t in tracks]
+    findings = (ledger_checks.check_scenes_vs_chapters(sc, ch, ev) + repeats.repeated_events(ch, sc, names, ev, stage="scenes")
+                + repeats.action_patterns(sc, ch, names) + research_leak.research_in_beats(sc, claims, story_texts)
+                + state_checks.track_regressions(tracks_plain) + state_checks.location_conflicts(sc, tl, tracks_plain) + state_checks.day_regressions(sc, tl))
+    rel = findings_store.save(project, "scenes", findings)
+    hard_left = [f.line() for f in findings if f.severity == HARD]
+    if hard_left:
+        store.scenes_path(project).unlink(missing_ok=True)  # keep the saved pieces so a rerun does not start over
+        raise LayerError("the scenes do not hold together: " + "; ".join(hard_left[:6]) + f" (all findings: {rel})")
+    return rel
 
 
 def _ch(project, n: int) -> str:
@@ -348,6 +478,7 @@ def _build_scenes(ctx: StepContext, files: list[str]) -> str:
     prev_when = "none: this is the first scene of the book"
     research_files: list[str] = []
     ch_list = list(chapter_list)
+    ledger = store.active_ledger(project)
 
     for idx, chapter in enumerate(ch_list):
         ch_num = parse_position(chapter.id).chapter
@@ -358,10 +489,20 @@ def _build_scenes(ctx: StepContext, files: list[str]) -> str:
                                        max_questions=cfg.research.scene_questions, applies_to=[chapter.id])
                 research_files.extend(outcome.files)
 
-        def build(chapter=chapter, idx=idx, ch_num=ch_num, tracks=tracks, prev_when=prev_when):
+        def build(chapter=chapter, idx=idx, ch_num=ch_num, tracks=tracks, prev_when=prev_when, scenes_so_far=list(scenes_all)):
             touching, others = _chapter_tracks(tracks, project.book, ch_num)
-            lo, hi = cfg.layers["scenes"].per_chapter or (2, 4)
+            lo, hi = count_range(project, "scenes")
             act = act_by_id.get(chapter.act)
+            if ledger is not None:
+                act_line = f"{act.id} {act.title}: {_short(act.summary, 300)} Turning point: {_short(act.turning_point, 160)}" if act else chapter.act
+                return _messages(
+                    project, "scenes_ledger", chapter=dump_yaml(to_plain(chapter)), act=act_line,
+                    ledger_status=status_text(ledger, set(chapter.events_covered), ch_list[:idx], "SHOWN IN THIS CHAPTER: plan scenes for these"),
+                    story_so_far=story_so_far_planning(project, ch_list[:idx], scenes_so_far),
+                    cast=cast_digest(constants), tracks_in_chapter=tracks_in_chapter_digest(tracks, project.book, ch_num),
+                    other_tracks="\n".join(f"- {t.id} (owner {t.entity})" for t in others) or "none",
+                    previous_time=prev_when, research_notes=notes_text(project, dump_yaml(to_plain(chapter))),
+                    first_scene=f"{chapter.id}.s1", **{k: v for k, v in stars.items() if k != "synopsis"})
             return _messages(
                 project, "scenes", chapter=dump_yaml(to_plain(chapter)),
                 act=(f"{act.id} {act.title}: {_short(act.summary, 300)} Turning point: {_short(act.turning_point, 160)}" if act else chapter.act),
@@ -376,7 +517,7 @@ def _build_scenes(ctx: StepContext, files: list[str]) -> str:
             ctx, "scenes", chapter.id.split(".", 1)[1], build,
             lambda text, chapter=chapter, prev_day=prev_day, tracks=tracks: parse_scenes(
                 text, project=project, chapter=chapter, prev_day=prev_day, constants=constants, tracks_so_far=tracks,
-                fact_ids=_fact_ids(project)),
+                fact_ids=_fact_ids(project), ledger=ledger),
             max_tokens=3500, before=before,
             review=_reviewer(ctx, f"scenes {chapter.id}", f"scenes of {chapter.id}",
                              dump_yaml(to_plain(chapter)), tracks_in_chapter_digest(tracks, project.book, ch_num), stars),
@@ -400,6 +541,8 @@ def _build_scenes(ctx: StepContext, files: list[str]) -> str:
         store.save_constants(project, constants)
         log.info("scenes: %d place(s) added to the cast: %s", len(adopted), ", ".join(adopted))
     store.save_scenes(project, scenes_all)
+    if ledger is not None:
+        files.append(_book_scene_checks(project, ch_list, scenes_all, timeline_all, tracks, constants, ledger))
     problems = validate_scenes_file(project)
     if problems:
         store.scenes_path(project).unlink(missing_ok=True)  # keep the saved pieces so a rerun does not start over

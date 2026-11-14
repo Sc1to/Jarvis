@@ -363,12 +363,13 @@ def test_validate_bible_reports_unreadable_files(built):
 # ── through the CLI ─────────────────────────────────────────────────────────
 
 LEDGER_REPLY = dump({"events": [
-    {"id": "e1", "text": "The story begins", "excerpt": "story story story story", "weight": 2},
-    {"id": "e2", "text": "The story ends", "excerpt": "story story story", "weight": 2, "after": ["e1"], "ending": True}]})
+    {"id": f"e{i}", "text": t, "excerpt": "story story story story", "weight": 2, **({"after": [f"e{i - 1}"]} if i > 1 else {}), **({"ending": True} if i == 4 else {})}
+    for i, t in enumerate(["Anna finds the ledger", "Anna crosses a name out", "Jonas learns the truth", "Anna burns the ledger"], 1)]})
 
 
 def test_full_cli_flow_to_the_structure_checkpoint_and_state_lookups(tmp_path, monkeypatch):
-    llm = RuleLLM(direction_rules() + [("Extract the STORY EVENTS", LEDGER_REPLY)] + rules())
+    import ledger_structure_fakes as lsf
+    llm = RuleLLM(direction_rules() + [("Extract the STORY EVENTS", LEDGER_REPLY)] + lsf.rules())
     monkeypatch.setattr(cli, "build_client", lambda p: llm)
     monkeypatch.setattr(cli, "build_web_client", lambda p: None)
     runner = CliRunner()

@@ -259,6 +259,19 @@ def _short_source(url: str) -> str:
 DECISIONS_PROMPT_CHARS = 1500
 
 
+def decisions_text(project: Project) -> str:
+    """The author's approved decisions about the world, as prompt text ('' when there are none)."""
+    kind = {"invent": "invented", "extrapolate": "assumed", "bend": "changed on purpose"}
+    decided, used = [], 0
+    for n in approved_decisions(project):
+        line = f"- ({kind[n.stance]}) {n.rule}" + (f" [applies to {', '.join(n.applies_to)}]" if n.applies_to else "")
+        if used + len(line) > DECISIONS_PROMPT_CHARS:
+            break
+        decided.append(line)
+        used += len(line) + 1
+    return "The author's decisions about this world (canon, not real-world fact):\n" + "\n".join(decided) if decided else ""
+
+
 def notes_for_prompt(project: Project, max_chars: int) -> str:
     """Stored facts as prompt text, newest kept first when over budget, then the author's approved decisions about the world.
 
@@ -277,16 +290,9 @@ def notes_for_prompt(project: Project, max_chars: int) -> str:
         lines.append(line)
         used += len(line) + 1
     text = "\n".join(reversed(lines)) if lines else "none yet"
-    kind = {"invent": "invented", "extrapolate": "assumed", "bend": "changed on purpose"}
-    decided, used = [], 0
-    for n in approved_decisions(project):
-        line = f"- ({kind[n.stance]}) {n.rule}" + (f" [applies to {', '.join(n.applies_to)}]" if n.applies_to else "")
-        if used + len(line) > DECISIONS_PROMPT_CHARS:
-            break
-        decided.append(line)
-        used += len(line) + 1
+    decided = decisions_text(project)
     if decided:
-        text += "\n\nThe author's decisions about this world (canon, not real-world fact):\n" + "\n".join(decided)
+        text += "\n\n" + decided
     return text
 
 
