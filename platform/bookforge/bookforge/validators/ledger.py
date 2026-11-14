@@ -301,7 +301,7 @@ def act_capacity(act: dict, events: list[dict]) -> tuple[int, int, int, int]:
 
 
 def sizing_plausibility(acts: list[dict], events: list[dict], stage: str = "acts", weight_per_chapter: float = 2.0) -> list[Finding]:
-    """The chapter count of an act must fit the weight of its events: about `weight_per_chapter` each, within 0.6x to 1.75x of it.
+    """The chapter count of an act is an estimate (the chapters stage sizes the act from its events), so a count that does not fit is only a soft warning. It should fit the weight of its events: about `weight_per_chapter` each, within 0.6x to 1.75x of it.
     Outside that the act is padded (too many chapters for the material) or crammed (too few). The weights are computed here from
     the ledger, so a model that miscounts them in its reasoning is corrected with the real numbers."""
     out: list[Finding] = []
@@ -315,14 +315,14 @@ def sizing_plausibility(acts: list[dict], events: list[dict], stage: str = "acts
         if per < 0.6 * w or per > 1.75 * w:
             lo, hi = max(1, math.ceil(weight / (1.75 * w))), max(1, math.floor(weight / (0.6 * w)))
             kind = "padded: too many chapters for this material" if per < 0.6 * w else "crammed: too few chapters for this material"
-            out.append(hard(stage, "implausible_chapter_count",
+            out.append(soft(stage, "implausible_chapter_count",
                             f"{a['id']}: its events weigh {weight} in total ({n_events} events; the ledger's weights, not your estimate) and you gave {n} chapters, "
                             f"{per:.1f} weight each: {kind}. At about {w:g} weight per chapter that is about {weight / w:.1f} chapters; give between {lo} and {hi}", [a["id"]]))
         cap, n_ev, majors, derived = act_capacity(a, events)
         if n > cap:
-            out.append(hard(stage, "chapter_count_exceeds_capacity",
+            out.append(soft(stage, "chapter_count_exceeds_capacity",
                             f"{a['id']} plans {n} chapters, but its {n_ev} events can supply at most {cap}: every chapter needs a new event of its own, a weight 3 event may take a second chapter "
-                            f"({majors} here) and up to {derived} minor complication(s) may be derived. Give at most {cap} chapters (or move events into this act)", [a["id"]]))
+                            f"({majors} here) and up to {derived} minor complication(s) may be derived. The chapters stage will plan no more than {cap}", [a["id"]]))
         if not a.get("sizing_reason"):
             out.append(soft(stage, "no_sizing_reason", f"{a['id']} gives no sizing_reason for its chapter count", [a["id"]]))
     return out
@@ -401,7 +401,7 @@ def check_chapters(chapters: list[dict], events: list[dict], acts: list[dict] | 
         if idxs:
             last_idx = max(last_idx, max(idxs))
         if covered and not new and not continued:
-            out.append(hard(stage, "chapter_nothing_new", f"{c['id']} brings no event that has not already happened: every chapter must move the story forward (add a new event, continue a weight 3 event from the chapter before, or add a minor complication derived from an event)", [c["id"]]))
+            out.append(hard(stage, "chapter_nothing_new", f"{c['id']} brings no event that has not already happened: every chapter must move the story forward (add a new event, continue a weight 3 event from the chapter before, or add a minor complication derived from an event). If the act has no more events, end it here with fewer chapters", [c["id"]]))
         seen.update(covered)
         previous_active = set(covered) | set(continued)
     for e in events:

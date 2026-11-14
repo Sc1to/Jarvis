@@ -280,7 +280,7 @@ def test_chapter_counts_are_checked_against_the_ledgers_real_weights():
     ev = [dict(id=f"e{i}", text=f"event {i}", weight=3, once_only=True, kind="event") for i in range(1, 7)]  # weight 18
     act = lambda n, reason="weight 15": dict(id="t.act1", events=[e["id"] for e in ev], chapter_count=n, sizing_reason=reason, turning_point_event="e6", turning_point="event 6")
     crammed = [f for f in L.sizing_plausibility([act(4)], ev) if f.code == "implausible_chapter_count"]
-    assert crammed and crammed[0].severity == HARD and "weigh 18" in crammed[0].message and "between 6 and 15" in crammed[0].message
+    assert crammed and crammed[0].severity == "soft" and "weigh 18" in crammed[0].message and "between 6 and 15" in crammed[0].message
     assert L.sizing_plausibility([act(9)], ev) == []
     assert any(f.code == "implausible_chapter_count" and "padded" in f.message for f in L.sizing_plausibility([act(20)], ev))
     assert "weight 18 over 6 events" in L.sizing_note(act(9), ev)
@@ -471,7 +471,7 @@ def test_an_act_cannot_ask_for_more_chapters_than_its_events_supply():
     assert not [f for f in L.sizing_plausibility([act(8)], ev) if f.code == "chapter_count_exceeds_capacity"]
     big = [dict(id=f"e{i}", text=f"event {i}", weight=3, once_only=True, kind="event") for i in range(1, 7)]
     over = [f for f in L.sizing_plausibility([dict(id="a", events=[e["id"] for e in big], chapter_count=15, sizing_reason="x")], big) if f.code == "chapter_count_exceeds_capacity"]
-    assert over and over[0].severity == HARD and "at most 14" in over[0].message
+    assert over and over[0].severity == "soft" and "at most 14" in over[0].message
 
 
 def test_a_continued_event_is_the_chapters_own_for_the_text_checks():

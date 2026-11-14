@@ -39,9 +39,9 @@ def test_the_chapter_planner_is_told_what_is_done_and_what_is_reserved(project):
     p = project_ready(project)
     llm = RuleLLM(rules())
     run(p, llm, HANDLERS, until="chapters")
-    act2 = next(c for c in llm.calls if "b1.ch03 to b1.ch04" in c["messages"][-1]["content"])["messages"][-1]["content"]
+    act2 = next(c for c in llm.calls if "events need, b1.ch03 onward" in c["messages"][-1]["content"])["messages"][-1]["content"]
     assert "DONE (already told" in act2 and "e1 (once" in act2 and "[told in b1.ch01]" in act2
-    act1 = next(c for c in llm.calls if "b1.ch01 to b1.ch02" in c["messages"][-1]["content"])["messages"][-1]["content"]
+    act1 = next(c for c in llm.calls if "events need, b1.ch01 onward" in c["messages"][-1]["content"])["messages"][-1]["content"]
     assert "RESERVED FOR LATER" in act1 and "e3 (once" in act1.split("RESERVED FOR LATER")[1]  # act 2's events are off limits in act 1
     assert "Reference only" in act1 and "must never become a beat" in act1
 
@@ -60,13 +60,13 @@ def test_chapters_that_retell_an_event_or_use_a_reserved_one_are_refused(project
     p = project_ready(project)
     bad = chapters(1)
     bad["chapters"][1]["events_covered"] = ["e1"]  # tells e1 again, and e2 is never told
-    other = [("Plan up to 2 chapters, b1.ch01 to b1.ch02", dump(bad))]
+    other = [("Plan the chapters this act's events need, b1.ch01 onward", dump(bad))]
     summary = run(p, RuleLLM(other + rules()), HANDLERS, until="chapters")
     assert summary.stopped == "failed"
     assert "once_only_repeated" in summary.detail or "chapter_nothing_new" in summary.detail or "event_not_covered" in summary.detail
     reserved = chapters(1)
     reserved["chapters"][1]["events_covered"] = ["e2", "e3"]  # e3 belongs to act 2
-    llm = RuleLLM([("Plan up to 2 chapters, b1.ch01 to b1.ch02", dump(reserved))] + rules()[:2])
+    llm = RuleLLM([("Plan the chapters this act's events need, b1.ch01 onward", dump(reserved))] + rules()[:2])
     summary = run(p, llm, HANDLERS, until="chapters")
     assert summary.stopped == "failed" and "event_from_other_act" in " ".join(c["messages"][-1]["content"] for c in llm.calls)
 
@@ -76,7 +76,7 @@ def test_derived_complications_join_the_ledger_and_obey_the_rules(project):
     good = chapters(1)
     good["derived_events"] = [dict(id="e1.1", text="A dockhand sees her take it", parent="e1", after=["e1"], weight=1, kind="event")]
     good["chapters"][0]["events_covered"] = ["e1", "e1.1"]
-    summary = run(p, RuleLLM([("Plan up to 2 chapters, b1.ch01 to b1.ch02", dump(good))] + rules()), HANDLERS, until="chapters")
+    summary = run(p, RuleLLM([("Plan the chapters this act's events need, b1.ch01 onward", dump(good))] + rules()), HANDLERS, until="chapters")
     assert summary.ran == ["acts", "chapters"], summary.detail
     led = store.load_ledger(p)
     child = next(e for e in led.events if e.id == "e1.1")
@@ -84,7 +84,7 @@ def test_derived_complications_join_the_ledger_and_obey_the_rules(project):
     major = copy.deepcopy(good)
     major["derived_events"][0]["weight"] = 3
     p2 = project_ready(__import__("conftest").Project.create(p.root.parent / "second", "x\n"))
-    s2 = run(p2, RuleLLM([("Plan up to 2 chapters, b1.ch01 to b1.ch02", dump(major))] + rules()), HANDLERS, until="chapters")
+    s2 = run(p2, RuleLLM([("Plan the chapters this act's events need, b1.ch01 onward", dump(major))] + rules()), HANDLERS, until="chapters")
     assert s2.stopped == "failed" and "derived_not_minor" in s2.detail
 
 
@@ -122,7 +122,7 @@ def test_too_many_derived_complications_for_an_act_are_refused(project):
     padded = chapters(1)
     padded["derived_events"] = [dict(id=f"e1.{i}", text=f"A small delay number {i} slows her", parent="e1", after=["e1"], weight=1, kind="event") for i in (1, 2)]
     padded["chapters"][0]["events_covered"] = ["e1", "e1.1", "e1.2"]
-    s = run(p, RuleLLM([("Plan up to 2 chapters, b1.ch01 to b1.ch02", dump(padded))] + rules()), HANDLERS, until="chapters")
+    s = run(p, RuleLLM([("Plan the chapters this act's events need, b1.ch01 onward", dump(padded))] + rules()), HANDLERS, until="chapters")
     assert s.stopped == "failed" and "too_many_derived" in s.detail
 
 
@@ -179,7 +179,7 @@ def test_the_authors_note_reaches_the_ledger_mode_chapter_and_scene_prompts(proj
     llm = RuleLLM(rules())
     run(p, llm, HANDLERS, until="scenes")
     prompts = [next(m["content"] for m in c["messages"] if m["role"] == "user") for c in llm.calls]
-    assert any("Make the harbor feel colder." in t and "Plan up to 2 chapters" in t for t in prompts)
+    assert any("Make the harbor feel colder." in t and "events need" in t for t in prompts)
     assert any("Keep every scene short." in t and "Scene ids are consecutive" in t for t in prompts)
 
 
@@ -202,9 +202,9 @@ def test_a_whole_book_failure_plans_the_involved_acts_again_with_the_findings(pr
     second = run(p, llm, HANDLERS, until="chapters")
     assert second.ran == ["chapters"], second.detail
     asked = [next(m["content"] for m in c["messages"] if m["role"] == "user") for c in llm.calls]
-    act2 = [t for t in asked if "Plan up to 2 chapters, b1.ch03 to b1.ch04" in t]
+    act2 = [t for t in asked if "Plan the chapters this act's events need, b1.ch03 onward" in t]
     assert act2 and "Why the previous attempt was rejected" in act2[0] and "flat_tension" in act2[0]
-    assert not any("Plan up to 2 chapters, b1.ch01 to b1.ch02" in t for t in asked)  # act 1 was fine: its saved piece is reused
+    assert not any("Plan the chapters this act's events need, b1.ch01 onward" in t for t in asked)  # act 1 was fine: its saved piece is reused
     assert steering.read(p, "chapters") == ""  # the note is gone once the layer is accepted
 
 
@@ -260,7 +260,7 @@ def test_the_chapter_planner_of_an_act_sees_neither_other_acts_summaries_nor_its
     p = project_ready(project)
     llm = RuleLLM(rules())
     run(p, llm, HANDLERS, until="chapters")
-    act1 = next(next(m["content"] for m in c["messages"] if m["role"] == "user") for c in llm.calls if "b1.ch01 to b1.ch02" in c["messages"][-1]["content"])
+    act1 = next(next(m["content"] for m in c["messages"] if m["role"] == "user") for c in llm.calls if "events need, b1.ch01 onward" in c["messages"][-1]["content"])
     assert "What happens in act 1." not in act1 and "What happens in act 2." not in act1 and "The turn of act 2." not in act1
     assert "b1.act2 Act 2 (2 chapters) (planned later: nothing of it may appear here)" in act1 and "purpose" in act1
     from bookforge.ledger_view import carried_text  # noqa: F401  (the event texts reach the planner through the ledger status instead)
@@ -310,9 +310,26 @@ def test_an_act_whose_events_run_out_ends_with_fewer_chapters_than_its_ceiling(p
     plan = copy.deepcopy(acts())
     for a in plan["acts"]:
         a["chapter_count"] = 3  # a ceiling of 3 for events that only fill 2
-    first = [("Plan up to 3 chapters, b1.ch01 to b1.ch03", dump(chapters(1)))]
-    second = [("Plan up to 3 chapters, b1.ch03 to b1.ch05", dump(chapters(3)))]  # the second act starts at chapter 3: the first ended after 2
+    first = [("Plan the chapters this act's events need, b1.ch01 onward", dump(chapters(1)))]
+    second = [("Plan the chapters this act's events need, b1.ch03 onward", dump(chapters(3)))]  # the second act starts at chapter 3: the first ended after 2
     llm = RuleLLM([("Divide the book into ACTS by assigning", dump(plan))] + first + second + rules())
     summary = run(p, llm, HANDLERS, until="chapters")
     assert summary.ran == ["acts", "chapters"], summary.detail
     assert [a.chapter_count for a in store.load_acts(p)] == [2, 2] and len(store.load_chapters(p)) == 4
+
+
+def test_a_last_chapter_that_only_repeats_the_acts_events_is_dropped(project):
+    p = project_ready(project)
+    p.config.layers["chapters"].count = None
+    plan = copy.deepcopy(acts())
+    for a in plan["acts"]:
+        a["chapter_count"] = 3
+    padded = chapters(1)
+    extra = copy.deepcopy(padded["chapters"][1])
+    extra["id"] = "b1.ch03"
+    padded["chapters"].append(extra)  # the same event as chapter 2, nothing new
+    llm = RuleLLM([("Divide the book into ACTS by assigning", dump(plan)), ("Plan the chapters this act's events need, b1.ch01 onward", dump(padded)),
+                   ("Plan the chapters this act's events need, b1.ch03 onward", dump(chapters(3)))] + rules())
+    summary = run(p, llm, HANDLERS, until="chapters")
+    assert summary.ran == ["acts", "chapters"], summary.detail
+    assert len(store.load_chapters(p)) == 4 and [a.chapter_count for a in store.load_acts(p)] == [2, 2]

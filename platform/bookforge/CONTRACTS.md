@@ -33,7 +33,7 @@ Each book has its own bible (`books/<book>/bible/`); a track may carry `starts_a
 - Every ledger-mode planning prompt lists events as DONE / ASSIGNED / RESERVED FOR LATER and says reserved events must not be used.
 - Research is always labelled reference only: never a beat, an event, an obstacle or a plot device; at most three notes per chapter or scene.
 - `prose_system.md` forbids ending on a summary or thematic wrap-up, and restating the previous scene.
-- Sizing comes from the material: chapter counts from event weight (with a reason), scenes 1 to 4, scene length from the beats. `layers.*.count`, `per_chapter`, `layers.prose.words` and `book.target_words` are optional overrides.
+- Sizing comes from the material: chapter counts estimated at the acts stage from event weight (with a reason) and decided by the chapters stage from the events, scenes 1 to 4, scene length from the beats. `layers.*.count`, `per_chapter`, `layers.prose.words` and `book.target_words` are optional overrides.
 
 ## Files
 `books/<b>/ledger.yaml`, `acts.yaml`, `chapters.yaml`, `scenes.yaml`; `books/<b>/validation/{ledger,acts,chapters,scenes,prose}.json`; per series: `workbench/prompts/` overrides.
