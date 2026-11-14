@@ -48,15 +48,34 @@ def quote_plain_colons(text: str) -> str:
     return "\n".join(out) + ("\n" if text.endswith("\n") else "")
 
 
+def _without_stray_json(text: str) -> str:
+    """The reply without whole-line JSON objects at the left margin: a model sometimes adds the answer to an earlier request (a research check's
+    {"keep": ..., "drop": ...}) after its YAML. A line that is a complete JSON object is never part of a plan in YAML block style."""
+    import json
+    keep = []
+    for line in text.splitlines():
+        if line.startswith("{") and line.rstrip().endswith("}"):
+            try:
+                if isinstance(json.loads(line), dict):
+                    continue
+            except ValueError:
+                pass
+        keep.append(line)
+    return "\n".join(keep) + ("\n" if text.endswith("\n") else "")
+
+
 def load_reply_yaml(text: str):
     """The YAML in a model reply. Returns (data, error). A reply with unquoted colons in its text is repaired and read."""
     try:
         return yaml.safe_load(text), None
     except yaml.YAMLError as first_error:
-        try:
-            return yaml.safe_load(quote_plain_colons(text)), None
-        except yaml.YAMLError:
-            pass
+        for repaired in (quote_plain_colons(text), _without_stray_json(text), quote_plain_colons(_without_stray_json(text))):
+            if repaired == text:
+                continue
+            try:
+                return yaml.safe_load(repaired), None
+            except yaml.YAMLError:
+                pass
         e = first_error
     first = str(e).splitlines()[0] if str(e) else "unknown error"
     mark = getattr(e, "problem_mark", None)
