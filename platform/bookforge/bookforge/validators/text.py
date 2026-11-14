@@ -43,6 +43,8 @@ def stem(word: str) -> str:
             break
     if len(w) > 4 and w[-1] == w[-2] and w[-1] not in "aeiouls":  # stopp -> stop
         w = w[:-1]
+    if len(w) > 4 and w.endswith("e"):  # decide / decides / deciding all become 'decid'
+        w = w[:-1]
     return w
 
 

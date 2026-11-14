@@ -362,3 +362,54 @@ def test_prose_summaries_that_retell_an_event_in_new_words_are_caught(project):
         scenefiles.summary_path(p, sid).write_text(t)
     found, _ = prose_findings(p)
     assert any(f.code == "event_repeated" and f.stage == "prose" for f in found)
+
+
+# ── the shape of the acts (the acts a real run produced, with the ledger's events) ──
+
+REAL = {1: "Eli arrives at Erebus-7 and steps onto the asteroid surface", 2: "Eli observes the decaying industrial environment and realizes his debt binds him to the Astra Dominion",
+        3: "Eli seeks out Mara Kovic, a technician suffering from radiation-induced cognitive decline", 4: "Mara reveals that Eli's grandfather was executed by the corporation for discovering mining destabilization",
+        5: "Eli and Mara form an alliance to navigate the mining tunnels", 6: "Foreman Halloway begins hunting Eli and Mara, viewing them as liabilities",
+        7: "Eli and Mara locate the buried Kestrel beneath the processing plant", 8: "Eli realizes activating the ship requires bypassing safety protocols that would expose corporate secrets",
+        9: "Halloway intercepts them at the launch bay with drones and a plasma cutter", 10: "Eli decides to broadcast contamination data instead of fighting",
+        11: "Mara intervenes to protect the data drive, injuring Halloway in the process", 12: "Eli uploads the data, triggering a lockdown and worsening Mara's condition",
+        13: "Eli accepts he cannot save Mara and she succumbs to her condition", 14: "Eli launches the Kestrel and escapes as Halloway seals the sector",
+        15: "The corporation allows Eli to escape in exchange for a non-disclosure agreement and debt contract", 16: "Eli lands on an unclaimed moon, realizing survival requires compromise and the system remains intact"}
+REAL_EVENTS = [dict(id=f"e{i}", text=t, weight=3 if i >= 7 or i == 4 else 2, once_only=True, kind="event") for i, t in REAL.items()]
+
+
+def real_acts():
+    return [dict(id="b2.act1", title="Arrival and Alliance", chapter_count=4, events=["e1", "e2", "e3", "e4"], turning_point_event="e4", sizing_reason="x",
+                 summary="Eli arrives at Erebus-7 and steps onto the asteroid surface, observing the decaying industrial environment and realizing his debt binds him. He seeks out Mara Kovic, "
+                         "a technician suffering from radiation-induced cognitive decline, who warns him that Eli's grandfather was executed by the corporation. This forces Eli and Mara to form a fragile alliance to navigate the dangerous mining tunnels together.",
+                 purpose="To establish the hostile setting.", turning_point="Mara warns that Eli's grandfather was executed by the corporation for discovering mining destabilization."),
+            dict(id="b2.act2", title="The Hunt", chapter_count=7, events=["e5", "e6", "e7", "e8", "e9"], turning_point_event="e9", sizing_reason="x",
+                 summary="Eli and Mara form an alliance to navigate the mining tunnels, where Foreman Halloway begins hunting them. They locate the buried Kestrel beneath the processing plant but realize that activating the ship requires bypassing safety protocols. "
+                         "Halloway intercepts them at the launch bay with drones and a plasma cutter, forcing Eli to decide between fighting or broadcasting contamination data.",
+                 purpose="To escalate.", turning_point="Halloway intercepts them at the launch bay."),
+            dict(id="b2.act3", title="Escape", chapter_count=11, events=["e10", "e11", "e12", "e13", "e14", "e15", "e16"], turning_point_event="e10", sizing_reason="x",
+                 summary="Eli decides to broadcast contamination data instead of fighting, and Mara intervenes to protect the data drive. Eli uploads the data. He accepts he cannot save her. Eli launches the Kestrel and escapes, but the corporation allows it only for a non-disclosure agreement and debt contract. He lands on an unclaimed moon.",
+                 purpose="To resolve.", turning_point="Eli decides to broadcast contamination data instead of fighting.")]
+
+
+def test_a_turning_point_in_the_first_half_of_its_act_is_refused_and_one_at_the_end_is_not():
+    f = L.turning_point_positions(real_acts(), REAL_EVENTS)
+    assert [(x.code, x.severity, x.items[0]) for x in f] == [("turning_point_not_at_end", HARD, "b2.act3")] and "e15, e16" in f[0].message
+    fixed = real_acts()
+    fixed[2]["turning_point_event"] = "e13"
+    assert L.turning_point_positions(fixed, REAL_EVENTS) == []
+
+
+def test_an_act_summary_that_retells_another_acts_event_is_refused():
+    f = L.check_act_texts(real_acts(), REAL_EVENTS)
+    assert {(x.code, x.items[0], x.items[1]) for x in f if x.severity == HARD} >= {("act_retells_event", "b2.act1", "e5"), ("act_retells_event", "b2.act2", "e10")}
+    assert not any(x.items[0] == "b2.act3" and x.severity == HARD for x in f)
+    clean = real_acts()
+    clean[0]["summary"] = "Eli arrives at Erebus-7 and steps onto the asteroid surface and observes the decaying industrial environment. He seeks out Mara Kovic, a technician suffering from radiation-induced cognitive decline, who reveals his grandfather was executed."
+    clean[1]["summary"] = "Eli and Mara form an alliance to navigate the mining tunnels while Foreman Halloway hunts them. They locate the buried Kestrel but activating it requires bypassing safety protocols. Halloway intercepts them at the launch bay."
+    assert [x for x in L.check_act_texts(clean, REAL_EVENTS) if x.severity == HARD] == []
+
+
+def test_an_act_holding_half_the_chapters_is_flagged_softly():
+    f = L.lopsided_acts(real_acts())
+    assert [(x.code, x.severity, x.items[0]) for x in f] == [("lopsided_acts", SOFT, "b2.act3")] and "50%" in f[0].message
+    assert L.lopsided_acts([dict(id="a", chapter_count=3), dict(id="b", chapter_count=3)]) == []  # two acts: not judged

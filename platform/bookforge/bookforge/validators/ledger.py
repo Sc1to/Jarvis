@@ -263,6 +263,7 @@ def check_acts(acts: list[dict], events: list[dict], stage: str = "acts", weight
             out.append(hard(stage, "resolution_not_in_last_act", f"the last act ({final['id']}) must contain the resolution; missing: {', '.join(missing)}", [final["id"]] + missing))
     out += sizing_plausibility(acts, events, stage, weight_per_chapter)
     out += turning_point_texts(acts, events, stage)
+    out += turning_point_positions(acts, events, stage) + check_act_texts(acts, events, stage) + lopsided_acts(acts, stage)
     return out
 
 
@@ -431,7 +432,7 @@ def _stems_wo_names(text: str) -> set:
     return set(content_stems(text, drop=proper_nouns(text)))
 
 
-def _event_text_checks(unit_id: str, unit_text: str, listed: list[str], by_id: dict, others: list[dict], stage: str, what: str) -> list[Finding]:
+def _event_text_checks(unit_id: str, unit_text: str, listed: list[str], by_id: dict, others: list[dict], stage: str, what: str) -> list[Finding]:  # noqa: C901
     out: list[Finding] = []
     unit = _stems_wo_names(unit_text)
     for ev_id in listed:
@@ -466,7 +467,7 @@ def check_chapter_texts(chapters: list[dict], events: list[dict], stage: str = "
     by_id = {e["id"]: e for e in events}
     out: list[Finding] = []
     for c in chapters:
-        text = " ".join(str(c.get(k, "")) for k in ("title", "purpose", "summary"))
+        text = " ".join(str(c.get(k, "")) for k in ("purpose", "summary"))  # not the title: its capitalised words would read as names
         mine = set(c.get("events_covered") or [])
         others = [e for e in events if e["id"] not in mine and not e.get("carried_in")]
         out += _event_text_checks(c["id"], text, list(mine), by_id, others, stage, "chapter")
@@ -502,3 +503,46 @@ def scene_count_plausibility(chapter: dict, scenes: list[dict], events: list[dic
         return [hard(stage, "implausible_scene_count", f"{chapter['id']}: its events weigh {weight} in total (the ledger's weights) and you gave {n} scene(s), {per:.1f} weight each: {kind}. "
                      f"At about {SCENE_WEIGHT:g} weight per scene give between {lo} and {hi}", [chapter["id"]])]
     return []
+
+
+# ── the shape of the acts ────────────────────────────────────────────────────
+
+def turning_point_positions(acts: list[dict], events: list[dict], stage: str = "acts") -> list[Finding]:
+    """A turning point ends its act. One in the first half of an act's events (with four or more) is out of place."""
+    order = {e["id"]: i for i, e in enumerate(events)}
+    out = []
+    for a in acts:
+        mine = sorted([x for x in a.get("events") or [] if x in order], key=order.get)
+        tp = a.get("turning_point_event") or ""
+        if len(mine) < 4 or tp not in mine:
+            continue
+        at = mine.index(tp)
+        if at < (len(mine) - 1) / 2:
+            out.append(hard(stage, "turning_point_not_at_end", f"{a['id']}: the turning point {tp} is event {at + 1} of {len(mine)} in the act. A turning point ends its act: "
+                            f"choose a later event, or move the events after {tp} into the next act (the act's last events: {', '.join(mine[-2:])})", [a["id"], tp]))
+    return out
+
+
+def check_act_texts(acts: list[dict], events: list[dict], stage: str = "acts") -> list[Finding]:
+    """An act's summary, purpose and turning point must not retell an event that belongs to another act."""
+    out = []
+    for a in acts:
+        text = " ".join(str(a.get(k, "")) for k in ("summary", "purpose", "turning_point"))
+        mine = set(a.get("events") or [])
+        others = [e for e in events if e["id"] not in mine and not e.get("carried_in")]
+        out += [f for f in _event_text_checks(a["id"], text, [], {}, others, stage, "act") if f.code.endswith("retells_event")]
+    return out
+
+
+def lopsided_acts(acts: list[dict], stage: str = "acts", high: float = 0.45, low: float = 0.1) -> list[Finding]:
+    """Soft: one act holding almost half the chapters (or nearly none) makes a lopsided book. With three or more acts."""
+    total = sum(int(a.get("chapter_count") or 0) for a in acts)
+    if len(acts) < 3 or not total:
+        return []
+    out = []
+    for a in acts:
+        share = int(a.get("chapter_count") or 0) / total
+        if share > high or share < low:
+            out.append(soft(stage, "lopsided_acts", f"{a['id']} holds {a.get('chapter_count')} of {total} chapters ({share:.0%}): "
+                            + ("consider moving some of its events into a neighbouring act" if share > high else "it is very short next to the others"), [a["id"]]))
+    return out
