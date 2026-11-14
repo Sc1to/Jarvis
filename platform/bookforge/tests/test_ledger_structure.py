@@ -265,3 +265,14 @@ def test_the_chapter_planner_of_an_act_sees_neither_other_acts_summaries_nor_its
     assert "b1.act2 Act 2 (2 chapters) (planned later: nothing of it may appear here)" in act1 and "purpose" in act1
     from bookforge.ledger_view import carried_text  # noqa: F401  (the event texts reach the planner through the ledger status instead)
     assert "ASSIGNED HERE" in act1 and "Anna finds the ledger" in act1
+
+
+def test_a_cast_that_was_saved_by_an_earlier_failed_run_and_is_listed_again_does_not_fail_the_layer(project):
+    import structure_fakes as sf
+    from bookforge.bible.models import Constants, Entity, Rule
+    p = project_ready(project)
+    data = sf.cast()
+    store.save_constants(p, Constants(entities=[Entity(**e) for e in data["entities"]], rules=[Rule(**r) for r in data["rules"]]))  # what the failed run left behind
+    summary = run(p, RuleLLM(rules()), HANDLERS, until="chapters")  # the scripted model lists the whole cast again
+    assert summary.ran == ["acts", "chapters"], summary.detail
+    assert len(store.load_constants(p).entities) == 5  # nothing duplicated

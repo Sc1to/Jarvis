@@ -26,7 +26,7 @@ List the CAST AND WORLD of the book: the characters, places, objects and groups 
 
 ## Task
 
-List every NEW entity the story needs:
+List every NEW entity the story needs (one not already in the cast above; if the cast above already covers the story, return `entities: []`):
 - every character with a part in the plot (give each a short list of fixed facts: appearance that does not change, birthplace, background, voice);
 - every place the story returns to or that matters to the plot (a ship, train, carriage, house or room that people are inside is a place, even if it also moves; only things people hold or use are objects);
 - key objects and groups (families, institutions, factions) that characters act on or against.
