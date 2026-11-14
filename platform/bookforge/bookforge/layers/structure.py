@@ -246,7 +246,7 @@ def _ledger_acts(ctx: StepContext, ledger) -> StepResult:
     result = generate_document(ctx, spec)
     act_list = store.load_acts(project)
     from ..validators import accepted
-    findings = accepted.apply(project, ledger_checks.check_acts([a.model_dump() for a in act_list], plain_events, weight_per_chapter=project.config.ledger.weight_per_chapter), "acts")
+    findings = accepted.apply(project, ledger_checks.check_acts([a.model_dump() for a in act_list], plain_events, weight_per_chapter=project.config.ledger.weight_per_chapter, capacity_estimate=(ledger.capacity or {}).get("estimated_chapters"), tolerance=project.config.ledger.count_tolerance), "acts")
     hard_left = [f.line() for f in findings if f.severity == "hard"]
     if hard_left:  # an adopted (hand-edited) file passes through the same checks
         raise LayerError("acts.yaml does not fit the ledger: " + "; ".join(hard_left[:6]))
@@ -316,6 +316,14 @@ def chapters(ctx: StepContext) -> StepResult:
     return StepResult(files=files, note=note)
 
 
+def _resized(act: Act, count: int) -> Act:
+    """The act with the chapter count its events made. When that is not the estimate, the sizing reason says so, so the file never contradicts itself."""
+    reason = act.sizing_reason
+    if abs(count - act.chapter_count) > 1 and not reason.lower().lstrip().startswith("override:"):
+        reason = f"override: the chapter planner needed {count} chapters for this act's events (the estimate was {act.chapter_count}). {reason}".strip()
+    return act.model_copy(update={"chapter_count": count, "sizing_reason": reason})
+
+
 def _build_chapters(ctx: StepContext, files: list[str]) -> str:
     project = ctx.project
     if ctx.llm is None:
@@ -382,7 +390,7 @@ def _build_chapters(ctx: StepContext, files: list[str]) -> str:
         if ledger is not None:  # the act is as long as its events made it, not as the estimate or the ceiling said
             if len(bundle.chapters) != act.chapter_count:
                 log.info("chapters: %s took %d chapters (estimated %d)", act.id, len(bundle.chapters), act.chapter_count)
-                act_list = [a.model_copy(update={"chapter_count": len(bundle.chapters)}) if a.id == act.id else a for a in act_list]
+                act_list = [_resized(a, len(bundle.chapters)) if a.id == act.id else a for a in act_list]
             last = first + len(bundle.chapters) - 1
         if bundle.new_entities:  # places the planner needed that the cast did not list: they join the cast
             adopted += [e.id for e in bundle.new_entities if e.id not in {x.id for x in constants.entities}]

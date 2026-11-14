@@ -159,7 +159,8 @@ class StoryEvent(_Record):
     kind: Literal["event", "setup", "reveal", "payoff", "flashback"] = "event"
     weight: int = Field(1, ge=1, le=3)  # how much story it carries: 1 minor, 2 ordinary, 3 major; chapter counts follow from it
     pov: str = ""  # whose view tells it, when the book has several
-    ending: bool = False  # part of the resolution
+    ending: bool = False  # THE resolution of the book: exactly one event carries it
+    decision: bool = False  # the book's central decision (what the story turns on); at most one event
     pays_off: str = ""  # a payoff or reveal names the setup it pays off
     source: Literal["synopsis", "derived", "author"] = "synopsis"
     parent: str = ""  # derived events name the event they complicate
@@ -175,6 +176,8 @@ class AuthorQuestion(_Record):
     answer: str = ""  # the author's answer; the ledger is revised from it
     status: Literal["open", "answered", "dismissed"] = "open"
     applied: bool = False  # an answered question has been worked into the ledger
+    type: str = ""  # which check raised it (audit finding type, "thin", "unpaid_setup"...), for the report on noisy checks
+    quotes: list[str] = []  # the words of the synopsis the question is about, verbatim
 
 
 class Ledger(_Record):
@@ -183,3 +186,4 @@ class Ledger(_Record):
     thin: bool = False  # the synopsis carries too little for a novel: nothing was invented, see questions
     capacity: dict = {}  # the numbers behind the "thin" decision, for the report
     revision: int = 1  # bumped when the author's answers revised the ledger
+    audit: dict = {}  # what the synopsis audit found: {"revision": n, "findings": {type: count}}

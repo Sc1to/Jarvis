@@ -111,13 +111,13 @@ CASES = {
     "thin": dict(file="thin.md", expect_thin=True, marks={}, weights={}),
     "multi_pov": dict(file="multi_pov.md", expect_thin=False, min_chapters=4, weights={"closes its gates": 3, "reach the foreign house": 3, "strip the guildmaster": 3},
                       marks={"Dara Venn": dict(pov="dara"), "Tomas Oakby": dict(pov="tomas"), "Dara steals": dict(pov="dara"),
-                             "Tomas escapes": dict(pov="tomas"), "grants the apprentices": dict(ending=True), "strip the guildmaster": dict(ending=True)}),
-    "mystery": dict(file="mystery.md", expect_thin=False, min_chapters=4, weights={"Hale proves": 3, "Pryce confesses": 3},
+                             "Tomas escapes": dict(pov="tomas"), "grants the apprentices": dict(ending=True), "strip the guildmaster": dict(decision=True)}),
+    "mystery": dict(file="mystery.md", expect_thin=False, min_chapters=4, weights={"Hale proves": 3, "Pryce confesses": 3, "lies about where": 1, "servant's mistake": 1, "notices a clock": 1},
                     marks={"clock stopped at ten past nine": dict(kind="setup"), "locked drawer": dict(kind="setup"),
                            "stopped on purpose": dict(kind="reveal", pays_off="@clock stopped at ten past nine"),
                            "opens the locked drawer": dict(kind="payoff", pays_off="@clock stopped at ten past nine"),
                            "Hale proves": dict(ending=True)}),
-    "series_book2": dict(file="series_book2.md", expect_thin=False, min_chapters=4, carried="series_book2_carried.md", weights={"voids the debt": 3, "opens it": 3},
+    "series_book2": dict(file="series_book2.md", expect_thin=False, min_chapters=4, carried="series_book2_carried.md", weights={"voids the debt": 3, "opens it": 3, "seized the Marigold": 1, "Rhee returns": 1},
                          marks={"voids the debt": dict(ending=True), "Rhee returns": dict(carried_in=False)}),
 }
 

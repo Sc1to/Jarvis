@@ -35,7 +35,7 @@ def test_good_ledger_passes():
 
 
 def test_missing_resolution_is_caught():
-    ev = [e for e in copy.deepcopy(EVENTS) if not e["ending"]]
+    ev = [e for e in copy.deepcopy(EVENTS) if not e["ending"] and e["id"] != "e9"]  # the final paragraph is told by e9 and e10
     c = codes(L.check_ledger(ev, SYN), HARD)
     assert "no_resolution" in c and "synopsis_not_covered" in c  # the final paragraph has no event
 

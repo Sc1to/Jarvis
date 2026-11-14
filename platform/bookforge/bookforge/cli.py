@@ -104,8 +104,13 @@ def ledger_cmd(
     from .validators import store as findings_store
     try:
         project = Project.open(path, book)
-        ledger_obj, findings = generate(StepContext(project=project, layer="ledger", llm=build_client(project)),
-                                        project.resolve(f"books/{project.book}/synopsis.md").read_text(encoding="utf-8").strip())
+        ctx = StepContext(project=project, layer="ledger", llm=build_client(project))
+        synopsis = project.resolve(f"books/{project.book}/synopsis.md").read_text(encoding="utf-8").strip()
+        from .layers import audit as audit_mod
+        audit_questions, audit_summary = audit_mod.audit(ctx, synopsis, [])
+        ledger_obj, findings = generate(ctx, synopsis)
+        ledger_obj.questions = audit_questions + ledger_obj.questions
+        ledger_obj.audit = audit_summary
         target = out or project.book_dir / "ledger.preview.yaml"
         from .bible.store import dump_yaml, to_plain
         target.write_text(dump_yaml(to_plain(ledger_obj)), encoding="utf-8")

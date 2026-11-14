@@ -318,7 +318,8 @@ def test_an_act_whose_events_run_out_ends_with_fewer_chapters_than_its_ceiling(p
     p.config.layers["chapters"].count = None  # no fixed total: the model sizes the acts
     plan = copy.deepcopy(acts())
     for a in plan["acts"]:
-        a["chapter_count"] = 3  # a ceiling of 3 for events that only fill 2
+        a["chapter_count"] = 3  # an estimate of 3 for events that only fill 2
+        a["sizing_reason"] = "override: the author asked for a longer act than the weights suggest"
     first = [("Plan the chapters this act's events need, b1.ch01 onward", dump(chapters(1)))]
     second = [("Plan the chapters this act's events need, b1.ch03 onward", dump(chapters(3)))]  # the second act starts at chapter 3: the first ended after 2
     llm = RuleLLM([("Divide the book into ACTS by assigning", dump(plan))] + first + second + rules())
@@ -333,6 +334,7 @@ def test_a_last_chapter_that_only_repeats_the_acts_events_is_dropped(project):
     plan = copy.deepcopy(acts())
     for a in plan["acts"]:
         a["chapter_count"] = 3
+        a["sizing_reason"] = "override: the author asked for a longer act than the weights suggest"
     padded = chapters(1)
     extra = copy.deepcopy(padded["chapters"][1])
     extra["id"] = "b1.ch03"

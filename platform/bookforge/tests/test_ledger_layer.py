@@ -42,8 +42,15 @@ def thin_events():
     return ev
 
 
-def run_ledger(project, replies):
-    llm = FakeLLMClient({"critic": [r if isinstance(r, str) else dump(r) for r in replies]})
+def extraction_calls(llm):
+    """The model calls that are not the synopsis audit."""
+    return [c for c in llm.calls if "careful editor" not in c["messages"][-1]["content"]]
+
+
+def run_ledger(project, replies, audit='{"findings": []}'):
+    """Runs the ledger layer. The first run of a book starts with the synopsis audit, which answers `audit` (nothing found) before the extraction."""
+    first = store.load_ledger(project) is None or not store.load_ledger(project).events
+    llm = FakeLLMClient({"critic": ([audit] if first and audit else []) + [r if isinstance(r, str) else dump(r) for r in replies]})
     return run(project, llm, HANDLERS, until="ledger"), llm
 
 
@@ -65,8 +72,8 @@ def test_a_failed_check_is_fed_back_and_survivors_stop_the_layer(project_with_le
     bad = copy.deepcopy(GOOD)
     bad["events"] = [e for e in bad["events"] if not e["ending"]]  # the resolution is missing
     summary, llm = run_ledger(p, [bad, GOOD])
-    assert summary.ran == ["ledger"] and len(llm.calls) == 2
-    fed_back = llm.calls[1]["messages"][-1]["content"]
+    assert summary.ran == ["ledger"] and len(extraction_calls(llm)) == 2
+    fed_back = extraction_calls(llm)[1]["messages"][-1]["content"]
     assert "no_resolution" in fed_back or "synopsis_not_covered" in fed_back
 
     q = prepared(__import__("conftest").Project.create(p.root.parent / "second", "x\n"))
@@ -83,7 +90,7 @@ def test_a_thin_synopsis_asks_questions_and_stops(project_with_ledger):
     with_q["questions"] = [dict(id="q1", question="What stands between Mara and the ferry?", why="the middle of the book is empty",
                                 options=["a rival salvager wants the ferry", "the ferry is impounded"])]
     summary, llm = run_ledger(p, [thin_no_questions, with_q])
-    assert len(llm.calls) == 2 and "Do not pad" in llm.calls[1]["messages"][-1]["content"]  # padding refused, questions required
+    assert len(extraction_calls(llm)) == 2 and "Do not pad" in extraction_calls(llm)[1]["messages"][-1]["content"]  # padding refused, questions required
     assert summary.stopped == "checkpoint" and p.state.layers["ledger"].status == "drafted"
     led = store.load_ledger(p)
     assert led.thin and led.questions[0].status == "open" and len(led.events) == 10
@@ -105,7 +112,7 @@ def test_author_answers_revise_the_ledger_and_rerun_the_validators(project_with_
     revised["events"].insert(3, dict(id="e12", text="Mara outwits Teague at the gate", once_only=True, after=["e11"], kind="event", weight=3,
                                      pov="", ending=False, pays_off="", source="author", parent="", excerpt=""))
     summary, llm = run_ledger(p, [revised])
-    assert len(llm.calls) == 1 and "Teague" in llm.calls[0]["messages"][-1]["content"]
+    assert len(extraction_calls(llm)) == 1 and "Teague" in extraction_calls(llm)[0]["messages"][-1]["content"]
     led = store.load_ledger(p)
     assert led.revision == 2 and [e.id for e in led.events if e.source == "author"] == ["e11", "e12"]
     assert led.questions[0].applied and led.questions[0].status == "answered"
@@ -122,7 +129,7 @@ def test_a_revision_may_not_change_synopsis_events(project_with_ledger):
     tampered = copy.deepcopy(GOOD)
     tampered["events"][0]["text"] = "Mara owes nothing"
     summary, llm = run_ledger(p, [tampered, tampered, tampered])
-    assert summary.stopped == "failed" and "must stay exactly as it was" in llm.calls[1]["messages"][-1]["content"]
+    assert summary.stopped == "failed" and "must stay exactly as it was" in extraction_calls(llm)[1]["messages"][-1]["content"]
     assert store.load_ledger(p).revision == 1  # the saved ledger is untouched
 
 
@@ -165,7 +172,7 @@ def test_a_setup_that_names_the_text_instead_of_the_id_is_repaired_without_a_cor
     e7 = next(e for e in sloppy["events"] if e["id"] == "e7")
     next(e for e in sloppy["events"] if e["id"] == "e9")["pays_off"] = e7["text"]  # the text, not "e7"
     summary, llm = run_ledger(p, [sloppy])
-    assert summary.ran == ["ledger"] and len(llm.calls) == 1
+    assert summary.ran == ["ledger"] and len(extraction_calls(llm)) == 1
     assert next(e for e in store.load_ledger(p).events if e.id == "e9").pays_off == "e7"
 
 
@@ -179,7 +186,7 @@ def test_a_reversed_pair_is_repaired_and_an_unpaid_setup_becomes_a_question(proj
     by["e5"].update(kind="setup", pays_off="")            # a setup nothing resolves
     summary, llm = run_ledger(p, [sloppy])
     led = store.load_ledger(p)
-    assert len(llm.calls) == 1 and summary.stopped == "checkpoint" and p.state.layers["ledger"].status == "drafted"
+    assert len(extraction_calls(llm)) == 1 and summary.stopped == "checkpoint" and p.state.layers["ledger"].status == "drafted"
     assert next(e for e in led.events if e.id == "e7").kind == "setup" and next(e for e in led.events if e.id == "e8").pays_off == "e7"
     open_q = [q for q in led.questions if q.status == "open"]
     assert any(q.question.startswith("Setup e5 ") for q in open_q)  # asked, not failed
