@@ -791,3 +791,17 @@ def test_an_older_series_is_split_through_the_api_and_the_status_says_it_is_shar
     done = data(client.post("/api/series/series/split-bible"))
     assert done["b1"]["tracks"] >= 1 and data(client.get(f"{B}/status"))["shared_bible"] is False
     error(client.post("/api/series/series/split-bible"), 400)
+
+
+def test_the_cast_editor_routes(full):
+    over = data(client.get(f"{B}/cast"))
+    assert {e["id"] for e in over["entities"]} >= {"anna", "jonas", "harbor"} and over["shared_bible"] is False
+    assert data(client.get(f"{B}/cast/anna/usage"))["usage"]
+    added = data(client.post(f"{B}/cast", json={"id": "mira-hale", "kind": "character", "name": "Mira Hale", "facts": ["tall"]}), 201)
+    assert added["id"] == "mira-hale"
+    assert data(client.put(f"{B}/cast/mira-hale", json={"name": "Mira H.", "facts": ["tall", "grey"]}))["facts"] == ["tall", "grey"]
+    error(client.post(f"{B}/cast", json={"id": "mira-hale", "kind": "character", "name": "x", "facts": ["x"]}), 400)
+    error(client.delete(f"{B}/cast/anna"), 400)
+    renamed = data(client.post(f"{B}/cast/mira-hale/rename", json={"id": "mira"}))
+    assert renamed["to"] == "mira"
+    assert data(client.delete(f"{B}/cast/mira")) == {"deleted": "mira"}
