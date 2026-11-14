@@ -28,6 +28,7 @@ from ..constants import REDO_NOTE
 from ..errors import LayerError
 from ..prompts import render
 from ..validators import HARD, Finding
+from ..validators.findings import soft as _soft
 from ..validators import ledger as ledger_checks
 from ..validators import store as findings_store
 from .. import steering
@@ -51,6 +52,10 @@ def capacity(events: list[dict], weight_per_chapter: float, min_chapters: int) -
     }
 
 
+def soft_finding(code: str, message: str) -> Finding:
+    return _soft("ledger", code, message)
+
+
 def parse_ledger(text: str, synopsis: str, project, prior: Ledger | None = None) -> tuple[Ledger | None, list[str], list[Finding]]:
     """(ledger, hard problems, all findings). With `prior`, this is a revision: its synopsis events must come back unchanged."""
     data, error = load_reply_yaml(text)
@@ -60,6 +65,7 @@ def parse_ledger(text: str, synopsis: str, project, prior: Ledger | None = None)
     if not isinstance(data, dict) or not isinstance(data.get("events"), list):
         return None, ["the top level must be a mapping with an 'events:' list"], []
     ledger_checks.resolve_references(data["events"])  # an event's text written where its id belongs is mapped back to the id
+    repairs = ledger_checks.repair_setups(data["events"])  # reversed or unmarked setup/payoff pairs are put right
     events: list[StoryEvent] = []
     for i, raw in enumerate(data["events"]):
         try:
@@ -89,6 +95,16 @@ def parse_ledger(text: str, synopsis: str, project, prior: Ledger | None = None)
             problems.append("new questions need new ids (continue the numbering); do not repeat existing questions")
     findings = ledger_checks.check_ledger(plain, synopsis)
     problems += [f.line() for f in findings if f.severity == HARD]
+    findings += [soft_finding("auto_repaired", note) for note in repairs]
+    # A setup nothing pays off is the author's call, not a failure: it becomes a question (once per setup).
+    known = [q.question for q in questions] + ([q.question for q in prior.questions] if prior else [])
+    next_n = 1 + max([int(q.id[1:]) for q in questions + (prior.questions if prior else [])] or [0])
+    for f in findings:
+        if f.code == "setup_without_payoff":
+            event = next(e for e in plain if e["id"] == f.items[0])
+            if not any(q.startswith(f"Setup {event['id']} ") for q in known):
+                questions.append(AuthorQuestion(id=f"q{next_n}", **ledger_checks.unpaid_setup_question(event)))
+                next_n += 1
 
     cfg = project.config.ledger
     cap = capacity(plain, cfg.weight_per_chapter, cfg.min_chapters)

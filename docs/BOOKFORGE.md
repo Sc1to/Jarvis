@@ -222,7 +222,7 @@ The book is written top-down through seven layers, each refining the one above i
 
 | Module | Finds |
 |---|---|
-| `ledger` | unknown/duplicate ids, cycles, order, excerpts not in the synopsis, synopsis paragraphs with no event (the resolution), no ending event, setups without payoff, reveal before setup, derived events that are not minor children; acts: every event in exactly one act, last act holds the resolution, turning point is an event of its act, chapter counts implausible for the weight; chapters: once_only events twice, events before their causes, chapters with nothing new, events uncovered; scenes without end_state |
+| `ledger` | unknown/duplicate ids, cycles, order, excerpts not in the synopsis, synopsis paragraphs with no event (the resolution), no ending event, reveal before setup (a setup without a payoff is a question for the author; reversed or unmarked setup/payoff pairs and event text written as an id are repaired automatically), derived events that are not minor children; acts: every event in exactly one act, last act holds the resolution, turning point is an event of its act, chapter counts implausible for the weight; chapters: once_only events twice, events before their causes, chapters with nothing new, events uncovered; scenes without end_state |
 | `repeats` | event repeats by meaning (units are chapter-summary sentences and scene beats; stems, merged verb classes, same names); chapters that replan another; action patterns (the same verb + object in many chapters) |
 | `state` | a track returning to an earlier value without a `cause`, a character in two places at once, story days running backwards |
 | `tension` | long flat stretches |

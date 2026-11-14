@@ -45,7 +45,7 @@ def test_setup_without_payoff_and_reveal_before_setup():
     next(e for e in ev if e["id"] == "e9")["pays_off"] = ""
     ev9 = next(e for e in ev if e["id"] == "e9")
     ev9["kind"] = "event"
-    assert "setup_without_payoff" in codes(L.check_ledger(ev, SYN), HARD)
+    assert "setup_without_payoff" in codes(L.check_ledger(ev, SYN), SOFT)  # the author is asked, the run does not fail
     ev = copy.deepcopy(EVENTS)
     a, b = [i for i, e in enumerate(ev) if e["id"] in ("e7", "e9")]
     ev[a], ev[b] = ev[b], ev[a]
@@ -264,3 +264,13 @@ def test_an_event_text_written_where_an_id_belongs_is_mapped_back_and_unknown_on
     assert found and "ID of the setup" in found[0].message and "Known ids: e1, e2, e3" in found[0].message
     ambiguous = [dict(id="e1", text="Same words"), dict(id="e2", text="Same words"), dict(id="e3", text="x", pays_off="Same words")]
     assert L.resolve_references(ambiguous) == 0  # two events match: not guessed
+
+
+def test_reversed_and_unmarked_setup_payoff_pairs_are_repaired():
+    raw = [dict(id="e5", kind="event", pays_off="e6"), dict(id="e6", kind="event", pays_off="")]  # pays off a LATER event: reversed
+    notes = L.repair_setups(raw)
+    assert raw[0]["kind"] == "setup" and raw[0]["pays_off"] == "" and raw[1]["pays_off"] == "e5" and raw[1]["kind"] == "payoff" and "reversed" in notes[0]
+    raw2 = [dict(id="e1", kind="event"), dict(id="e2", kind="event", pays_off="e1")]  # earlier target not marked a setup
+    assert L.repair_setups(raw2) and raw2[0]["kind"] == "setup"
+    raw3 = [dict(id="e1", kind="setup"), dict(id="e2", kind="payoff", pays_off="e1")]
+    assert L.repair_setups(raw3) == []
