@@ -63,6 +63,7 @@ def test_the_answer_becomes_a_note_the_extraction_obeys_and_the_question_is_not_
     led = store.load_ledger(p)
     assert len(led.events) == 10 and [q.status for q in led.questions] == ["answered"] and led.questions[0].applied
     assert len([q for q in led.questions if q.type == "contradiction"]) == 1  # never asked twice
+    assert led.last_run["kind"] == "extract" and led.last_run["applied"] == ["q1"] and led.last_run["events"] == 10
 
 
 def test_approving_the_checkpoint_goes_on_as_it_is(project_with_ledger):
@@ -76,14 +77,24 @@ def test_approving_the_checkpoint_goes_on_as_it_is(project_with_ledger):
     assert store.load_ledger(p).questions[0].status == "dismissed"
 
 
-def test_a_soft_finding_is_asked_but_does_not_block(project_with_ledger):
+import pytest
+
+
+@pytest.mark.parametrize("kind", audit.BLOCKING_TYPES)
+def test_every_kind_of_audit_finding_stops_the_stage(project_with_ledger, kind):
     p = prepared(project_with_ledger)
-    p.config.ledger.min_chapters = 4
-    soft = finding(kind="motive_gap", quotes=("Corso learns of the drive and offers Mara a deal",), why="nothing makes Mara listen")
-    summary, llm = run_ledger(p, [GOOD], audit=reply(soft))
+    one = finding(kind=kind, quotes=("Corso learns of the drive and offers Mara a deal",), why="a reason")
+    summary, llm = run_ledger(p, [GOOD], audit=reply(one))
     led = store.load_ledger(p)
-    assert len(led.events) == 10 and [(q.type, q.status) for q in led.questions] == [("motive_gap", "open")]
-    assert summary.stopped == "checkpoint"  # the ledger checkpoint always waits for approval; the question is shown there
+    assert led.events == [] and [(q.type, q.status) for q in led.questions] == [(kind, "open")] and len(extraction_calls(llm)) == 0
+    assert "synopsis audit" in summary.notes["ledger"] and p.state.checkpoints["ledger"].status == "waiting"
+
+
+def test_a_name_that_is_not_in_the_cast_and_a_condition_that_does_not_hold_block_like_a_contradiction():
+    from bookforge.bible.models import AuthorQuestion
+    q = lambda t: AuthorQuestion(id="q1", question="x", why="y", type=t)  # noqa: E731
+    assert all(audit.is_blocking(q(t)) for t in ("unknown_name", "condition_order", "motive_gap", "contradiction"))
+    assert not any(audit.is_blocking(q(t)) for t in ("thin", "unpaid_setup", ""))  # these stop the checkpoint, as before, but are not audit findings
 
 
 def test_a_coherent_synopsis_raises_nothing(project_with_ledger):

@@ -118,6 +118,8 @@ def test_author_answers_revise_the_ledger_and_rerun_the_validators(project_with_
     assert led.questions[0].applied and led.questions[0].status == "answered"
     assert led.capacity["estimated_chapters"] == 14.0 and not led.thin  # 22 + 6 = 28 weight
     assert summary.ran == ["ledger"]
+    assert led.last_run["kind"] == "revise" and led.last_run["applied"] == ["q1"] and led.last_run["revision"] == 2  # what the Inbox shows after the run
+    assert [(e["id"], e["source"]) for e in led.last_run["added"]] == [("e11", "author"), ("e12", "author")] and led.last_run["revised"] == []
 
 
 def test_a_revision_may_not_change_synopsis_events(project_with_ledger):

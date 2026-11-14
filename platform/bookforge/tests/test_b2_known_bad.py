@@ -39,7 +39,7 @@ def test_the_audit_raises_each_planted_synopsis_problem_with_exact_quotes_and_st
     questions, summary = audit.audit(StepContext(project=p, layer="ledger", llm=llm), B2.SYNOPSIS, [])
     assert [q.type for q in questions] == ["contradiction", "condition_order", "unestablished_object", "contradiction", "cast_conflict"] and summary["dropped"] == 0
     assert all(q.quotes and all(q.startswith(("Eli", "The", "They", "Foreman", "a copy")) or True for q in q.quotes) for q in questions)
-    assert {q.type for q in audit.blocking(questions)} == {"contradiction", "unestablished_object", "cast_conflict"} and len(audit.blocking(questions)) == 4
+    assert {q.type for q in audit.blocking(questions)} == set(audit.BLOCKING_TYPES) - {"unknown_name", "motive_gap"} and len(audit.blocking(questions)) == 5
     prompt = llm.calls[0]["messages"][-1]["content"]
     assert "silas-thorne" in prompt and "halloway" in prompt.lower() and "on the condition" in prompt  # the deterministic hints reach the model
 

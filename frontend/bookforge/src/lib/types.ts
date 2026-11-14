@@ -26,6 +26,7 @@ export interface BookStatus {
   scenes: Record<string, number> & { total: number }
   pending_changes: number
   pending_needs: number
+  inbox?: InboxSummary
   manuscript: boolean
   job: Job | null
   resume_text?: string
@@ -171,3 +172,18 @@ export interface StyleState { has_guide: boolean; suggestion: StyleSuggestion | 
 
 export interface CarryEntity { id: string; kind: string; name: string; facts: string[]; states: { track: string; kind: string; value: string }[]; dead: boolean; suggested: boolean }
 export interface CarryOver { source: string; entities: CarryEntity[]; rules: number }
+
+export interface InboxItem {
+  id: string; kind: 'question' | 'finding'; series: string; book: string; stage: string; blocking: boolean; type: string
+  title: string; why: string; quotes: string[]; options: string[]; status: 'open' | 'answered' | 'applied' | 'dismissed'
+  answer: string; dismiss_reason: string; items: string[]; fingerprint: string
+}
+export interface InboxSummary { open: number; blocking: number; answered_waiting: number; by_stage: Record<string, number> }
+export interface InboxLastRun {
+  at?: string; kind?: 'audit' | 'extract' | 'revise'; revision?: number; applied?: string[]; events?: number
+  added?: { id: string; text: string; source: string }[]; revised?: { id: string; before: string; after: string }[]; new_questions?: string[]
+}
+export interface InboxView {
+  items: InboxItem[]; summary: InboxSummary; last_run: InboxLastRun
+  stats: Record<string, { raised: number; answered: number; dismissed: number; reasons: string[]; dismissal_rate: number | null }>
+}

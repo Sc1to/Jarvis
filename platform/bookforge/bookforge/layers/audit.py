@@ -2,8 +2,7 @@
 
 A model reads the whole synopsis with the cast and reports specific findings, each quoting the synopsis. A finding whose quotes are not in the
 synopsis word for word is dropped: that is what keeps it from raising template or invented questions. Findings become author questions
-(`AuthorQuestion.type` says which check raised them). Contradictions, missing prerequisites and cast conflicts are HARD: the ledger stage
-stops at its checkpoint until the author has answered them. The rest are asked but do not block.
+(`AuthorQuestion.type` says which check raised them). Every kind of finding blocks: the ledger stage stops at its checkpoint until the author has answered them (BLOCKING_TYPES).
 
 The author's answers are not written into the synopsis: they travel with the questions as notes, fed to the audit and to the extraction
 as authoritative over the synopsis. A question whose quotes were already asked (in any state) is never asked again.
@@ -25,9 +24,11 @@ from .. import steering
 
 log = logging.getLogger("platform_bookforge.layers")
 
-HARD_TYPES = ("contradiction", "unestablished_object", "cast_conflict")
-SOFT_TYPES = ("condition_order", "unknown_name", "motive_gap")
-TYPES = HARD_TYPES + SOFT_TYPES
+# Which kinds of finding stop the ledger stage until you have answered them. All of them: a name the cast lacks and a condition or motive
+# that does not hold are as wrong as a contradiction, and building a ledger on them builds the problem into every later stage. One table, so
+# a kind that turns out to be too noisy is one line to change (the dismissal rate per kind, in the suite report, says which).
+BLOCKING_TYPES = ("contradiction", "unestablished_object", "cast_conflict", "unknown_name", "condition_order", "motive_gap")
+TYPES = BLOCKING_TYPES
 
 
 def next_question_id(questions: list[AuthorQuestion]) -> int:
@@ -125,6 +126,10 @@ def _carried(ctx: StepContext) -> str:
     return _ledger_text(ctx)
 
 
+def is_blocking(question: AuthorQuestion) -> bool:
+    return question.type in BLOCKING_TYPES
+
+
 def blocking(questions: list[AuthorQuestion]) -> list[AuthorQuestion]:
     """Open questions of a kind that stops the ledger stage until answered."""
-    return [q for q in questions if q.status == "open" and q.type in HARD_TYPES]
+    return [q for q in questions if q.status == "open" and is_blocking(q)]

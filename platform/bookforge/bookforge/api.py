@@ -49,7 +49,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from . import model_admin, books as book_mgmt, deletion, documents, push, assemble as assembly, export as exporting, bench as benchmarks, changes as change_requests, ops, report as morning_report, scenefiles, stale as staleness
+from . import inbox as inbox_mod, model_admin, books as book_mgmt, deletion, documents, push, assemble as assembly, export as exporting, bench as benchmarks, changes as change_requests, ops, report as morning_report, scenefiles, stale as staleness
 from .bible import store
 from . import cast as cast_mod
 from .constants import CHECKPOINTS, LAYER_ORDER
@@ -222,6 +222,10 @@ class RewriteBody(BaseModel):
     reset_voice: bool = False  # ask for the voice checkpoint again (when chapter 1 is rewritten)
 
 
+class ApproveBody(BaseModel):
+    skip_open: bool = False  # go on although the Inbox still holds open items for this checkpoint's stages
+
+
 class AssembleBody(BaseModel):
     partial: bool = False
 
@@ -234,8 +238,18 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
 
     def notify(job) -> None:
         message = notification_for(job)
-        if message:
-            push.send(push_db(), message[0], message[1], f"/bookforge/#/series/{job.series}/{job.book}", push_sender)
+        if not message:
+            return
+        title, body = message
+        try:  # say what is waiting in the Inbox, and link straight to it
+            counts = inbox_mod.summary(Project.open(series_root(job.series), job.book))
+            if counts["blocking"]:
+                body = f"{job.series}/{job.book}: {counts['blocking']} blocking item(s) in the Inbox" + (f" ({', '.join(f'{n} in {s}' for s, n in counts['by_stage'].items())})" if counts["by_stage"] else "")
+                title = "Bookforge: waiting for your answers"
+        except Exception:  # a notification must never fail a run
+            counts = {"blocking": 0}
+        tab = "/inbox" if counts.get("blocking") or (job.result or {}).get("stopped") in ("checkpoint", "failed") else ""
+        push.send(push_db(), title, body, f"/bookforge/#/series/{job.series}/{job.book}{tab}", push_sender)
 
     jobs.on_finish = notify
 
@@ -445,6 +459,7 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
             "server_time": datetime.now(timezone.utc).isoformat(timespec="seconds"),  # so the page can time a call without trusting its own clock
             "pending_changes": sum(c.status == "pending" for c in change_requests.list_requests(project)),
             "pending_needs": len(waiting_decisions(project)),
+            "inbox": inbox_mod.summary(project),
             "manuscript": assembly.manuscript_path(project).exists(),
             "job": busy.to_dict() if busy else None,
             "resume": ops.resume_point(project), "resume_text": ops.resume_text(ops.resume_point(project)),
@@ -608,9 +623,13 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
         return ok(ops.decide_change(project, cr_id, decision == "approve", dismiss=decision == "dismiss").model_dump())
 
     @router.post("/series/{series}/books/{book}/approve/{checkpoint}")
-    def approve(series: str, book: str, checkpoint: str):
+    def approve(series: str, book: str, checkpoint: str, body: ApproveBody | None = None):
         project = open_project(series, book)
         require_idle(series)
+        skipped = inbox_mod.blocking_for_checkpoint(project, checkpoint)
+        if skipped and not (body and body.skip_open):  # approving as it is skips what the Inbox still holds: only on purpose
+            raise HTTPException(409, f"approving {checkpoint} as it is would skip {len(skipped)} open item(s) in the Inbox: {inbox_mod.skip_text(skipped)}. Answer or dismiss them there, "
+                                     "or approve again with skip_open to go on without")
         ops.approve_checkpoint(project, checkpoint)
         return ok({"checkpoint": checkpoint, "status": "approved"})
 
@@ -791,7 +810,8 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
             raise HTTPException(404, f"no job '{job_id}'")
         return ok(found)
 
-    from . import api_workbench
+    from . import api_inbox, api_workbench
+    api_inbox.register(router, api_workbench.Helpers(open_project, series_root, require_idle, start_job, lambda: make_llm, ok))
     api_workbench.register(router, api_workbench.Helpers(open_project, series_root, require_idle, start_job, lambda: make_llm, ok, make_web=lambda p: make_web(p)))
 
     return router

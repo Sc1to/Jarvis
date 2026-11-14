@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { bookPath, api } from '../../lib/api'
 import { useAction, useApi } from '../../lib/hooks'
+import { href } from '../../lib/route'
 import type { LedgerView, ValidationResult } from '../../lib/types'
 import { Button, Card, ErrorBanner } from '../../components/ui'
 
@@ -12,7 +13,6 @@ export default function Checks({ series, book }: { series: string; book: string 
   const checks = useApi<ValidationResult>(`${base}/workbench/validation`)
   const ledger = useApi<LedgerView | null>(`${base}/workbench/ledger`)
   const [open, setOpen] = useState<string | null>(null)
-  const [answers, setAnswers] = useState<Record<string, string>>({})
   const act = useAction()
   const stages = checks.data?.stages
   const questions = ledger.data?.questions.filter((q) => q.status === 'open') ?? []
@@ -71,18 +71,9 @@ export default function Checks({ series, book }: { series: string; book: string 
         </div>
       )}
       {questions.length > 0 && (
-        <div className="mt-3 space-y-3 border-t border-slate-200 pt-3">
+        <div className="mt-3 space-y-2 border-t border-slate-200 pt-3">
           <h3 className="text-xs font-semibold uppercase text-slate-500">Questions about the story's events</h3>
-          {questions.map((q) => (
-            <div key={q.id} className="space-y-1 text-sm">
-              <p className="font-medium">{q.question}</p>
-              <p className="text-xs text-slate-600">{q.why}</p>
-              <ul className="list-disc pl-5 text-xs">{q.options.map((o) => <li key={o}><button className="text-left underline" onClick={() => setAnswers({ ...answers, [q.id]: o })}>{o}</button></li>)}</ul>
-              <textarea value={answers[q.id] ?? ''} onChange={(e) => setAnswers({ ...answers, [q.id]: e.target.value })} aria-label={`Answer to ${q.id}`} rows={2} className="w-full rounded-md border border-slate-300 p-2 text-sm" />
-              <Button disabled={act.busy || !(answers[q.id] ?? '').trim()} onClick={() => act.run(async () => { await api(`${base}/workbench/ledger/questions/${q.id}/answer`, { method: 'POST', body: { answer: answers[q.id] } }); ledger.reload() })}>Save answer</Button>
-            </div>
-          ))}
-          <p className="text-xs text-slate-600">Run the book again to revise the ledger from your answers.</p>
+          <p className="text-sm">{questions.length} open. Answer them in the <a className="font-medium underline" href={href({ series, book, tab: 'inbox' })}>Inbox</a>.</p>
         </div>
       )}
     </Card>

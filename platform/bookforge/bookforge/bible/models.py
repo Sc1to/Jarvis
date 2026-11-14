@@ -178,6 +178,7 @@ class AuthorQuestion(_Record):
     applied: bool = False  # an answered question has been worked into the ledger
     type: str = ""  # which check raised it (audit finding type, "thin", "unpaid_setup"...), for the report on noisy checks
     quotes: list[str] = []  # the words of the synopsis the question is about, verbatim
+    dismiss_reason: str = ""  # why the author dismissed it (a false alarm, not worth an answer): counts toward the dismissal rate of its type
 
 
 class Ledger(_Record):
@@ -186,4 +187,5 @@ class Ledger(_Record):
     thin: bool = False  # the synopsis carries too little for a novel: nothing was invented, see questions
     capacity: dict = {}  # the numbers behind the "thin" decision, for the report
     revision: int = 1  # bumped when the author's answers revised the ledger
+    last_run: dict = {}  # what the last ledger run changed: {"at", "kind", "revision", "applied", "added", "revised", "new_questions", "events"}
     audit: dict = {}  # what the synopsis audit found: {"revision": n, "findings": {type: count}}

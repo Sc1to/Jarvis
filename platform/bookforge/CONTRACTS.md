@@ -46,3 +46,7 @@ Input: entity id, kind (character/place/object/group/concept), name, facts (at l
 - **acts:** `sizing_reason` agrees with the real weight and `chapter_count` (or starts `override:`); the counts add up to within `ledger.count_tolerance` of the ledger estimate; the last act turns on the decision or the resolution. `chapter_count` is an estimate: the chapters stage decides the real number from the events and writes it back.
 - **chapters:** summary and end_state claim only their own and earlier events' changes (`end_state_overreach`); the POV character is in the text and its main person; names resolve to the cast.
 
+## The Inbox (2026-11-14)
+- Items: ledger questions (`ledger.yaml`) and hard findings (`validation/<stage>.json`, minus the accepted ones). Blocking = an audit-type question that is open, or any open hard finding. `Ledger.last_run` is written by the ledger stage when it audits, extracts or revises.
+- Writes go through `ops.py` only; an answer is refused once `applied`; approving a checkpoint with open items for its stages needs `skip_open`.
+

@@ -161,13 +161,24 @@ def style_suggest_cmd(
 @app.command("ledger-answer")
 def ledger_answer(path: Path = PathArg, question: str = typer.Argument(..., help="Question id, like q1"),
                   answer: str = typer.Argument(..., help="Your answer"), book: str = BookOpt) -> None:
-    """Answer a ledger question. The next `run` revises the ledger from your answers (new events get source: author)."""
-    from .layers.ledger import answer_question
+    """Answer a ledger question (or change an answer no run has applied yet). The next `run` revises the ledger from your answers. The Inbox does the same."""
     try:
-        answer_question(Project.open(path, book), question, answer)
+        ops.answer_question(Project.open(path, book), question, answer)
     except BookforgeError as e:
         _fail(e)
     typer.echo(f"Recorded your answer to {question}. Run again to revise the ledger.")
+
+
+@app.command("ledger-dismiss")
+def ledger_dismiss(path: Path = PathArg, question: str = typer.Argument(..., help="Question id, like q1"),
+                   reason: str = typer.Option("", "--reason", help="Why (optional); it counts toward the dismissal rate of that kind of question"),
+                   book: str = BookOpt) -> None:
+    """Dismiss a ledger question: a false alarm, or not worth an answer."""
+    try:
+        ops.dismiss_question(Project.open(path, book), question, reason)
+    except BookforgeError as e:
+        _fail(e)
+    typer.echo(f"Dismissed {question}.")
 
 
 @app.command()

@@ -455,3 +455,47 @@ def rewrite_scenes(project: Project, targets: list[str], force: bool = False, re
         if project.config.git.commit_each_step:
             vcs.commit(project.root, f"{project.book}: {len(reset)} scene(s) reset for rewriting: {', '.join(reset[:6])}{'...' if len(reset) > 6 else ''}")
     return {"reset": reset, "kept": kept, "voice_reset": voice_reset}
+
+
+# ── the Inbox: answering what stops a stage ───────────────────────────────────
+# The CLI and the HTTP service both call these; nothing else writes an answer or a dismissal.
+
+STAGE_LAYERS = {"ledger": "ledger", "acts": "acts", "chapters": "chapters", "scenes": "scenes", "prose": "prose"}
+
+
+def answer_question(project: Project, question_id: str, answer: str):
+    """Answer (or re-answer, until a run has applied it) a ledger question."""
+    from .layers.ledger import answer_question as _answer
+    return _answer(project, question_id, answer)
+
+
+def dismiss_question(project: Project, question_id: str, reason: str = ""):
+    from .layers.ledger import dismiss_question as _dismiss
+    return _dismiss(project, question_id, reason)
+
+
+def _stage(stage: str) -> str:
+    if stage not in STAGE_LAYERS:
+        raise BookforgeError(f"unknown stage '{stage}' (expected one of: {', '.join(STAGE_LAYERS)})")
+    return STAGE_LAYERS[stage]
+
+
+def answer_finding(project: Project, stage: str, code: str, items: list[str], text: str) -> str:
+    """Your instruction about a hard finding of a stage: it goes into that stage's note, above what Bookforge itself writes there, and the
+    stage's next run reads it with the findings."""
+    layer = _stage(stage)
+    text = " ".join(text.split())
+    if not text:
+        raise BookforgeError("the answer is empty")
+    note = steering.read(project, layer)
+    own, _, rest = note.partition(steering.CHECKS_MARKER)
+    line = f"- About {code} [{', '.join(items[:4])}]: {text}"
+    steering.write(project, layer, (own.strip() + "\n" if own.strip() else "") + line + (("\n\n" + steering.CHECKS_MARKER + rest) if rest else ""))
+    return line
+
+
+def dismiss_finding(project: Project, stage: str, code: str, items: list[str], reason: str = "") -> str:
+    """A hard finding judged a false alarm: it stays in the report, marked accepted, and stops blocking. The reason is kept with it."""
+    from .validators import accepted
+    _stage(stage)
+    return accepted.accept(project, stage, code, items, " ".join(reason.split())[:300] or "dismissed from the Inbox")
