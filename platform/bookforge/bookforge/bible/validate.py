@@ -446,6 +446,8 @@ def _ledger_chapter_checks(project, data, chapters: list[Chapter], act: Act, led
             problems.append(f"{c.id}: events_covered is empty; list the ledger events this chapter tells (or events_continued, for a weight 3 event that began in the chapter before)")
         if not c.end_state.strip():
             problems.append(f"{c.id}: end_state is empty; say where things stand when the chapter ends (places, possessions, who knows what)")
+    told = {x for c in chapters for x in list(c.events_covered) + list(c.events_continued)}
+    derived = [d for d in derived if d.id in told]  # a complication no chapter tells is not part of the story: leave it out instead of failing the act
     events = merge_derived(ledger.events, derived)
     plain = [e.model_dump() for e in events]
     findings = [f for f in ledger_checks.check_ledger(plain) if f.severity == HARD]

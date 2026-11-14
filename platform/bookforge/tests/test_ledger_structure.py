@@ -88,6 +88,15 @@ def test_derived_complications_join_the_ledger_and_obey_the_rules(project):
     assert s2.stopped == "failed" and "derived_not_minor" in s2.detail
 
 
+def test_a_derived_complication_no_chapter_tells_is_left_out_not_a_failure(project):
+    p = project_ready(project)
+    unused = chapters(1)
+    unused["derived_events"] = [dict(id="e1.1", text="A dockhand sees her take it", parent="e1", after=["e1"], weight=1, kind="event")]  # declared, never listed
+    summary = run(p, RuleLLM([("Plan the chapters this act's events need, b1.ch01 onward", dump(unused))] + rules()), HANDLERS, until="chapters")
+    assert summary.ran == ["acts", "chapters"], summary.detail
+    assert "e1.1" not in {e.id for e in store.load_ledger(p).events}
+
+
 def test_scenes_must_show_every_chapter_event_once_with_an_end_state(project):
     p = project_ready(project)
     run(p, RuleLLM(rules()), HANDLERS, until="chapters")
