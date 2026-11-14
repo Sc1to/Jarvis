@@ -47,12 +47,12 @@ Plan exactly {chapter_count} chapters, {first_chapter} to {last_chapter}, coveri
 Each chapter has:
 - a title and a purpose: what the chapter changes, for the plot or for a character;
 - `events_covered`: the ledger event ids it tells. Use only events from "ASSIGNED HERE" (or minor complications you derive below). A `once_only` event is told in exactly ONE chapter: never retell an event listed as DONE, and never touch one RESERVED FOR LATER. Together the chapters cover every event assigned here, in ledger order;
-- at least one event that has not been told before: every chapter must move the story forward;
+- at least one event that has not been told before: every chapter must move the story forward. A heavy event (weight 3: a climax, a confrontation, a turning point) may take TWO consecutive chapters: the second chapter lists it under `events_continued` (never in `events_covered`) and goes on with it instead of starting a new event. No lighter event, and no event for a third chapter. Never fill a chapter with an event that belongs to another act;
 - a summary of what happens, 2 to 5 sentences. Say what happens and why, not how it is told. Describe only this chapter's own events: it must not restate an earlier chapter, and the events RESERVED FOR LATER (other acts) must not appear in it at all, not even as a goal or a rumour. You may close by pointing at what the next chapter of this act takes up, in a clause, but never describe it;
 - `end_state`: where things stand when the chapter ends (where the key people are, what they hold, who knows what);
 - a point-of-view character and a main setting, using ids from the cast; a tension value from 1 (calm) to 10 (peak), so the act has a shape (rising and falling, not flat).
 
-If the act's events are too few for the number of chapters, give a chapter a minor complication instead of repeating anything: add it to `derived_events`: a small obstacle, delay or consequence that grows out of one event, with `parent` set to that event's id, id `<parent>.1`, `.2`... (at most three per parent), `weight: 1`, `kind: event`, `after: [the parent]`. A derived event is never a new turn of the plot, a reveal, a setup or an ending. Do not add any if the chapters are already full.
+If the act's events (with their second chapters) are still too few for the number of chapters, give a chapter a minor complication instead of repeating anything: add it to `derived_events` AND list its id in the `events_covered` of the chapter that tells it (a complication no chapter tells is an error): a small obstacle, delay or consequence that grows out of one event, with `parent` set to that event's id, id `<parent>.1`, `.2`... (at most three per parent), `weight: 1`, `kind: event`, `after: [the parent]`. A derived event is never a new turn of the plot, a reveal, a setup or an ending. Do not add any if the chapters are already full.
 
 Also create or extend STATE TRACKS for everything that changes and will constrain later scenes: injuries, where a key character is, relationships, possessions, who knows which secret. A track belongs to one entity and lists its states over time; each entry says from which chapter the state holds. Set must_show: true when the change itself has to happen on the page. A state that returns to an earlier value needs a `cause`. To extend an existing track repeat its id and give only the new entries. Use plan entries only for chapters of this act.
 
@@ -67,6 +67,7 @@ chapters:
     purpose: what this chapter changes
     summary: what happens
     events_covered: [e1, e2]
+    events_continued: []   # only for a weight 3 event begun in the chapter before
     end_state: where things stand at the end
     pov: anna
     setting: harbor

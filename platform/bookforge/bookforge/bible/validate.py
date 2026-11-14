@@ -385,8 +385,8 @@ def _ledger_chapter_checks(project, data, chapters: list[Chapter], act: Act, led
             problems.append(f"derived_events[{i}]: id {e.id} already exists")
         derived.append(e)
     for c in chapters:
-        if not c.events_covered:
-            problems.append(f"{c.id}: events_covered is empty; list the ledger events this chapter tells")
+        if not c.events_covered and not c.events_continued:
+            problems.append(f"{c.id}: events_covered is empty; list the ledger events this chapter tells (or events_continued, for a weight 3 event that began in the chapter before)")
         if not c.end_state.strip():
             problems.append(f"{c.id}: end_state is empty; say where things stand when the chapter ends (places, possessions, who knows what)")
     events = merge_derived(ledger.events, derived)
