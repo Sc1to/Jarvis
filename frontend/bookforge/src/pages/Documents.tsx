@@ -2,8 +2,9 @@ import { useRef, useState } from 'react'
 import { api, bookPath } from '../lib/api'
 import { useAction, useApi, useJob } from '../lib/hooks'
 import { href } from '../lib/route'
-import type { DocumentFull, DocumentInfo, StyleState } from '../lib/types'
+import type { BookStatus, DocumentFull, DocumentInfo, SeriesInfo, StyleState } from '../lib/types'
 import { Button, Card, Empty, ErrorBanner, Loading, Markdown } from '../components/ui'
+import RedoPanel from '../components/RedoPanel'
 
 async function copyToClipboard(text: string): Promise<void> {
   try {
@@ -39,11 +40,13 @@ function CopyButton({ getText, label = 'Copy', title }: { getText: () => Promise
 function StyleSuggest({ series, book, onDone }: { series: string; book: string; onDone: () => void }) {
   const base = bookPath(series, book)
   const state = useApi<StyleState>(`${base}/style`)
+  const status = useApi<BookStatus>(`${base}/status`)
+  const written = Object.entries(status.data?.scenes ?? {}).some(([k, n]) => k !== 'total' && k !== 'pending' && Number(n) > 0)
   const job = useJob<{ file: string; words: number; verified: string[]; web: boolean; problems: string[] }>(base)
   const s = state.data
   const sug = s?.suggestion
   const start = async (replace: boolean) => {
-    if (replace && !window.confirm('Replace your style guide with a new suggestion? What is there now is kept in the series history.')) return
+    if (replace && !window.confirm('Replace your style guide with a new suggestion? What is there now is kept in the series history.' + (written ? ' Scenes already written with the old guide will be marked out of date.' : ''))) return
     await job.run('/style/suggest', { replace })
     state.reload(); onDone()
   }
@@ -53,8 +56,9 @@ function StyleSuggest({ series, book, onDone }: { series: string; book: string; 
       <ErrorBanner message={job.error} />
       <div className="mt-2 flex flex-wrap gap-2">
         <Button disabled={job.busy} kind="primary" onClick={() => start(false)}>{job.busy ? 'Reading the web and writing…' : s?.has_guide ? 'Suggest another (kept beside yours)' : 'Suggest a style guide'}</Button>
-        {s?.has_guide && <Button disabled={job.busy} onClick={() => start(true)}>Replace mine with a suggestion</Button>}
+        {s?.has_guide && <Button disabled={job.busy} onClick={() => start(true)} title={written ? 'Scenes already written with the old guide will be marked out of date' : undefined}>Replace mine with a suggestion</Button>}
       </div>
+      {s?.has_guide && <p className="mt-2 text-xs text-slate-600">A suggestion is kept beside your guide and changes nothing that is written. Replacing your guide{written ? ' marks the scenes already written as out of date' : ' is possible at any time'}.</p>}
       {job.busy && <p className="mt-2 text-xs text-slate-600">This searches the web and reads several pages; it can take a few minutes. You can leave the page.</p>}
       {sug && (
         <div className="mt-3 space-y-1 border-t border-slate-200 pt-3 text-sm">
@@ -67,6 +71,52 @@ function StyleSuggest({ series, book, onDone }: { series: string; book: string; 
         </div>
       )}
     </Card>
+  )
+}
+
+const LAYER_OF: Record<string, string> = {
+  series_north_star: 'series_north_star', book_north_star: 'book_north_star', synopsis: 'synopsis', ledger: 'ledger', acts: 'acts', chapters: 'chapters', scenes: 'scenes',
+}
+
+/** Write a document again with the model, at any time it is safe: only when nothing is built on it and no scene is written, so no fact already written is invalidated. */
+function WriteAgain({ series, book, docKey }: { series: string; book: string; docKey: string }) {
+  const layer = LAYER_OF[docKey]
+  const base = bookPath(series, book)
+  const status = useApi<BookStatus>(layer ? `${base}/status` : null)
+  const plan = useApi<{ also_resets: string[] }>(layer ? `${base}/redo/${layer}` : null)
+  const all = useApi<SeriesInfo[]>(layer === 'series_north_star' ? '/series' : null)
+  const [open, setOpen] = useState(false)
+  if (!layer || !status.data || !plan.data) return null
+  const item = status.data.layers.find((l) => l.name === layer)
+  if (!item || item.status === 'pending') return null
+  const written = Object.entries(status.data.scenes).some(([k, n]) => k !== 'total' && k !== 'pending' && Number(n) > 0)
+  const also = plan.data.also_resets
+  const shared = layer === 'series_north_star' && (all.data?.find((x) => x.name === series)?.books.length ?? 2) > 1
+  const why = written ? 'Scenes are already written, so planning layers cannot be written again here (use Write again in the Overview).'
+    : also.length > 0 ? `Other layers are built on it (${also.map((l) => l.replace(/_/g, ' ')).join(', ')}). Writing it again would reset them, so it is not offered here; the Overview has Redo with that choice.`
+    : shared ? 'Other books of this series were built on it.' : ''
+  return (
+    <Card title="Write it again">
+      {why ? <p className="text-sm text-slate-600">{why}</p> : (
+        <>
+          <p className="text-sm text-slate-700">Nothing is built on this yet, so it can be written again without invalidating anything. Tell the model what to change (or not), then press Run in the Overview.</p>
+          {!open && <div className="mt-2"><Button onClick={() => setOpen(true)}>Write it again…</Button></div>}
+          {open && <RedoPanel base={base} layer={layer} locked={false} onClose={() => setOpen(false)} onDone={() => { status.reload(); plan.reload() }} />}
+        </>
+      )}
+    </Card>
+  )
+}
+
+/** A Suggest button on the style guide's row of the list: starts the suggestion without opening the document. */
+function SuggestRow({ series, book, onDone }: { series: string; book: string; onDone: () => void }) {
+  const base = bookPath(series, book)
+  const job = useJob(base)
+  return (
+    <Button disabled={job.busy} onClick={async () => { await job.run('/style/suggest', { replace: false }); onDone() }}
+      title="Suggest a style guide from the genre and what the web says about successful books' prose style. A guide you have is kept; the suggestion goes beside it.">
+      {job.busy ? 'Suggesting…' : job.error ? 'Suggest failed' : 'Suggest'}
+    </Button>
   )
 }
 
@@ -86,6 +136,7 @@ export default function Documents({ series, book, docKey }: { series: string; bo
       <div className="space-y-3">
         <a className="text-sm text-slate-600 underline" onClick={() => { setDraft(null); save.clear() }} href={href({ series, book, tab: 'documents' })}>← All documents</a>
         {(d.key === 'style_guide' || d.key === 'style_suggested') && <StyleSuggest series={series} book={book} onDone={doc.reload} />}
+        {LAYER_OF[d.key] && <WriteAgain series={series} book={book} docKey={d.key} />}
         <Card title={d.title} right={<span className="flex items-center gap-2 text-xs text-slate-500">{d.group}
             {d.exists && <CopyButton getText={() => (draft !== null ? draft : d.text)} label={d.truncated ? 'Copy first part' : 'Copy'}
               title={d.truncated ? 'The file is long: only the part shown here is copied' : draft !== null ? 'Copy the text you are editing' : undefined} />}</span>}>
@@ -133,6 +184,7 @@ export default function Documents({ series, book, docKey }: { series: string; bo
                     <span className={`min-w-0 flex-1 text-sm ${d.exists ? '' : 'text-slate-400'}`}>{d.title}</span>
                     <span className="shrink-0 text-xs text-slate-500">{d.exists ? `${d.words} words` : 'not written yet'}</span>
                   </a>
+                  {d.key === 'style_guide' && <SuggestRow series={series} book={book} onDone={list.reload} />}
                   {d.exists && <CopyButton label="Copy" title={`Copy the text of ${d.title}`} getText={async () => (await api<DocumentFull>(`${base}/${encodeURIComponent(d.key)}`)).text} />}
                 </div>
               </li>
