@@ -23,13 +23,13 @@ _SERIES_FILES = {
     "style/guide.md": "# Style guide\n\n",
     "style/banned.txt": (Path(__file__).resolve().parent / "data" / "banned_starter.txt").read_text(encoding="utf-8"),
     "style/samples/.gitkeep": "",
-    "bible/constants.yaml": "{}\n",
-    "bible/tracks.yaml": "tracks: []\n",
-    "bible/timeline.yaml": "scenes: []\n",
     "research/.gitkeep": "",
 }
 
 _BOOK_FILES = {
+    "bible/constants.yaml": "{}\n",  # each book has its own cast, state tracks and timeline
+    "bible/tracks.yaml": "tracks: []\n",
+    "bible/timeline.yaml": "scenes: []\n",
     "research/.gitkeep": "",
     "scenes/.gitkeep": "",
     "change-requests/.gitkeep": "",

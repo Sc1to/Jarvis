@@ -98,7 +98,7 @@ def test_scene_entities_and_constants_and_time():
 
 def test_tracks_round_trip_with_from_key(project):
     store.save_tracks(project, [wound()])
-    text = (project.root / "bible/tracks.yaml").read_text()
+    text = (project.book_dir / "bible/tracks.yaml").read_text()
     assert "from: b1.ch04.s3" in text and "from_" not in text
     assert store.load_tracks(project)[0].plan[2].value == "healed; scar remains"
 
@@ -110,13 +110,13 @@ def test_empty_template_files_load_as_empty(project):
 
 
 def test_broken_files_are_reported_not_crashed_on(project):
-    (project.root / "bible/tracks.yaml").write_text("tracks: [unclosed")
+    (project.book_dir / "bible/tracks.yaml").write_text("tracks: [unclosed")
     with pytest.raises(store.BibleError, match="not valid YAML"):
         store.load_tracks(project)
-    (project.root / "bible/tracks.yaml").write_text("tracks:\n  - id: Bad Id\n")
+    (project.book_dir / "bible/tracks.yaml").write_text("tracks:\n  - id: Bad Id\n")
     with pytest.raises(store.BibleError, match="not valid"):
         store.load_tracks(project)
-    (project.root / "bible/tracks.yaml").write_text("just: a mapping\n")
+    (project.book_dir / "bible/tracks.yaml").write_text("just: a mapping\n")
     with pytest.raises(store.BibleError, match="expected a 'tracks:' list"):
         store.load_tracks(project)
 

@@ -27,6 +27,8 @@ The planner of one act's chapters sees the other acts by title only and its own 
 
 A failed layer saves nothing: the chapters and scenes layers write the cast, tracks, timeline, chapters, scenes and ledger inside one all-or-nothing block (`store.transaction`), so an attempt that fails leaves those files exactly as they were. (Research facts and saved pieces are kept on purpose, so a rerun does not repeat web searches or model calls.) A cast entity that is listed again is ignored, not an error.
 
+Each book has its own bible (`books/<book>/bible/`); a track may carry `starts_as`, the state it begins the book in, copied from an earlier book (held until its first plan entry).
+
 ## Load-bearing prompt text
 - Every ledger-mode planning prompt lists events as DONE / ASSIGNED / RESERVED FOR LATER and says reserved events must not be used.
 - Research is always labelled reference only: never a beat, an event, an obstacle or a plot device; at most three notes per chapter or scene.

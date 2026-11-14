@@ -269,14 +269,34 @@ def add_book_cmd(
     title: str = typer.Option(..., "--title", help="What the book is called"),
     brief: Optional[str] = typer.Option(None, "--brief", help="What this book is about, in a few sentences"),
     brief_file: Optional[Path] = typer.Option(None, "--brief-file", help="Read the brief from this file"),
+    copy_from: Optional[str] = typer.Option(None, "--copy-from", help="Start with the cast of this book (and its last states as the states this book starts in)"),
+    entity: Optional[list[str]] = typer.Option(None, "--entity", help="With --copy-from: only this entity (repeat for more); default every one that did not end dead"),
+    list_entities: bool = typer.Option(False, "--list-entities", help="With --copy-from: show what could be copied and stop"),
 ) -> None:
-    """Add a book to a series. It gets its own brief and north star and inherits the series north star."""
+    """Add a book to a series. It gets its own brief, north star and bible, and inherits the series north star."""
     try:
+        if copy_from and list_entities:
+            preview = book_mgmt.carry_over_preview(path, copy_from)
+            for e in preview["entities"]:
+                typer.echo(f"{'[x]' if e['suggested'] else '[ ]'} {e['id']:<28} {e['kind']:<10} {e['name']}" + (f"  ({'; '.join(s['value'] for s in e['states'])})" if e["states"] else ""))
+            return
         text = brief_file.read_text(encoding="utf-8") if brief_file else (brief or "")
-        project = book_mgmt.add_book(path, title, text)
+        project = book_mgmt.add_book(path, title, text, copy_from=copy_from, copy_entities=list(entity) if entity else None)
     except (BookforgeError, OSError) as e:
         _fail(e)
     typer.echo(f"added book {project.book} '{project.state.title}'; run it with `run {path} --book {project.book}`")
+
+
+@app.command("split-bible")
+def split_bible_cmd(path: Path = PathArg) -> None:
+    """Give each book of an older series its own cast, state tracks and timeline (they were shared). Committed first, so Git can undo it."""
+    from .bible_split import split_bible
+    try:
+        summary = split_bible(path)
+    except BookforgeError as e:
+        _fail(e)
+    for book, n in summary.items():
+        typer.echo(f"{book}: its own bible with {n['tracks']} track(s) and {n['timeline']} timeline entries")
 
 
 @app.command("title")

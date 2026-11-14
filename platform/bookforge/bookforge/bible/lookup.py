@@ -44,6 +44,9 @@ def state_at(tracks: Iterable[Track], position: str, entities: Iterable[str] | N
             else:
                 break
         if current is None:
+            if str(t.starts_as).strip():  # carried in from an earlier book: true from the first scene until the plan changes it
+                states.append(TrackState(track_id=t.id, entity=t.entity, kind=t.kind, value=str(t.starts_as).strip(), since="start of the book",
+                                         begins_here=False, must_show=False, previous=None, version=t.version))
             continue
         begins = parse_position(current.from_).key == pos.key
         states.append(TrackState(

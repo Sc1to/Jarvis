@@ -82,7 +82,7 @@ def test_full_structure_run_stops_at_the_structure_checkpoint(base):
     assert summary.ran == ["acts", "chapters", "scenes"]
     assert summary.stopped == "checkpoint" and "structure" in summary.detail
     for f in ("books/b1/acts.yaml", "books/b1/chapters.yaml", "books/b1/scenes.yaml",
-              "bible/constants.yaml", "bible/tracks.yaml", "bible/timeline.yaml"):
+              "books/b1/bible/constants.yaml", "books/b1/bible/tracks.yaml", "books/b1/bible/timeline.yaml"):
         assert f in summary.detail
     assert len(llm.calls) == 8  # acts, cast, 2 chapter calls, 4 scene calls
     assert base.state.checkpoints["structure"].status == "waiting"
@@ -140,7 +140,7 @@ def test_every_step_is_committed_with_its_files(built):
     log = git(built, "log", "--format=%s").split("\n")
     assert log[:3] == ["b1.scenes: accepted", "b1.chapters: accepted", "b1.acts: accepted"]
     tracked = git(built, "ls-tree", "-r", "--name-only", "HEAD").split()
-    assert {"bible/constants.yaml", "bible/tracks.yaml", "bible/timeline.yaml", "books/b1/scenes.yaml"} <= set(tracked)
+    assert {"books/b1/bible/constants.yaml", "books/b1/bible/tracks.yaml", "books/b1/bible/timeline.yaml", "books/b1/scenes.yaml"} <= set(tracked)
     assert not any("/work/" in t for t in tracked)
     assert git(built, "status", "--porcelain").strip() == ""
 
@@ -221,7 +221,7 @@ def test_a_layer_that_cannot_pass_is_flagged_without_a_partial_file(base):
     llm = RuleLLM([r for r in rules() if "List the CAST" not in r[0]] + [("List the CAST AND WORLD", "entities: []")])
     summary = go(base, llm)
     assert summary.stopped == "failed" and "at least one" in summary.detail
-    assert not (base.book_dir / "chapters.yaml").exists() and not (base.root / "bible/tracks.yaml").read_text().count("anna")
+    assert not (base.book_dir / "chapters.yaml").exists() and not (base.book_dir / "bible/tracks.yaml").read_text().count("anna")
 
 
 def test_chapters_require_accepted_acts_and_a_model(base):
@@ -356,7 +356,7 @@ def test_validate_bible_catches_timeline_and_structure_problems(built):
 
 
 def test_validate_bible_reports_unreadable_files(built):
-    (built.root / "bible/tracks.yaml").write_text("tracks: [unclosed")
+    (built.book_dir / "bible/tracks.yaml").write_text("tracks: [unclosed")
     assert any("not valid YAML" in p for p in validate_bible(built))
 
 
@@ -389,7 +389,7 @@ def test_full_cli_flow_to_the_structure_checkpoint_and_state_lookups(tmp_path, m
     second = runner.invoke(cli.app, ["run", str(series)])
     assert second.exit_code == 0, second.output
     for line in ("accepted: acts", "accepted: chapters (4 chapters, 5 entities, 2 tracks)", "accepted: scenes (8 scenes in 4 chapters, 2 tracks)",
-                 "approve structure", "bible/tracks.yaml"):
+                 "approve structure", "books/b1/bible/tracks.yaml"):
         assert line in second.output
     assert runner.invoke(cli.app, ["approve", str(series), "structure"]).exit_code == 0
 

@@ -30,6 +30,7 @@ export interface BookStatus {
   job: Job | null
   resume_text?: string
   planned_words?: { low: number; high: number; scenes: number; chapters: number } | null
+  shared_bible?: boolean
 }
 
 export interface SeriesInfo { name: string; books: string[]; titles: Record<string, string>; busy: Job | null }
@@ -167,3 +168,6 @@ export interface StyleSuggestion {
   sources: { url: string; title: string }[]; problems: string[]; words: number
 }
 export interface StyleState { has_guide: boolean; suggestion: StyleSuggestion | null }
+
+export interface CarryEntity { id: string; kind: string; name: string; facts: string[]; states: { track: string; kind: string; value: string }[]; dead: boolean; suggested: boolean }
+export interface CarryOver { source: string; entities: CarryEntity[]; rules: number }

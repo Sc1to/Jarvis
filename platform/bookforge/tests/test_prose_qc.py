@@ -148,7 +148,7 @@ def test_extraction_writes_the_scene_file_and_the_tracks(book):
     jonas = next(t for t in store.load_tracks(book) if t.id == "jonas-knows")
     assert jonas.observed and jonas.observed[0]["at"] == SID and jonas.observed[0]["matches_plan"] is True
     files = files_of(book, f"{SID}: drafted, checked, accepted")
-    assert "bible/tracks.yaml" in files and "books/b1/scenes/ch01/s1/extracted.yaml" in files and "books/b1/scenes/ch01/s1/final.md" in files
+    assert "books/b1/bible/tracks.yaml" in files and "books/b1/scenes/ch01/s1/extracted.yaml" in files and "books/b1/scenes/ch01/s1/final.md" in files
 
 
 def test_a_gap_between_plan_and_prose_is_reported_but_does_not_block(book):

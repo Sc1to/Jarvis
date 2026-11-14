@@ -1,9 +1,47 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api, post } from '../lib/api'
 import { useAction, useApi } from '../lib/hooks'
 import { href } from '../lib/route'
-import type { SeriesInfo, TrashItem } from '../lib/types'
+import type { CarryOver, SeriesInfo, TrashItem } from '../lib/types'
 import { Button, Card, Empty, ErrorBanner, Loading, fmtTime } from '../components/ui'
+
+/** Start a new book with the cast of an earlier one: pick the book, then which entities come along (those that ended dead are unticked). */
+function CopyCast({ series, books, onChange }: { series: string; books: string[]; onChange: (from: string, ids: string[]) => void }) {
+  const [from, setFrom] = useState('')
+  const [chosen, setChosen] = useState<Record<string, boolean>>({})
+  const preview = useApi<CarryOver>(from ? `/series/${encodeURIComponent(series)}/carry-over?source=${encodeURIComponent(from)}` : null)
+  useEffect(() => {
+    if (!preview.data) return
+    const init = Object.fromEntries(preview.data.entities.map((e) => [e.id, e.suggested]))
+    setChosen(init); onChange(from, Object.keys(init).filter((k) => init[k]))
+  }, [preview.data])  // eslint-disable-line react-hooks/exhaustive-deps
+  const toggle = (id: string) => { const next = { ...chosen, [id]: !chosen[id] }; setChosen(next); onChange(from, Object.keys(next).filter((k) => next[k])) }
+  return (
+    <div className="space-y-2 text-sm">
+      <label className="block">Start with the cast of an earlier book (optional)
+        <select value={from} onChange={(e) => { setFrom(e.target.value); setChosen({}); onChange(e.target.value, []) }} className="mt-1 min-h-10 w-full rounded-md border border-slate-300 bg-white px-2">
+          <option value="">No: start with an empty cast</option>
+          {books.map((b) => <option key={b} value={b}>{b}</option>)}
+        </select>
+      </label>
+      {from && <p className="text-xs text-slate-600">The new book gets its own copy: it can change a character without touching {from}. Each one starts in the state it ended {from} in. Characters that ended dead are not ticked.</p>}
+      {preview.error && <ErrorBanner message={preview.error} />}
+      {preview.data && (
+        <ul className="max-h-64 divide-y divide-slate-100 overflow-auto rounded-md border border-slate-200">
+          {preview.data.entities.map((e) => (
+            <li key={e.id}>
+              <label className="flex min-h-11 items-start gap-2 p-2">
+                <input type="checkbox" checked={!!chosen[e.id]} onChange={() => toggle(e.id)} className="mt-1 h-4 w-4" />
+                <span className="min-w-0 flex-1 break-words"><span className="font-medium">{e.name}</span> <span className="text-xs text-slate-500">{e.kind}</span>
+                  {e.states.length > 0 && <span className={`block text-xs ${e.dead ? 'text-red-700' : 'text-slate-600'}`}>{e.states.map((s) => s.value).join('; ')}</span>}</span>
+              </label>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
 
 export default function SeriesList() {
   const list = useApi<SeriesInfo[]>('/series', 10000)
@@ -16,6 +54,7 @@ export default function SeriesList() {
   const [adding, setAdding] = useState<string | null>(null)  // the series a new book is being added to
   const [bookTitle, setBookTitle] = useState('')
   const [brief, setBrief] = useState('')
+  const [copy, setCopy] = useState<{ from: string; ids: string[] }>({ from: '', ids: [] })
   const manage = useAction()
 
   const submit = async () => {
@@ -29,8 +68,8 @@ export default function SeriesList() {
   }
   const addBook = async (series: string) => {
     let made: { book: string } | null = null
-    const ok = await manage.run(async () => { made = await post<{ book: string }>(`/series/${encodeURIComponent(series)}/books`, { title: bookTitle.trim(), brief }) })
-    if (ok && made) { window.location.hash = href({ series, book: (made as { book: string }).book }); setAdding(null); setBookTitle(''); setBrief('') }
+    const ok = await manage.run(async () => { made = await post<{ book: string }>(`/series/${encodeURIComponent(series)}/books`, { title: bookTitle.trim(), brief, ...(copy.from ? { copy_from: copy.from, entities: copy.ids } : {}) }) })
+    if (ok && made) { window.location.hash = href({ series, book: (made as { book: string }).book }); setAdding(null); setBookTitle(''); setBrief(''); setCopy({ from: '', ids: [] }) }
   }
 
   const remove = async (name: string) => {
@@ -87,7 +126,7 @@ export default function SeriesList() {
               {!s.books.length && <span className="text-xs text-slate-500">no books</span>}
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              <Button disabled={manage.busy || !!s.busy} onClick={() => { setAdding(adding === s.name ? null : s.name); setBookTitle(''); setBrief('') }}>{adding === s.name ? 'Cancel' : 'Add book'}</Button>
+              <Button disabled={manage.busy || !!s.busy} onClick={() => { setAdding(adding === s.name ? null : s.name); setBookTitle(''); setBrief(''); setCopy({ from: '', ids: [] }) }}>{adding === s.name ? 'Cancel' : 'Add book'}</Button>
               <Button disabled={manage.busy || !!s.busy} title={s.busy ? 'A job is running on this series' : undefined} onClick={() => rename(s.name)}>Rename</Button>
               <span className="ml-auto"><Button kind="danger" disabled={del.busy || !!s.busy} onClick={() => remove(s.name)} title={s.busy ? 'A job is running on this series' : 'Move to the trash'}>Delete</Button></span>
             </div>
@@ -101,6 +140,7 @@ export default function SeriesList() {
                     placeholder="A few sentences: what happens to whom in this book. It gets its own north star; the series north star carries over."
                     className="mt-1 w-full rounded-md border border-slate-300 p-2" />
                 </label>
+                <CopyCast series={s.name} books={s.books} onChange={(from, ids) => setCopy({ from, ids })} />
                 <Button type="submit" kind="primary" disabled={manage.busy || !bookTitle.trim() || !brief.trim()}>{manage.busy ? 'Adding…' : 'Add book'}</Button>
               </form>
             )}
