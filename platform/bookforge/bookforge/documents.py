@@ -47,6 +47,7 @@ def catalog(project: Project) -> list[Doc]:
         Doc("series_north_star", "Series north star", "Direction", "markdown", root / "north-star.md"),
         Doc("book_north_star", "Book north star", "Direction", "markdown", book / "north-star.md"),
         Doc("synopsis", "Synopsis", "Direction", "markdown", book / "synopsis.md"),
+        Doc("ledger", "Story events (ledger)", "Story events", "yaml", book / "ledger.yaml"),
         Doc("acts", "Acts", "Structure", "yaml", book / "acts.yaml"),
         Doc("chapters", "Chapters", "Structure", "yaml", book / "chapters.yaml"),
         Doc("scenes", "Scene plans", "Structure", "yaml", book / "scenes.yaml"),
@@ -103,6 +104,8 @@ def _problems(project: Project, doc: Doc) -> list[str]:
             return direction.validate_north_star(text)
         case "synopsis":
             return direction.validate_synopsis(text)
+        case "ledger":
+            return _ledger_problems(project, text)
         case "acts":
             return structure.parse_acts(text, project)[1] if text.strip() else []
         case "chapters":
@@ -113,6 +116,25 @@ def _problems(project: Project, doc: Doc) -> list[str]:
             from .bible.validate import validate_bible
             return validate_bible(project, False)
     return []
+
+
+def _ledger_problems(project: Project, text: str) -> list[str]:
+    """Hard findings of a hand-edited ledger: unknown or duplicate ids, order, excerpts that are not in the synopsis, no ending..."""
+    if not text.strip():
+        return []
+    import yaml
+    from pydantic import ValidationError
+    from .bible.models import Ledger, problems_from
+    from .validators import HARD, ledger as ledger_checks
+    try:
+        ledger = Ledger.model_validate(yaml.safe_load(text) or {})
+    except (yaml.YAMLError, ValidationError) as e:
+        return [f"not a valid ledger: {problems_from(e)[0] if isinstance(e, ValidationError) else str(e).splitlines()[0]}"]
+    try:
+        synopsis = (project.book_dir / "synopsis.md").read_text(encoding="utf-8")
+    except OSError:
+        synopsis = ""
+    return [f.line() for f in ledger_checks.check_ledger([e.model_dump() for e in ledger.events], synopsis) if f.severity == HARD]
 
 
 def save(project: Project, doc: Doc, text: str) -> None:

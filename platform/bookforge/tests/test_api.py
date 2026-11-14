@@ -710,3 +710,16 @@ def test_validation_results_and_the_ledger_are_served_and_questions_answered(ful
     got = data(client.post(f"{WB}/ledger/questions/q1/answer", json={"answer": "A rival appears."}))
     assert got["questions"][0]["status"] == "answered" and got["questions"][0]["answer"] == "A rival appears."
     error(client.post(f"{WB}/ledger/questions/q9/answer", json={"answer": "x"}), 422)
+
+
+def test_the_ledger_is_a_document_and_a_bad_edit_is_refused(full):
+    from bookforge.bible import store
+    from bookforge.bible.models import Ledger, StoryEvent
+    listing = {d["key"]: d for d in data(client.get(f"{B}/documents"))}
+    assert listing["ledger"]["group"] == "Story events" and not listing["ledger"]["exists"]
+    ev = StoryEvent(id="e1", text="Anna finds the ledger", excerpt="", ending=True, source="author")
+    store.save_ledger(full, Ledger(events=[ev]))
+    assert data(client.get(f"{B}/documents/ledger"))["exists"] is True
+    bad = "events:\n  - {id: e1, text: x, after: [e9], ending: true, source: author}\n"
+    r = client.put(f"{B}/documents/ledger", json={"text": bad})
+    assert r.status_code in (400, 422) and "e9" in r.text
