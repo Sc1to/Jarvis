@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { api, bookPath } from '../lib/api'
+import { api, bookPath, post } from '../lib/api'
 import { useAction, useApi, useJob } from '../lib/hooks'
 import { href } from '../lib/route'
 import type { BookStatus, DocumentFull, DocumentInfo, SeriesInfo, StyleState } from '../lib/types'
@@ -120,6 +120,21 @@ function SuggestRow({ series, book, onDone }: { series: string; book: string; on
   )
 }
 
+/** An older series shares one cast, one set of state tracks and one timeline between its books: this gives each book its own. */
+function SplitBible({ series, book }: { series: string; book: string }) {
+  const base = bookPath(series, book)
+  const status = useApi<BookStatus>(`${base}/status`)
+  const act = useAction()
+  if (!status.data?.shared_bible) return null
+  return (
+    <Card title="One bible for every book" tone="warn">
+      <p className="text-sm text-slate-700">The cast, the state tracks and the timeline of this series are shared by all its books, so a sequel cannot change a character without changing the first book. Give each book its own: every book gets a copy of the cast and its own tracks and timeline. What is there is committed first, so Git can undo it.</p>
+      <ErrorBanner message={act.error} onClose={act.clear} />
+      <div className="mt-2"><Button disabled={act.busy} onClick={() => window.confirm('Give each book of this series its own cast, state tracks and timeline?') && act.run(async () => { await post(`/series/${encodeURIComponent(series)}/split-bible`); status.reload(); window.location.reload() })}>{act.busy ? 'Splitting…' : 'Give each book its own bible'}</Button></div>
+    </Card>
+  )
+}
+
 /** The files you review at the checkpoints. You can edit them here: an edit is checked first and refused, with the reason, if it breaks the structure. */
 export default function Documents({ series, book, docKey }: { series: string; book: string; docKey?: string }) {
   const base = `${bookPath(series, book)}/documents`
@@ -174,6 +189,7 @@ export default function Documents({ series, book, docKey }: { series: string; bo
   const groups = [...new Set(list.data.map((d) => d.group))]
   return (
     <div className="space-y-3">
+      <SplitBible series={series} book={book} />
       {groups.map((g) => (
         <Card key={g} title={g}>
           <ul className="divide-y divide-slate-100">

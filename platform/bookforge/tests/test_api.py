@@ -766,3 +766,28 @@ def test_the_ledgers_events_cannot_be_edited_once_acts_are_built_on_them(full):
     r = client.put(f"{B}/documents/ledger", json={"text": text.replace("Anna finds the ledger", "Anna burns the ledger")})
     assert r.status_code in (400, 422) and "Redo on the ledger" in r.text
     assert data(client.put(f"{B}/documents/ledger", json={"text": text})) is not None or True  # unchanged events: allowed
+
+
+def test_a_book_can_be_added_with_a_copy_of_an_earlier_books_cast_through_the_api(full):
+    from bookforge.bible.models import PlanEntry, Track
+    tracks = store.load_tracks(full)
+    tracks.append(Track(id="jonas-status", entity="jonas", kind="status", plan=[PlanEntry(**{"from": "b1.ch04", "value": "dead, executed"})]))
+    store.save_tracks(full, tracks)
+    preview = data(client.get("/api/series/series/carry-over", params={"source": "b1"}))
+    by_id = {e["id"]: e for e in preview["entities"]}
+    assert by_id["jonas"]["dead"] and not by_id["jonas"]["suggested"] and by_id["anna"]["suggested"]
+    added = data(client.post("/api/series/series/books", json={"title": "Two", "brief": "The sequel.", "copy_from": "b1"}), 201)
+    b2 = Project.open(full.root, added["book"])
+    assert "jonas" not in {e.id for e in store.load_constants(b2).entities} and "anna" in {e.id for e in store.load_constants(b2).entities}
+    error(client.post("/api/series/series/books", json={"title": "Bad", "brief": "x", "copy_from": "b1", "entities": ["nobody"]}), 400)
+    assert data(client.get(f"/api/series/series/books/{added['book']}/status"))["shared_bible"] is False
+
+
+def test_an_older_series_is_split_through_the_api_and_the_status_says_it_is_shared(full):
+    import shutil
+    shutil.copytree(full.root / "books/b1/bible", full.root / "bible")
+    shutil.rmtree(full.root / "books/b1/bible")
+    assert data(client.get(f"{B}/status"))["shared_bible"] is True
+    done = data(client.post("/api/series/series/split-bible"))
+    assert done["b1"]["tracks"] >= 1 and data(client.get(f"{B}/status"))["shared_bible"] is False
+    error(client.post("/api/series/series/split-bible"), 400)

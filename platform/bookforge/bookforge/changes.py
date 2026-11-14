@@ -199,4 +199,4 @@ def open_rejections(project: Project) -> dict[str, list[ChangeRequest]]:
 
 
 def paths(project: Project, crs: list[ChangeRequest]) -> list:
-    return [request_path(project, c.id) for c in crs] + [project.root / "bible" / "tracks.yaml"]
+    return [request_path(project, c.id) for c in crs] + [store.tracks_path(project)]

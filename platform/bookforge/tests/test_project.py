@@ -9,8 +9,8 @@ from bookforge.project import Project
 
 def test_create_lays_out_the_series(project):
     root = project.root
-    for rel in ("premise.md", "ledger.yaml", "style/guide.md", "style/banned.txt", "bible/constants.yaml",
-                "bible/tracks.yaml", "bible/timeline.yaml", "books/b1/state.json", ".gitignore"):
+    for rel in ("premise.md", "ledger.yaml", "style/guide.md", "style/banned.txt", "books/b1/bible/constants.yaml",
+                "books/b1/bible/tracks.yaml", "books/b1/bible/timeline.yaml", "books/b1/state.json", ".gitignore"):
         assert (root / rel).is_file(), rel
     assert "ledger" in (root / "premise.md").read_text()
     assert json.loads((root / "books/b1/state.json").read_text())["book"] == "b1"

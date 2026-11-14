@@ -52,8 +52,22 @@ def _write(path: Path, key: str, records: Iterable[BaseModel]) -> None:
 
 # ── constants (series-wide) ────────────────────────────────────────────────
 
+def bible_dir(project: Project) -> Path:
+    """Where this book's bible (cast and rules, state tracks, timeline) lives: books/<book>/bible/.
+
+    A series made before each book had its own bible keeps one shared `bible/` at the series root: a book without a folder of its own
+    still reads and writes that one, until the series is split (`split-bible`)."""
+    own = project.book_dir / "bible"
+    return own if own.is_dir() or not (project.root / "bible").is_dir() else project.root / "bible"
+
+
+def shared_bible(project: Project) -> bool:
+    """True while this book still uses the series-wide bible of an older series."""
+    return bible_dir(project) == project.root / "bible"
+
+
 def constants_path(project: Project) -> Path:
-    return project.root / "bible" / "constants.yaml"
+    return bible_dir(project) / "constants.yaml"
 
 
 def load_constants(project: Project) -> Constants:
@@ -73,22 +87,22 @@ def save_constants(project: Project, constants: Constants) -> None:
                                "rules": [to_plain(r) for r in constants.rules]}), encoding="utf-8")
 
 
-# ── tracks and timeline (series-wide files, entries are per book) ──────────
+# ── tracks and timeline (of this book's bible) ─────────────────────────────
 
 def load_tracks(project: Project) -> list[Track]:
-    return _records(project.root / "bible" / "tracks.yaml", "tracks", Track)
+    return _records(tracks_path(project), "tracks", Track)
 
 
 def save_tracks(project: Project, tracks: list[Track]) -> None:
-    _write(project.root / "bible" / "tracks.yaml", "tracks", tracks)
+    _write(tracks_path(project), "tracks", tracks)
 
 
 def load_timeline(project: Project) -> list[TimelineEntry]:
-    return _records(project.root / "bible" / "timeline.yaml", "scenes", TimelineEntry)
+    return _records(timeline_path(project), "scenes", TimelineEntry)
 
 
 def save_timeline(project: Project, entries: list[TimelineEntry]) -> None:
-    _write(project.root / "bible" / "timeline.yaml", "scenes", entries)
+    _write(timeline_path(project), "scenes", entries)
 
 
 # ── the book's structure ───────────────────────────────────────────────────
@@ -191,11 +205,11 @@ def active_ledger(project: Project) -> Ledger | None:
 
 
 def tracks_path(project: Project) -> Path:
-    return project.root / "bible" / "tracks.yaml"
+    return bible_dir(project) / "tracks.yaml"
 
 
 def timeline_path(project: Project) -> Path:
-    return project.root / "bible" / "timeline.yaml"
+    return bible_dir(project) / "timeline.yaml"
 
 
 @contextmanager

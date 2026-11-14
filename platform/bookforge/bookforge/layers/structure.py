@@ -91,7 +91,8 @@ def tracks_digest(tracks: list[Track]) -> str:
     lines = []
     for t in tracks:
         steps = "; ".join(f"{e.from_}: {e.value}" + (" [must_show]" if e.must_show else "") for e in t.plan)
-        lines.append(f"- {t.id} (owner {t.entity}, {t.kind}): {steps}")
+        start = f"starts as (carried in from an earlier book): {t.starts_as}" + ("; " if steps else "") if str(t.starts_as).strip() else ""
+        lines.append(f"- {t.id} (owner {t.entity}, {t.kind}): {start}{steps}")
     return "\n".join(lines)
 
 
@@ -392,7 +393,7 @@ def _build_chapters(ctx: StepContext, files: list[str]) -> str:
         if problems:  # the saved pieces stay, so a rerun does not start over
             raise LayerError("the assembled chapters do not hold together: " + "; ".join(problems[:6]))
     _clean_work(project, "chapters")
-    files += ["bible/constants.yaml", "bible/tracks.yaml"]
+    files += [store.rel(project, store.constants_path(project)), store.rel(project, store.tracks_path(project))]
     if adopted:
         log.info("chapters: %d place(s) added to the cast: %s", len(adopted), ", ".join(adopted))
     return (f"{len(done)} chapters, {len(constants.entities)} entities, {len(tracks)} tracks"
@@ -609,8 +610,8 @@ def _build_scenes(ctx: StepContext, files: list[str]) -> str:
         if problems:
             raise LayerError("the assembled scenes do not hold together: " + "; ".join(problems[:6]))
     _clean_work(project, "scenes")
-    files += ["bible/timeline.yaml", "bible/tracks.yaml"] + sorted(set(research_files))
+    files += [store.rel(project, store.timeline_path(project)), store.rel(project, store.tracks_path(project))] + sorted(set(research_files))
     if adopted:
-        files.append("bible/constants.yaml")
+        files.append(store.rel(project, store.constants_path(project)))
     return (f"{len(scenes_all)} scenes in {len(ch_list)} chapters, {len(tracks)} tracks"
             + (f"; added to the cast because scenes used them: {', '.join(adopted)}" if adopted else ""))

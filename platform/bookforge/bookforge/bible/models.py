@@ -7,7 +7,7 @@ so what is stored is always the validated form.
 import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, StringConstraints, ValidationError
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, StringConstraints, ValidationError, model_validator
 
 
 def as_text(value):
@@ -70,8 +70,15 @@ class Track(_Record):
     entity: Slug
     kind: Literal["physical", "location", "relationship", "possession", "knowledge", "status", "other"] = "other"
     version: int = Field(1, ge=1)  # bumped when the plan changes after it was first written
-    plan: list[PlanEntry] = Field(min_length=1)
+    starts_as: Loose = ""  # the state when this book begins, carried in from an earlier book; holds until the first plan entry
+    plan: list[PlanEntry] = []
     observed: list[dict] = []  # filled from the prose after each scene (milestone 14.7)
+
+    @model_validator(mode="after")
+    def _has_something(self):
+        if not self.plan and not str(self.starts_as).strip():
+            raise ValueError("a track needs at least one plan entry (or a state it starts as)")
+        return self
 
 
 class Act(_Record):

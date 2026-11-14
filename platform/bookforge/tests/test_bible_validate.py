@@ -149,7 +149,7 @@ def test_extending_a_track_without_naming_its_owner(p, constants):
     (lambda d: d["tracks"][0]["plan"][0].update({"from": "nonsense"}), ("not a position",)),
     (lambda d: d["tracks"][0]["plan"].append(dict(d["tracks"][0]["plan"][0])), ("used twice in track 'anna-wound'",)),
     (lambda d: d["tracks"].append(dict(d["tracks"][0])), ("track 'anna-wound' appears twice",)),
-    (lambda d: d["tracks"][0].update(plan=[]), ("tracks[0].plan",)),
+    (lambda d: d["tracks"][0].update(plan=[]), ("tracks[0]", "a track needs at least one plan entry")),
 ])
 def test_chapter_problems_are_specific(p, constants, mutate, needles):
     data = chapters_act1()

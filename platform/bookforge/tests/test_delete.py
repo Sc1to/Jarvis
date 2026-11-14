@@ -30,6 +30,9 @@ def git(root, *args):
 def two_books(full):
     """The finished b1 plus a b2 that has its own entries in the shared bible files, workbench scores and threads."""
     root = full.root
+    import shutil  # an older series: one bible shared by every book, at the series root
+    shutil.copytree(root / "books" / "b1" / "bible", root / "bible")
+    shutil.rmtree(root / "books" / "b1" / "bible")
     (root / "books" / "b2").mkdir()
     save_state(root / "books" / "b2" / "state.json", new_state("b2"))
     (root / "books" / "b2" / "notes.md").write_text("book two")

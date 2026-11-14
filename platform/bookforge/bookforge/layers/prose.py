@@ -158,7 +158,7 @@ def record_extraction(ctx: StepContext, scene: Scene, scenes: list[Scene], text:
         scenefiles.extracted_path(project, sid).write_text(
             yaml.safe_dump({"scene": sid, "observations": extraction.observations, "gaps": extraction.gaps},
                            sort_keys=False, allow_unicode=True), encoding="utf-8")
-        paths += [scenefiles.extracted_path(project, sid), project.root / "bible" / "tracks.yaml"]
+        paths += [scenefiles.extracted_path(project, sid), store.tracks_path(project)]
     filed = changes.file_gaps(project, scene, scenes, extraction.gaps)
     if filed:
         review["extraction"]["change_requests"] = [c.id for c in filed]

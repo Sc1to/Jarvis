@@ -171,6 +171,8 @@ class NeedBody(BaseModel):
 class AddBook(BaseModel):
     title: str
     brief: str
+    copy_from: str | None = None  # start with the cast of this book...
+    entities: list[str] | None = None  # ...these entities (default: every one that did not end dead)
 
 
 class RenameBody(BaseModel):
@@ -312,8 +314,21 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
     def add_book(series: str, body: AddBook):
         root = series_root(series)
         require_idle(series)
-        project = book_mgmt.add_book(root, body.title, body.brief)
+        project = book_mgmt.add_book(root, body.title, body.brief, copy_from=body.copy_from, copy_entities=body.entities)
         return ok({"book": project.book, "title": project.state.title})
+
+    @router.get("/series/{series}/carry-over")
+    def carry_over(series: str, source: str):
+        """What a new book could take from `source`: every entity with its last states; characters that ended dead are not suggested."""
+        return ok(book_mgmt.carry_over_preview(series_root(series), source))
+
+    @router.post("/series/{series}/split-bible")
+    def split_bible_route(series: str):
+        """Give each book of an older series its own cast, state tracks and timeline."""
+        from . import bible_split
+        root = series_root(series)
+        require_idle(series)
+        return ok(bible_split.split_bible(root))
 
     @router.delete("/series/{series}")
     def delete_series(series: str):
@@ -378,6 +393,7 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
             "checkpoints": {n: state.checkpoints[n].status for n in CHECKPOINTS},
             "scenes": {"total": len(ids), **counts},
             "planned_words": _planned_words(project),
+            "shared_bible": store.shared_bible(project),
             "title": project.state.title,
             "server_time": datetime.now(timezone.utc).isoformat(timespec="seconds"),  # so the page can time a call without trusting its own clock
             "pending_changes": sum(c.status == "pending" for c in change_requests.list_requests(project)),

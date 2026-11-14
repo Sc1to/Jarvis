@@ -10,6 +10,7 @@ from pathlib import Path
 
 from . import vcs
 from .errors import BookforgeError
+from .bible import store as bible
 from .project import Project
 
 MAX_BYTES = 400_000
@@ -51,9 +52,9 @@ def catalog(project: Project) -> list[Doc]:
         Doc("acts", "Acts", "Structure", "yaml", book / "acts.yaml"),
         Doc("chapters", "Chapters", "Structure", "yaml", book / "chapters.yaml"),
         Doc("scenes", "Scene plans", "Structure", "yaml", book / "scenes.yaml"),
-        Doc("constants", "Cast and rules of the world", "Story bible", "yaml", root / "bible" / "constants.yaml"),
-        Doc("tracks", "State tracks", "Story bible", "yaml", root / "bible" / "tracks.yaml"),
-        Doc("timeline", "Timeline", "Story bible", "yaml", root / "bible" / "timeline.yaml"),
+        Doc("constants", "Cast and rules of the world", "Story bible", "yaml", bible.constants_path(project)),
+        Doc("tracks", "State tracks", "Story bible", "yaml", bible.tracks_path(project)),
+        Doc("timeline", "Timeline", "Story bible", "yaml", bible.timeline_path(project)),
         Doc("style_guide", "Style guide", "Voice", "markdown", root / "style" / "guide.md"),
         Doc("style_suggested", "Style guide (a suggestion beside yours)", "Voice", "markdown", root / "style" / "guide.suggested.md"),
         Doc("banned", "Banned phrases", "Voice", "text", root / project.config.qc.banned_phrases),

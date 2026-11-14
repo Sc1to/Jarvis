@@ -34,6 +34,7 @@ CHECKPOINT_REVIEW_FILES = {
     "ledger": ("books/{book}/ledger.yaml", "books/{book}/synopsis.md", "books/{book}/validation/ledger.json"),
     "voice": ("books/{book}/scenes/ch01/s*/final.md", "style/guide.md", "style/banned.txt"),
     "structure": ("books/{book}/acts.yaml", "books/{book}/chapters.yaml", "books/{book}/scenes.yaml",
+                  "books/{book}/bible/constants.yaml", "books/{book}/bible/tracks.yaml", "books/{book}/bible/timeline.yaml",
                   "bible/constants.yaml", "bible/tracks.yaml", "bible/timeline.yaml", "books/{book}/research/needs.md"),
 }
 
