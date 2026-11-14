@@ -56,6 +56,21 @@ def cast_digest(constants: Constants) -> str:
     return "\n".join(lines)
 
 
+def acts_overview_for_chapters(acts: list[Act], current: Act) -> str:
+    """The acts for orientation, in ledger mode: titles and chapter counts only, and the purpose of the act being planned.
+
+    An act's summary retells its events, so showing every act's summary to the planner of one act leaks the events of the others
+    (a real run turned act 2's 'buried ship' into chapter 3 of act 1). The ledger status says what each act may use."""
+    return "\n".join(f"- {a.id} {a.title} ({a.chapter_count} chapters)" + (f": {_short(a.purpose, 200)}" if a.id == current.id else " (planned later: nothing of it may appear here)") for a in acts)
+
+
+def act_for_chapters(act: Act) -> str:
+    """The act being planned, without its summary (the ledger events are the facts; the summary is a paraphrase that may hint at other acts)."""
+    plain = to_plain(act)
+    plain.pop("summary", None)
+    return dump_yaml(plain)
+
+
 def acts_digest(acts: list[Act]) -> str:
     return "\n".join(f"- {a.id} {a.title} ({a.chapter_count} chapters): {_short(a.summary, 200)} Turning point: {_short(a.turning_point, 120)}"
                      for a in acts) or "none"
@@ -344,7 +359,7 @@ def _build_chapters(ctx: StepContext, files: list[str]) -> str:
             bundle = get_piece(
                 ctx, "chapters", act.id.split(".")[-1],
                 lambda act=act, first=first, last=last, before=before, ledger=ledger: _messages(
-                    project, "chapters_ledger", act=dump_yaml(to_plain(act)), acts_overview=acts_digest(act_list),
+                    project, "chapters_ledger", act=act_for_chapters(act), acts_overview=acts_overview_for_chapters(act_list, act),
                     ledger_status=status_text(ledger, set(act.events), before), story_so_far=chapters_end_digest(before), carried=carried_for_prompt(project),
                     cast=cast_digest(constants), tracks_so_far=tracks_digest(tracks), research_notes=notes_text(project, act_text),
                     chapter_count=str(act.chapter_count), first_chapter=_ch(project, first), last_chapter=_ch(project, last), **stars),
@@ -539,7 +554,7 @@ def _build_scenes(ctx: StepContext, files: list[str]) -> str:
             lo, hi = count_range(project, "scenes")
             act = act_by_id.get(chapter.act)
             if ledger is not None:
-                act_line = f"{act.id} {act.title}: {_short(act.summary, 300)} Turning point: {_short(act.turning_point, 160)}" if act else chapter.act
+                act_line = f"{act.id} {act.title}: {_short(act.purpose, 200)}" if act else chapter.act
                 return _messages(
                     project, "scenes_ledger", chapter=dump_yaml(to_plain(chapter)), act=act_line,
                     ledger_status=status_text(ledger, set(chapter.events_covered), ch_list[:idx], "SHOWN IN THIS CHAPTER: plan scenes for these", set(chapter.events_continued)),

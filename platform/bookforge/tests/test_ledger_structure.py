@@ -243,3 +243,25 @@ def test_a_written_scene_that_never_shows_its_listed_event_is_a_soft_finding(pro
     assert any(f.code == "prose_misses_event" and f.items == [first.id, first.events[0]] and f.severity == "soft" for f in found)
     scenefiles.final_path(p, first.id).write_text(weather + " Anna found the ledger half buried under the nets, a black ledger bound in cloth. " * 3)
     assert not any(f.code == "prose_misses_event" for f in prose_findings(p)[0])
+
+
+def test_a_derived_complication_written_loosely_is_understood():
+    from bookforge.bible.validate import normalize_derived
+    per = {}
+    first = normalize_derived({"description": "A guard nearly spots her", "parent": "e3"}, per)
+    second = normalize_derived({"summary": "The gate sticks", "parent": "e3", "weight": 1}, per)
+    assert first == {"description": "A guard nearly spots her", "parent": "e3", "text": "A guard nearly spots her", "id": "e3.1", "after": ["e3"], "weight": 1, "kind": "event"}
+    assert second["id"] == "e3.2" and second["text"] == "The gate sticks"
+    assert normalize_derived({"id": "e5.1", "text": "x"}, {})["parent"] == "e5"  # the parent follows from the id
+    assert "text" not in normalize_derived({"id": "e5.1"}, {})  # nothing to use: the validator says so
+
+
+def test_the_chapter_planner_of_an_act_sees_neither_other_acts_summaries_nor_its_own(project):
+    p = project_ready(project)
+    llm = RuleLLM(rules())
+    run(p, llm, HANDLERS, until="chapters")
+    act1 = next(next(m["content"] for m in c["messages"] if m["role"] == "user") for c in llm.calls if "b1.ch01 to b1.ch02" in c["messages"][-1]["content"])
+    assert "What happens in act 1." not in act1 and "What happens in act 2." not in act1 and "The turn of act 2." not in act1
+    assert "b1.act2 Act 2 (2 chapters) (planned later: nothing of it may appear here)" in act1 and "purpose" in act1
+    from bookforge.ledger_view import carried_text  # noqa: F401  (the event texts reach the planner through the ledger status instead)
+    assert "ASSIGNED HERE" in act1 and "Anna finds the ledger" in act1

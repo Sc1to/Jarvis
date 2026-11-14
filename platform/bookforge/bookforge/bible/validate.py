@@ -370,14 +370,49 @@ def parse_chapters(
     return (None, problems) if problems else (ChaptersBundle(chapters, tracks, new_places, derived), [])
 
 
+_TEXT_KEYS = ("description", "summary", "event", "title", "name", "what", "complication", "details")
+
+
+def normalize_derived(raw, per_parent: dict[str, int]) -> dict:
+    """A derived complication as a model tends to write it: the one-line text under another name, no id, no `after`, no weight.
+
+    Fills in what is obvious from the parent (the id <parent>.<n>, after: [parent], weight 1, kind event); what is genuinely missing
+    (no text at all, no parent) is left for the validator to report.
+    """
+    if not isinstance(raw, dict):
+        return {}
+    raw = dict(raw)
+    if not str(raw.get("text", "")).strip():
+        for k in _TEXT_KEYS:
+            if str(raw.get(k, "")).strip():
+                raw["text"] = str(raw[k]).strip()
+                break
+    ident = str(raw.get("id", "")).strip()
+    parent = str(raw.get("parent", "")).strip() or (ident.split(".")[0] if "." in ident else "")
+    if parent:
+        raw["parent"] = parent
+        if not ident:
+            per_parent[parent] = per_parent.get(parent, 0) + 1
+            raw["id"] = f"{parent}.{per_parent[parent]}"
+        raw.setdefault("after", [parent])
+        if not raw.get("after"):
+            raw["after"] = [parent]
+    raw.setdefault("weight", 1)
+    raw.setdefault("kind", "event")
+    return raw
+
+
 def _ledger_chapter_checks(project, data, chapters: list[Chapter], act: Act, ledger, before: list[Chapter], acts: list[Act], problems: list[str], ctx=None) -> list:
     """Ledger rules for the chapters of one act: derived complications, events told once, in order, each chapter with something new."""
     from ..validators import HARD, hard, ledger as ledger_checks, repeats
     from .models import StoryEvent
     derived: list = []
-    for i, raw in enumerate(data.get("derived_events") or [] if isinstance(data, dict) else []):
+    given = data.get("derived_events") or [] if isinstance(data, dict) else []
+    per_parent: dict[str, int] = {}
+    for i, raw in enumerate(given):
+        raw = normalize_derived(raw, per_parent)
         try:
-            e = StoryEvent.model_validate({**(raw if isinstance(raw, dict) else {}), "source": "derived"})
+            e = StoryEvent.model_validate({**raw, "source": "derived"})
         except ValidationError as err:
             problems += [f"derived_events[{i}].{p}" for p in problems_from(err, limit=3)]
             continue
