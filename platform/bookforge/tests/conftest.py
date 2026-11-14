@@ -28,6 +28,14 @@ def skip_ledger(project: Project) -> None:
     project.save_state()
 
 
+@pytest.fixture(autouse=True)
+def lenient_book_prose_checks(request, monkeypatch):
+    """The scripted writer returns the same text for every scene, which the whole-book prose checks rightly refuse. Tests of
+    those checks ask for the real thing with the `real_prose_checks` marker."""
+    if "real_prose_checks" not in request.keywords:
+        monkeypatch.setattr("bookforge.validators.book.prose_findings", lambda project: ([], {}))
+
+
 @pytest.fixture
 def project_with_ledger(tmp_path) -> Project:
     return Project.create(tmp_path / "series", "A clerk finds a ledger that predicts deaths.\n")

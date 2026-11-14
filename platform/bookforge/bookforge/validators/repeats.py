@@ -43,6 +43,13 @@ def _clusters(units: list[Unit], threshold: float, min_shared: int) -> list[list
     return [g for g in groups.values() if len({u.chapter for u in g}) >= 2]
 
 
+def _setup_payoff_pairs(chapters: list[dict], events: list[dict]) -> set:
+    """Pairs of chapters where one tells a setup and the other its payoff or reveal: their echo is the point, not a repeat."""
+    where = {ev: c["id"] for c in chapters for ev in c.get("events_covered") or []}
+    return {frozenset((where[e["id"]], where[e["pays_off"]])) for e in events
+            if e.get("pays_off") and e["id"] in where and e["pays_off"] in where and where[e["id"]] != where[e["pays_off"]]}
+
+
 def repeated_events(chapters: list[dict], scenes: list[dict], names: set[str] = frozenset(), ledger_events: list[dict] | None = None,
                     stage: str = "chapters") -> list[Finding]:
     """The same event planned in more than one chapter.
@@ -52,9 +59,12 @@ def repeated_events(chapters: list[dict], scenes: list[dict], names: set[str] = 
     """
     out: list[Finding] = []
     once = {e["id"] for e in (ledger_events or []) if e.get("once_only", True)}
+    linked = _setup_payoff_pairs(chapters, ledger_events or [])
     units = _units(chapters, scenes, set(names))
     for g in _clusters(units, threshold=0.5, min_shared=3):
         chs = sorted({u.chapter for u in g})
+        if len(chs) == 2 and frozenset(chs) in linked:
+            continue  # a payoff deliberately echoes its setup
         summaries = [u for u in g if u.kind == "summary"]
         strong = len({u.chapter for u in summaries}) >= 2 and max(
             (dice(a.stems, b.stems) for a, b in combinations(summaries, 2) if a.chapter != b.chapter), default=0) >= 0.7
@@ -65,6 +75,8 @@ def repeated_events(chapters: list[dict], scenes: list[dict], names: set[str] = 
     # whole chapters that replan another chapter
     chs_units = {c["id"]: Unit(c["id"], c["id"], str(c.get("summary", "")), set(names), "summary") for c in chapters}
     for (a, ua), (b, ub) in combinations(chs_units.items(), 2):
+        if frozenset((a, b)) in linked:
+            continue
         if dice(ua.stems, ub.stems) >= 0.45 and len(ua.stems & ub.stems) >= 5 and not (ua.names and ub.names and not (ua.names & ub.names)):
             out.append(hard(stage, "chapter_replans_chapter", f"{b} describes nearly the same events as {a}; replace it with new events",
                             [a, b], [ua.text[:140], ub.text[:140]]))
@@ -72,7 +84,7 @@ def repeated_events(chapters: list[dict], scenes: list[dict], names: set[str] = 
 
 
 def action_patterns(scenes: list[dict], chapters: list[dict], names: set[str] = frozenset(), stage: str = "scenes") -> list[Finding]:
-    """The same verb + object recurring in many chapters (forcing a lock, fooling a sensor, ...), regardless of the story's events."""
+    """The same verb + object recurring in many chapters (the same obstacle met the same way), regardless of the story's events."""
     n_chapters = len({c["id"] for c in chapters}) or len({s.get("chapter") for s in scenes})
     if n_chapters < 6:
         return []

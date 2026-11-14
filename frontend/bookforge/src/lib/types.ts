@@ -151,3 +151,10 @@ export interface DocumentInfo { key: string; title: string; group: string; kind:
 export interface DocumentFull { key: string; title: string; group: string; kind: 'markdown' | 'yaml' | 'text'; exists: boolean; text: string; truncated: boolean; editable: boolean }
 
 export interface TrashItem { name: string; series: string; deleted: string | null; books: string[] }
+
+export interface Finding { stage: string; code: string; severity: 'hard' | 'soft'; message: string; items: string[]; evidence: string[] }
+export interface StageChecks { stage: string; summary: { hard: number; soft: number; codes: string[] }; findings: Finding[]; capacity?: Record<string, any> }
+export interface ValidationResult { stages: Record<'ledger' | 'acts' | 'chapters' | 'scenes' | 'prose', StageChecks> }
+export interface LedgerEvent { id: string; text: string; once_only: boolean; kind: string; weight: number; ending: boolean; source: string; parent: string; pays_off: string }
+export interface LedgerQuestion { id: string; question: string; why: string; options: string[]; answer: string; status: 'open' | 'answered' | 'dismissed'; applied: boolean }
+export interface LedgerView { events: LedgerEvent[]; questions: LedgerQuestion[]; thin: boolean; capacity: Record<string, any>; revision: number }

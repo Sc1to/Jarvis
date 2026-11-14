@@ -32,6 +32,7 @@ from .deps import Reason, diff, fingerprint, read_deps, write_deps
 from .errors import BookforgeError, LayerError
 from .layers.prose import _commit, _summarise, check_context, record_extraction, write_scene
 from .layers.runner import StepContext
+from .sizing import scene_word_range
 from .project import Project
 from .qc.continuity import check_continuity
 from .qc.mechanical import all_banned, check_scene
@@ -255,7 +256,7 @@ def _redraft(ctx: StepContext, scene: Scene, scenes: list[Scene], why: str) -> F
         old.unlink(missing_ok=True)
     cfg = project.config.layers["prose"]
     _mark(project, sid, "pending", None)
-    accepted, _ = write_scene(ctx, scene, scenes, max(1, cfg.drafts or 2), tuple(cfg.words or (1500, 3000)))
+    accepted, _ = write_scene(ctx, scene, scenes, max(1, cfg.drafts or 2), scene_word_range(project, scene))
     for cr in changes.open_rejections(project).get(sid, []):
         cr.fixed = True
         changes.save(project, cr)

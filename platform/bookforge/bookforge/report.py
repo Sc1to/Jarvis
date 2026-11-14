@@ -170,6 +170,10 @@ def build_report(project: Project, since: str | None = None, today: str | None =
         pass
     for rec in review_notes.read(project):
         needs.append(f"Plan review, {rec['layer']} {rec['item']}: " + "; ".join(rec["problems"]))
+    from .validators import store as findings_store
+    for f in findings_store.load(project, "prose")["findings"]:
+        if f["severity"] == "hard":
+            needs.append(f"Prose check **{f['code']}**: {f['message']}" + (f" (e.g. \"{f['evidence'][0]}\")" if f["evidence"] else ""))
     out += ["## Needs you", ""] + ([f"- {n}" for n in needs] or ["- Nothing."]) + [""]
 
     # ── unsure
@@ -183,6 +187,10 @@ def build_report(project: Project, since: str | None = None, today: str | None =
             unsure.append(f"{s.id}: critic scores at the minimum ({', '.join(near)})")
         for g in (review.get("extraction") or {}).get("gaps") or []:
             unsure.append(f"{s.id}: the prose shows '{g['observed']}' where the plan says '{g['planned']}' ({g['track']})")
+    soft_prose = [f for f in findings_store.load(project, "prose")["findings"] if f["severity"] == "soft"]
+    if soft_prose:
+        unsure.append(f"prose checks: {len(soft_prose)} soft finding(s) ("
+                      + ", ".join(f"{c} x{n}" for c, n in sorted({(c, sum(1 for f in soft_prose if f['code'] == c)) for c in {f['code'] for f in soft_prose}})) + ") in validation/prose.json")
     out += ["## Unsure", ""] + ([f"- {u}" for u in unsure] or ["- Nothing."]) + [""]
 
     # ── suggestions

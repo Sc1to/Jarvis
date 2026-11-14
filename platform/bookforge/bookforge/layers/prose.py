@@ -27,6 +27,7 @@ from ..deps import write_deps
 from ..errors import BookforgeError, LayerError
 from ..llm import TruncatedReply
 from ..prompts import render
+from ..sizing import scene_word_range
 from ..qc.extract import extract_observed, record_observed
 from ..qc.mechanical import CheckContext, check_scene, load_banned
 from ..qc import scene_notes
@@ -58,7 +59,7 @@ def check_context(project, scene: Scene, scenes: list[Scene], banned_text: str |
     if banned_text is None:
         banned_text = scenefiles.read(project.root / cfg.qc.banned_phrases) or ""
     return CheckContext(
-        scene_words=tuple(cfg.layers["prose"].words or (1500, 3000)), pov=cfg.book.pov, tense=cfg.book.tense,
+        scene_words=scene_word_range(project, scene), pov=cfg.book.pov, tense=cfg.book.tense,
         language=cfg.book.language, banned=load_banned(banned_text), phrase_rules=rules.phrase_rules(rules.rules_for(project, scene, ("banned_phrase",))), names=names, pov_id=scene.pov,
         previous_tail=" ".join(prev_text.split()[-PREVIOUS_TAIL_WORDS:]) if prev_text else None,
         earlier_texts=earlier, qc=cfg.qc,
@@ -373,7 +374,7 @@ def prose(ctx: StepContext) -> StepResult:
     if not scenes or not chapters:
         raise LayerError("scenes.yaml is missing or empty; the scenes layer has to be accepted first")
     cfg = project.config.layers["prose"]
-    drafts, words = max(1, cfg.drafts or 2), tuple(cfg.words or (1500, 3000))
+    drafts = max(1, cfg.drafts or 2)
     first_chapter = chapters[0].id
     voice = project.state.checkpoints["voice"].status
     files: list[str] = []
@@ -392,7 +393,7 @@ def prose(ctx: StepContext) -> StepResult:
             continue
         activity.set(scene=scene.id, step="starting")
         try:
-            accepted, scene_files = write_scene(ctx, scene, scenes, drafts, words)
+            accepted, scene_files = write_scene(ctx, scene, scenes, drafts, scene_word_range(project, scene))
         except TruncatedReply as e:
             # One reply that is too long for its token limit, even after raising it, must not stop the book: this scene waits for you.
             log.warning("%s: %s", scene.id, e)
@@ -407,8 +408,18 @@ def prose(ctx: StepContext) -> StepResult:
     flagged = [s.id for s in scenes if items.get(s.id, Item()).status == "flagged"]
     accepted_n = sum(1 for s in scenes if items.get(s.id, Item()).status == "accepted")
     note = f"{accepted_n}/{len(scenes)} scenes accepted" + (f", {len(flagged)} need you: {', '.join(flagged)}" if flagged else "") + (f", {len(stale)} stale (run `stale --fix`)" if stale else "")
+    try:  # whole-book checks on the accepted text: copied sentences and chapter openings, wrap-up endings, tic words
+        from ..validators.book import hard_lines, save_prose_findings
+        found, rel = save_prose_findings(project)
+        files.append(rel)
+        hard_prose = hard_lines(found)
+    except Exception as e:  # never lose a run to a failed report
+        log.warning("prose checks could not run: %s", e)
+        hard_prose = []
+    if hard_prose:
+        note += f"; {len(hard_prose)} prose check(s) failed: " + "; ".join(hard_prose[:3])
     if voice != "approved":
         return StepResult(files=files, note=note, outcome="partial", checkpoint="voice")
-    if flagged:
+    if flagged or hard_prose:
         return StepResult(files=files, note=note, outcome="flagged")
     return StepResult(files=files, note=note)

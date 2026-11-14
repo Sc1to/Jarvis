@@ -28,6 +28,7 @@ from .qc.mechanical import load_banned
 from .research.notes import approved_decisions, stores_for
 
 CHARS_PER_TOKEN = 3.5
+MAX_RESEARCH_NOTES = 3  # research informs accuracy and texture; a handful of notes cannot steer the scene
 ONE_LINER_CHARS = {0: 200, 1: 200, 2: 160, 3: 120}
 
 
@@ -87,8 +88,7 @@ def _ladder(project: Project) -> list[tuple[_Knobs, str]]:
         (dict(summaries=2), "chapter summaries cut to one line each"),
         (dict(summaries=3), "only the most recent chapters are summarised"),
         (dict(research_chars=1500), "research notes shortened"),
-        (dict(previous_words=min(cfg.previous_scene_words, 1000)), "previous scene tail cut to 1000 words"),
-        (dict(previous_words=min(cfg.previous_scene_words, 600)), "previous scene tail cut to 600 words"),
+        (dict(previous_words=min(cfg.previous_scene_words, 150)), "previous scene tail cut to 150 words"),
         (dict(samples=min(cfg.sample_passages, 1), sample_chars=2500), "one sample passage, shortened"),
         (dict(samples=min(cfg.sample_passages, 1), sample_chars=1200), "sample passage cut to 1200 characters"),
         (dict(guide_chars=2500), "style guide shortened"),
@@ -259,12 +259,18 @@ def _assemble(d: _Data, k: _Knobs) -> tuple[list[Section], Deps]:
                                           f"Beats, in order (what happens and why, not how to write it):\n{beats}"))
     sections.append(Section("This chapter", f"{chapter.id} {chapter.title}\nPurpose: {chapter.purpose}\nSummary: {chapter.summary}\n"
                                             f"Tension: {chapter.tension}/10"))
-    fact_ids = list(dict.fromkeys(scene.research + chapter.research))
+    fact_ids = list(dict.fromkeys(scene.research + chapter.research))[:MAX_RESEARCH_NOTES]
     facts = [d.facts[i] for i in fact_ids if i in d.facts]
     if facts:
         body = _clip("\n".join(f"- [{f.id}] {f.claim} (source: {_source(f.url)})" for f in facts), k.research_chars)
-        sections.append(Section("Research notes (facts to get right; reference data)", body))
+        sections.append(Section("Research notes (reference only: for accuracy and texture; never a beat, an obstacle or a plot device)", body))
         deps.research = [tag(f.id, [f.claim, f.url, f.quote]) for f in facts]
+
+    # 4b. events that belong to later chapters (only when the book has a ledger): not to be used yet
+    later = _reserved_events(d)
+    if later:
+        sections.append(Section("Not yet: story events reserved for later (do not show, hint at or resolve them)", later))
+        deps.bible.append(tag("ledger:reserved", later))
 
     # 5. the story so far
     so_far, summary_tags = _story_so_far(d, k)
@@ -277,15 +283,32 @@ def _assemble(d: _Data, k: _Knobs) -> tuple[list[Section], Deps]:
         text = scenefiles.best_text(project, prev.id)
         if text:
             tail = _tail_words(text, k.previous_words)
-            sections.append(Section(f"The end of the previous scene ({prev.id}), verbatim: continue from here, do not repeat it", tail))
+            sections.append(Section(f"How the previous scene ended ({prev.id}): continue the moment; do not restate or summarize it", tail))
             deps.previous = [tag(prev.id, tail)]
     return sections, deps
 
 
+def _reserved_events(d: _Data) -> str:
+    from .bible.store import active_ledger
+    ledger = active_ledger(d.project)
+    if ledger is None:
+        return ""
+    cur = parse_position(d.chapter.id).chapter
+    covered_now_or_before = {ev for c in d.chapters if parse_position(c.id).chapter <= cur for ev in c.events_covered}
+    return "\n".join(f"- {e.id}: {e.text}" for e in ledger.events if e.id not in covered_now_or_before and not e.carried_in)
+
+
 def _scene_summary(d: _Data, s: Scene) -> tuple[str, str]:
-    """(text, how it was made): the summary written after the prose, or the plan's purpose if there is none yet."""
+    """(text, how it was made): the summary written after the accepted prose, else the scene's planned end state, else nothing.
+
+    The story so far is what happened, never what was intended: a plan's purpose or beats are not given as history.
+    """
     written = scenefiles.read(scenefiles.summary_path(d.project, s.id))
-    return (written.strip(), "written") if written else (s.purpose, "plan")
+    if written:
+        return written.strip(), "written"
+    if s.end_state.strip():
+        return f"(planned) {s.end_state.strip()}", "end_state"
+    return "", "none"
 
 
 def _story_so_far(d: _Data, k: _Knobs) -> tuple[str, list[str]]:
@@ -305,12 +328,17 @@ def _story_so_far(d: _Data, k: _Knobs) -> tuple[str, list[str]]:
         scenes = by_chapter.get(c.id, [])
         pieces = [(s, *_scene_summary(d, s)) for s in scenes]
         if idx >= len(earlier) - full:
+            told = [(s, text) for s, text, _ in pieces if text]
+            if not told:
+                continue  # nothing happened on the page yet, and a plan is not history
             lines.append(f"{c.id} {c.title}:")
-            for s, text, source in pieces:
+            for s, text in told:
                 lines.append(f"  - {s.id}: {text}")
                 tags.append(tag(f"summary:{s.id}", text))
         else:
-            joined = " ".join(t for _, t, _ in pieces) or c.summary
+            joined = " ".join(t for _, t, _ in pieces if t) or c.end_state or ""
+            if not joined:
+                continue
             lines.append(f"- {c.id} {c.title}: {_clip(joined, one_liner)}")
             tags.append(tag(f"summary:{c.id}", joined))
     here = [s for s in by_chapter.get(d.chapter.id, []) if parse_position(s.id).scene < parse_position(d.scene.id).scene]
@@ -318,6 +346,7 @@ def _story_so_far(d: _Data, k: _Knobs) -> tuple[str, list[str]]:
         lines.append(f"Earlier in this chapter ({d.chapter.id}):")
         for s in here:
             text, _ = _scene_summary(d, s)
-            lines.append(f"  - {s.id}: {text}")
-            tags.append(tag(f"summary:{s.id}", text))
+            if text:
+                lines.append(f"  - {s.id}: {text}")
+                tags.append(tag(f"summary:{s.id}", text))
     return "\n".join(lines), tags

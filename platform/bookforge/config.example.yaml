@@ -35,7 +35,7 @@ layers:                                # model used for the refine step; review 
   acts:              {model: critic, checkpoint: structure}   # count: [3, 4] would force the number of acts; by default the story's events decide
   chapters:          {model: critic, checkpoint: structure}   # count: [25, 35] would force the chapter total; by default each act's weight of events decides
   scenes:            {model: critic, checkpoint: structure}   # per_chapter: [2, 4] would force scenes per chapter; by default 1 to 4 as the chapter needs
-  prose:             {model: writer, drafts: 2, words: [1500, 3000]}   # retry_flagged: after (flagged scenes last) or inline (book order); max_tokens: 5100 would set the most one draft may use (default: the longest words x 1.6 + 300)
+  prose:             {model: writer, drafts: 2}   # words: [1500, 3000] would force every scene's length; by default it follows from the scene's beats (250 to 450 words a beat). # retry_flagged: after (flagged scenes last) or inline (book order); max_tokens: 5100 would set the most one draft may use (default: the longest words x 1.6 + 300)
 
 research:
   enabled: true
@@ -71,7 +71,7 @@ book:
 
 briefing:
   max_tokens: 16000
-  previous_scene_words: 1500           # tail of the previous scene given verbatim
+  previous_scene_words: 250            # tail of the previous scene given verbatim: enough to continue the moment, too little to copy
   sample_passages: 2                   # style/samples/*.md files included
   recent_chapters_full: 2              # chapters before this one summarised scene by scene; older ones in a line each
 

@@ -125,8 +125,17 @@ def test_recent_chapters_are_summarised_per_scene_and_older_ones_in_a_line(book)
     write_scene(book, "b1.ch01.s1", prose(0), summary="Anna meets Jonas on the quay.")
     so_far = section(build_briefing(book, "b1.ch04.s1"), "The story so far")
     assert "- b1.ch01 Chapter 1:" in so_far and "Anna meets Jonas on the quay." in so_far  # one-liner, uses the written summary
-    assert "b1.ch02 Chapter 2:\n  - b1.ch02.s1: Scene 2.1 changes things." in so_far  # recent: per scene, plan text as fallback
-    assert "b1.ch03 Chapter 3:\n  - b1.ch03.s1:" in so_far and "b1.ch04" not in so_far
+    assert "changes things" not in so_far and "b1.ch02" not in so_far and "b1.ch03" not in so_far  # a plan is not history
+    assert "b1.ch04" not in so_far
+
+
+def test_planned_end_states_stand_in_for_unwritten_scenes_but_purposes_never_do(book):
+    from bookforge.bible import store
+    scenes = store.load_scenes(book)
+    scenes[0] = scenes[0].model_copy(update={"end_state": "Anna holds the ledger."})
+    store.save_scenes(book, scenes)
+    so_far = section(build_briefing(book, "b1.ch04.s1"), "The story so far")
+    assert "(planned) Anna holds the ledger." in so_far and "changes things" not in so_far
 
 
 def test_scenes_earlier_in_the_chapter_are_summarised_in_full(book):
@@ -140,8 +149,8 @@ def test_the_previous_scene_is_given_verbatim_from_its_end(book):
     text = prose(0, 24)
     write_scene(book, "b1.ch02.s1", text)
     b = build_briefing(book, "b1.ch02.s2")
-    heading, body = next((s.heading, s.body) for s in b.sections if s.heading.startswith("The end of the previous scene"))
-    assert "b1.ch02.s1" in heading and "verbatim" in heading
+    heading, body = next((s.heading, s.body) for s in b.sections if s.heading.startswith("How the previous scene ended"))
+    assert "b1.ch02.s1" in heading and "do not restate" in heading
     assert body.split()[-5:] == text.split()[-5:] and len(body.split()) <= 1500
 
 
@@ -149,19 +158,19 @@ def test_the_tail_is_limited_and_starts_at_a_sentence(book):
     text = prose(0, 28)
     write_scene(book, "b1.ch02.s1", text)
     (book.root / "config.yaml").write_text((book.root / "config.yaml").read_text() + "briefing:\n  previous_scene_words: 60\n")
-    body = next(s.body for s in build_briefing(Project.open(book.root), "b1.ch02.s2").sections if s.heading.startswith("The end of the previous"))
+    body = next(s.body for s in build_briefing(Project.open(book.root), "b1.ch02.s2").sections if s.heading.startswith("How the previous scene ended"))
     assert 20 < len(body.split()) <= 60 and body[0].isupper() or body[0] in "\"“"
 
 
 def test_across_a_chapter_boundary_the_last_scene_of_the_previous_chapter_is_used(book):
     write_scene(book, "b1.ch01.s2", "The last words of chapter one were these.")
-    body = next(s.body for s in build_briefing(book, "b1.ch02.s1").sections if s.heading.startswith("The end of the previous"))
+    body = next(s.body for s in build_briefing(book, "b1.ch02.s1").sections if s.heading.startswith("How the previous scene ended"))
     assert body == "The last words of chapter one were these."
 
 
 def test_a_flagged_previous_scene_falls_back_to_its_chosen_draft(book):
     write_scene(book, "b1.ch02.s1", "Draft two is the chosen one.", chosen="draft-2")
-    body = next(s.body for s in build_briefing(book, "b1.ch02.s2").sections if s.heading.startswith("The end of the previous"))
+    body = next(s.body for s in build_briefing(book, "b1.ch02.s2").sections if s.heading.startswith("How the previous scene ended"))
     assert body == "Draft two is the chosen one."
     assert scenefiles.best_text(book, "b1.ch01.s1") is None
 

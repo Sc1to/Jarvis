@@ -40,6 +40,10 @@ class XrayBody(BaseModel):
     beats: bool = True
 
 
+class AnswerBody(BaseModel):
+    answer: str = Field(min_length=1, max_length=4000)
+
+
 class PromptBody(BaseModel):
     text: str
 
@@ -120,6 +124,35 @@ def register(router: APIRouter, h: Helpers) -> None:
             return rules_ai.propose_rule(ctx, body.scene, body.passage, body.comment)
 
         return h.start_job(series, book, "rule-propose", {"scene": body.scene}, job)
+
+    # ── stage checks and the ledger ──────────────────────────────────────────
+
+    @router.get(W + "/validation")
+    def validation(series: str, book: str):
+        """What the validators found at each planning stage and in the prose, as saved by the last run of that stage."""
+        from .validators import store as findings_store
+        p = h.open_project(series, book)
+        return h.ok({"stages": {st: findings_store.load(p, st) for st in ("ledger", "acts", "chapters", "scenes", "prose")}})
+
+    @router.get(W + "/ledger")
+    def ledger_view(series: str, book: str):
+        from .bible import store as bible_store
+        p = h.open_project(series, book)
+        led = bible_store.load_ledger(p)
+        return h.ok(led.model_dump() if led else None)
+
+    @router.post(W + "/ledger/questions/{question_id}/answer")
+    def ledger_answer(series: str, book: str, question_id: str, body: AnswerBody):
+        """Answer a ledger question; the next run revises the ledger from the answer."""
+        from .errors import BookforgeError
+        from .layers.ledger import answer_question
+        p = h.open_project(series, book)
+        h.require_idle(series)
+        try:
+            led = answer_question(p, question_id, body.answer)
+        except BookforgeError as e:
+            raise HTTPException(422, str(e))
+        return h.ok(led.model_dump())
 
     # ── the briefing ─────────────────────────────────────────────────────────
 

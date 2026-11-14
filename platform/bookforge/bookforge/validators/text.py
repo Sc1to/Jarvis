@@ -20,7 +20,6 @@ yourself said asked says say then again still back one two three another before 
 _VERB_CLASSES = {
     "ENTER": "enter board aboard infiltrate inside climb step slip",
     "LEAVE": "leave depart exit flee escape evade withdraw retreat",
-    "LAUNCH": "launch liftoff takeoff ascend blast",
     "FIND": "find discover locate uncover spot unearth retrieve recover",
     "FORCE": "force pry break smash crack jimmy batter wrench",
     "OPEN": "open unlock unseal unbolt unlatch",

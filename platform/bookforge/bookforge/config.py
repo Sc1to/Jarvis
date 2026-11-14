@@ -92,7 +92,7 @@ def _default_layers() -> dict[str, LayerSettings]:
         "acts": LayerSettings(model="critic", checkpoint="structure"),
         "chapters": LayerSettings(model="critic", checkpoint="structure"),
         "scenes": LayerSettings(model="critic", checkpoint="structure"),
-        "prose": LayerSettings(model="writer", drafts=2, words=(1500, 3000)),
+        "prose": LayerSettings(model="writer", drafts=2),
     }
 
 
@@ -139,7 +139,7 @@ class BookSettings(_Strict):
 
 class Briefing(_Strict):
     max_tokens: int = Field(16000, gt=0)  # estimated (about 3.5 characters per token); see briefing.py
-    previous_scene_words: int = Field(1500, gt=0)  # tail of the previous scene given verbatim
+    previous_scene_words: int = Field(250, gt=0)  # tail of the previous scene given verbatim: enough to continue the moment, too little to copy
     sample_passages: int = Field(2, ge=0)  # style/samples/*.md files included
     recent_chapters_full: int = Field(2, ge=0)  # chapters before this one summarised scene by scene; older ones in a line each
 
