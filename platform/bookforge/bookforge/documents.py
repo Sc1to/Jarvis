@@ -138,6 +138,22 @@ def _ledger_problems(project: Project, text: str) -> list[str]:
     return [f.line() for f in ledger_checks.check_ledger([e.model_dump() for e in ledger.events], synopsis) if f.severity == HARD]
 
 
+_EVENT_KEYS = ("id", "text", "once_only", "after", "kind", "weight", "ending", "pays_off", "source", "parent", "excerpt", "carried_in")
+
+
+def _event_signature(text: str) -> list | None:
+    import yaml
+    try:
+        data = yaml.safe_load(text) or {}
+        return [[e.get(k) for k in _EVENT_KEYS] for e in data.get("events", [])] if isinstance(data, dict) else None
+    except (yaml.YAMLError, AttributeError):
+        return None
+
+
+def _ledger_has_dependents(project: Project) -> list[str]:
+    return [l for l in ("acts", "chapters", "scenes", "prose") if project.state.layers[l].status != "pending"]
+
+
 def save(project: Project, doc: Doc, text: str) -> None:
     """Write a document you edited. Refused (and the old text put back) if it adds problems the old text did not have.
 
@@ -151,6 +167,11 @@ def save(project: Project, doc: Doc, text: str) -> None:
     if len(text.encode("utf-8")) > MAX_BYTES:
         raise BookforgeError(f"the text is too long (at most {MAX_BYTES // 1000} KB)")
     text = text.rstrip() + "\n" if text.strip() else ""
+    if doc.key == "ledger" and doc.path.is_file():  # the acts and everything after are built from these events: changing them would leave those out of date, silently
+        built = _ledger_has_dependents(project)
+        if built and _event_signature(doc.path.read_text(encoding="utf-8")) != _event_signature(text):
+            raise EditRefused([f"{', '.join(built)} are built on these events, so changing them would leave those out of date. Use Redo on the ledger in the Overview "
+                               "(with the cascade box ticked) to write the ledger and what follows again; your answers to its questions can still be saved"])
     before = _problems(project, doc)
     old = doc.path.read_text(encoding="utf-8") if doc.path.is_file() else None
     doc.path.parent.mkdir(parents=True, exist_ok=True)

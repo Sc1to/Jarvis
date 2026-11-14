@@ -21,6 +21,8 @@ Inherited state: what the series ledger says is true when the book begins reache
 
 Whole-book checks (after every act or chapter is planned) run before anything is saved. A hard finding drops the saved pieces it names (acts for the chapters stage, chapters for the scenes stage), puts the findings in the layer's note (under the author's own words, which still reach the ledger-mode prompts) and stops; the next Run plans just those pieces again with the findings in their prompt, instead of reusing them and failing the same way. A chapter continuing a weight 3 event sees it as CONTINUING, not DONE; scenes of one chapter that tell the same thing are caught; a chapter heavier than four scenes can carry is refused.
 
+The ledger's events cannot be edited in the Documents tab once the acts (or anything after) are built on them: Redo with the cascade box writes the ledger and what follows again. An event's text must stay close to the excerpt it quotes (soft). The critic's second look at repeat findings also runs inside each act's chapter check and at the prose stage (answers are remembered per pair of passages), and a written scene that hardly mentions the events its plan lists is a soft finding.
+
 ## Load-bearing prompt text
 - Every ledger-mode planning prompt lists events as DONE / ASSIGNED / RESERVED FOR LATER and says reserved events must not be used.
 - Research is always labelled reference only: never a beat, an event, an obstacle or a plot device; at most three notes per chapter or scene.

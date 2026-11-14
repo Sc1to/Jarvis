@@ -171,6 +171,14 @@ def check_ledger(events: list[dict], synopsis: str = "", stage: str = "ledger") 
     if derived and len(derived) > MAX_DERIVED_SHARE * len(events):
         out.append(soft(stage, "mostly_derived", f"{len(derived)} of {len(events)} events are derived by the planner: the synopsis may be too thin; consider asking the author"))
 
+    for e in events:  # the event text is a paraphrase of its excerpt, not an addition to it
+        if e.get("source", "synopsis") != "synopsis" or not (e.get("excerpt") or "").strip():
+            continue
+        need, have = _stems_wo_names(e.get("text", "")), _stems_wo_names(e["excerpt"])
+        if len(need) >= 4 and len(need & have) / len(need) < EXCERPT_RECALL:  # short events paraphrase too freely to judge
+            out.append(soft(stage, "event_text_not_in_excerpt", f"{e['id']}: its text says more than its excerpt does ('{e['text'][:80]}'): keep the event to what the quoted words say",
+                            [e["id"]], [e["excerpt"][:120]]))
+
     # the words of the synopsis
     if synopsis.strip():
         out += _synopsis_coverage(events, synopsis, stage)
@@ -459,6 +467,7 @@ def acts_text_coverage(acts: list[dict], synopsis: str, stage: str = "acts", min
 
 # ── do the chapters' and scenes' own words describe the events they list? ────
 
+EXCERPT_RECALL = 0.3  # share of an event's words that must come from the excerpt it quotes
 DESCRIBES_MIN = 0.25  # share of an event's content words that must appear in the text that claims it
 RETELLS_SOFT, RETELLS_HARD = 0.5, 0.7  # share of ANOTHER once_only event's words found in the text: a retelling
 SCENE_WEIGHT = 3.0  # story weight one scene carries; scenes per chapter follow from the chapter's weight

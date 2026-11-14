@@ -226,3 +226,20 @@ def test_a_whole_book_scene_failure_plans_only_the_chapters_it_names_again(proje
     asked = " ".join(next(m["content"] for m in c["messages"] if m["role"] == "user") for c in llm.calls)
     assert "Scene ids are consecutive: b1.ch02.s1" in asked and "Scene ids are consecutive: b1.ch03.s1" in asked
     assert "Scene ids are consecutive: b1.ch01.s1" not in asked and "Scene ids are consecutive: b1.ch04.s1" not in asked
+
+
+@pytest.mark.real_prose_checks
+def test_a_written_scene_that_never_shows_its_listed_event_is_a_soft_finding(project):
+    from bookforge import scenefiles
+    from bookforge.validators.book import prose_findings
+    p = project_ready(project)
+    run(p, RuleLLM(rules()), HANDLERS, until="scenes")
+    sc = store.load_scenes(p)
+    first = next(s for s in sc if s.events)  # lists e1: "Anna finds the ledger"
+    weather = "The fog rolled in over the grey water and the gulls complained along the pier while the fishermen mended their nets in silence. " * 25
+    scenefiles.scene_dir(p, first.id).mkdir(parents=True, exist_ok=True)
+    scenefiles.final_path(p, first.id).write_text(weather)
+    found, _ = prose_findings(p)
+    assert any(f.code == "prose_misses_event" and f.items == [first.id, first.events[0]] and f.severity == "soft" for f in found)
+    scenefiles.final_path(p, first.id).write_text(weather + " Anna found the ledger half buried under the nets, a black ledger bound in cloth. " * 3)
+    assert not any(f.code == "prose_misses_event" for f in prose_findings(p)[0])

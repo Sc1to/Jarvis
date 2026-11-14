@@ -327,7 +327,7 @@ def merge_derived(events: list, derived: list) -> list:
 
 def parse_chapters(
     text: str, *, project: Project, act: Act, first_number: int, constants: Constants,
-    tracks_so_far: list[Track], fact_ids: set[str], ledger=None, chapters_before: list[Chapter] | None = None, acts: list[Act] | None = None,
+    tracks_so_far: list[Track], fact_ids: set[str], ledger=None, chapters_before: list[Chapter] | None = None, acts: list[Act] | None = None, ctx=None,
 ) -> tuple[ChaptersBundle | None, list[str]]:
     data, error = load_reply_yaml(text)
     if error:
@@ -362,7 +362,7 @@ def parse_chapters(
                            allowed_from=allowed, prefix="tracks", problems=problems)
     derived: list = []
     if ledger is not None:
-        derived = _ledger_chapter_checks(project, data, chapters, act, ledger, chapters_before or [], acts or [], problems)
+        derived = _ledger_chapter_checks(project, data, chapters, act, ledger, chapters_before or [], acts or [], problems, ctx)
     if raw and not any(t.plan for t in tracks):
         # Without tracks the story's changes (injuries, who knows what, where people are) are neither planned nor checked later.
         problems.append(f"{act.id} defines no state tracks: add a 'tracks:' list with at least one track created or extended in these chapters "
@@ -370,7 +370,7 @@ def parse_chapters(
     return (None, problems) if problems else (ChaptersBundle(chapters, tracks, new_places, derived), [])
 
 
-def _ledger_chapter_checks(project, data, chapters: list[Chapter], act: Act, ledger, before: list[Chapter], acts: list[Act], problems: list[str]) -> list:
+def _ledger_chapter_checks(project, data, chapters: list[Chapter], act: Act, ledger, before: list[Chapter], acts: list[Act], problems: list[str], ctx=None) -> list:
     """Ledger rules for the chapters of one act: derived complications, events told once, in order, each chapter with something new."""
     from ..validators import HARD, hard, ledger as ledger_checks, repeats
     from .models import StoryEvent
@@ -404,6 +404,9 @@ def _ledger_chapter_checks(project, data, chapters: list[Chapter], act: Act, led
     if len(derived) > limit:
         findings.append(hard("chapters", "too_many_derived", f"{len(derived)} derived complications in {act.id}, which has {len(act.events)} events: at most {limit}. "
                              "Minor complications are for the odd chapter that has too little to tell, not a way to fill chapters; tell the events more slowly or ask for fewer chapters", [act.id]))
+    if ctx is not None:  # the lexical repeat check is only a first look: the critic says whether it really is the same event
+        from ..qc.repeat_confirm import confirm_repeats
+        findings = confirm_repeats(ctx, findings)
     problems += accepted.hard_lines(project, findings, "chapters")
     return derived
 

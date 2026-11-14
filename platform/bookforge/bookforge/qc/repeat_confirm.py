@@ -14,6 +14,7 @@ from .support import ask_json
 log = logging.getLogger("platform_bookforge.qc")
 CONFIRMABLE = ("event_repeated", "chapter_replans_chapter", "scene_retells_event", "chapter_retells_event")
 MAX_CALLS = 10
+_ANSWERS: dict[tuple, dict] = {}  # the critic's answer per set of passages: a piece check runs again for every correction round and every cached reuse
 
 
 def _check(data: dict) -> list[str]:
@@ -31,8 +32,10 @@ def confirm_repeats(ctx, findings: list[Finding]) -> list[Finding]:
             continue
         calls += 1
         passages = "\n".join(f"- {t}" for t in f.evidence[:4])
+        key = (f.code, passages)
         try:
-            data = ask_json(ctx, f"repeat check {f.code}", "critic", "repeat_confirm", _check, max_tokens=300, passages=passages)
+            data = _ANSWERS.get(key) or ask_json(ctx, f"repeat check {f.code}", "critic", "repeat_confirm", _check, max_tokens=300, passages=passages)
+            _ANSWERS[key] = data
         except Exception as e:  # no answer is no change: the finding stays as it was
             log.info("repeat confirmation failed (%s); keeping the finding", e)
             out.append(f)

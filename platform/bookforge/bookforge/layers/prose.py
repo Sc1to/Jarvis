@@ -410,7 +410,7 @@ def prose(ctx: StepContext) -> StepResult:
     note = f"{accepted_n}/{len(scenes)} scenes accepted" + (f", {len(flagged)} need you: {', '.join(flagged)}" if flagged else "") + (f", {len(stale)} stale (run `stale --fix`)" if stale else "")
     try:  # whole-book checks on the accepted text: copied sentences and chapter openings, wrap-up endings, tic words
         from ..validators.book import hard_lines, save_prose_findings
-        found, rel = save_prose_findings(project)
+        found, rel = save_prose_findings(project, ctx)
         files.append(rel)
         hard_prose = hard_lines(found)
     except Exception as e:  # never lose a run to a failed report

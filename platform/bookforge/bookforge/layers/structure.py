@@ -350,7 +350,7 @@ def _build_chapters(ctx: StepContext, files: list[str]) -> str:
                     chapter_count=str(act.chapter_count), first_chapter=_ch(project, first), last_chapter=_ch(project, last), **stars),
                 lambda text, act=act, first=first, before=before, ledger=ledger: parse_chapters(
                     text, project=project, act=act, first_number=first, constants=constants, tracks_so_far=tracks,
-                    fact_ids=_fact_ids(project), ledger=ledger, chapters_before=before, acts=act_list),
+                    fact_ids=_fact_ids(project), ledger=ledger, chapters_before=before, acts=act_list, ctx=ctx),
                 max_tokens=7000,
                 review=_reviewer(ctx, f"chapters {act.id}", f"chapters of {act.id}", dump_yaml(to_plain(act)), tracks_digest(tracks), stars,
                                  status_text(ledger, set(act.events), before)),
