@@ -127,3 +127,43 @@ def problems_from(error: ValidationError, limit: int = 8) -> list[str]:
     if len(error.errors()) > limit:
         out.append(f"... and {len(error.errors()) - limit} more")
     return out
+
+
+# ── the story-event ledger (books/<book>/ledger.yaml) ───────────────────────
+
+EVENT_ID = r"^e\d+(\.\d+)?$"  # e12 for an event of the synopsis, e12.1 for a minor complication derived from e12
+EVENT_KINDS = ("event", "setup", "reveal", "payoff", "flashback")
+
+
+class StoryEvent(_Record):
+    id: Annotated[str, StringConstraints(pattern=EVENT_ID)]
+    text: Text  # one line: what happens
+    once_only: bool = True  # a once_only event may be told in exactly one chapter
+    after: list[str] = []  # events that must have happened first (cause and effect)
+    kind: Literal["event", "setup", "reveal", "payoff", "flashback"] = "event"
+    weight: int = Field(1, ge=1, le=3)  # how much story it carries: 1 minor, 2 ordinary, 3 major; chapter counts follow from it
+    pov: str = ""  # whose view tells it, when the book has several
+    ending: bool = False  # part of the resolution
+    pays_off: str = ""  # a payoff or reveal names the setup it pays off
+    source: Literal["synopsis", "derived", "author"] = "synopsis"
+    parent: str = ""  # derived events name the event they complicate
+    excerpt: str = ""  # the words of the synopsis this event comes from (verbatim); derived events have none
+    carried_in: bool = False  # already true when the book begins (state inherited from an earlier book); never told again
+
+
+class AuthorQuestion(_Record):
+    id: Annotated[str, StringConstraints(pattern=r"^q\d+$")]
+    question: Text
+    why: Text  # what is missing or open that makes this necessary
+    options: list[Text] = []  # complications the model proposes, for the author to pick, edit or reject
+    answer: str = ""  # the author's answer; the ledger is revised from it
+    status: Literal["open", "answered", "dismissed"] = "open"
+    applied: bool = False  # an answered question has been worked into the ledger
+
+
+class Ledger(_Record):
+    events: list[StoryEvent] = []
+    questions: list[AuthorQuestion] = []
+    thin: bool = False  # the synopsis carries too little for a novel: nothing was invented, see questions
+    capacity: dict = {}  # the numbers behind the "thin" decision, for the report
+    revision: int = 1  # bumped when the author's answers revised the ledger

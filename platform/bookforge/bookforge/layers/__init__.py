@@ -5,6 +5,7 @@ Layers 1-3 (direction) are implemented in `direction.py`, layers 4-6 (structure)
 """
 
 from .direction import book_north_star, series_north_star, synopsis
+from .ledger import ledger
 from .runner import Handler
 from .prose import prose
 from .structure import acts, chapters, scenes
@@ -13,6 +14,7 @@ HANDLERS: dict[str, Handler] = {
     "series_north_star": series_north_star,
     "book_north_star": book_north_star,
     "synopsis": synopsis,
+    "ledger": ledger,
     "acts": acts,
     "chapters": chapters,
     "scenes": scenes,

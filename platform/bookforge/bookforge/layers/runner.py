@@ -11,7 +11,7 @@ from typing import Callable
 
 from .. import vcs
 from .. import activity, cancel, steering
-from ..constants import CHECKPOINT_REVIEW_FILES, LAYER_ORDER
+from ..constants import CHECKPOINT_REVIEW_FILES, LAYER_CHECKPOINTS, LAYER_ORDER
 from ..errors import BookforgeError
 from ..llm import LLMClient
 from ..project import Project
@@ -81,7 +81,7 @@ def _blocking_checkpoint(project: Project, layer: str) -> str | None:
 
 
 def _update_checkpoints(project: Project) -> None:
-    for cp in ("direction", "structure"):
+    for cp in LAYER_CHECKPOINTS:
         layers = project.config.checkpoint_layers(cp)
         if layers and all(project.state.layers[name].status == "accepted" for name in layers):
             project.state.reach_checkpoint(cp)
@@ -163,7 +163,7 @@ def run(
         _commit_step(project, layer, files, "accepted")
 
         reached = [
-            cp for cp in ("direction", "structure")
+            cp for cp in LAYER_CHECKPOINTS
             if project.state.checkpoints[cp].status == "waiting"
             and project.config.layers[layer].checkpoint == cp
         ]

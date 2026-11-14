@@ -16,14 +16,16 @@ def test_create_lays_out_the_series(project):
     assert json.loads((root / "books/b1/state.json").read_text())["book"] == "b1"
 
 
-def test_create_makes_one_clean_commit(project):
+def test_create_makes_one_clean_commit(project_with_ledger):
+    project = project_with_ledger
     log = subprocess.run(["git", "-C", str(project.root), "log", "--format=%s"], capture_output=True, text=True).stdout.split("\n")
     assert [m for m in log if m] == ["series: initialized with book b1"]
     status = subprocess.run(["git", "-C", str(project.root), "status", "--porcelain"], capture_output=True, text=True).stdout
     assert status.strip() == ""
 
 
-def test_logs_are_not_tracked(project):
+def test_logs_are_not_tracked(project_with_ledger):
+    project = project_with_ledger
     logs = project.book_dir / "logs"
     logs.mkdir()
     (logs / "calls.jsonl").write_text("{}\n")

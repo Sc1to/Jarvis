@@ -1,0 +1,23 @@
+tracks:
+- id: mara-debt
+  entity: mara
+  kind: status
+  plan:
+  - from: t.ch01
+    value: the debt to Corso is active and crushing
+  - from: t.ch05
+    value: the debt is voided
+  - from: t.ch10
+    value: the debt to Corso is active and crushing
+- id: corso-where
+  entity: corso
+  kind: location
+  plan:
+  - from: t.ch09.s1
+    value: Corso is in the harbor office
+- id: corso-where2
+  entity: corso
+  kind: location
+  plan:
+  - from: t.ch09.s1
+    value: Corso is on the pier

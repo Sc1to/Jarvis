@@ -1,0 +1,166 @@
+scenes:
+- id: t.ch01.s1
+  chapter: t.ch01
+  purpose: p
+  pov: mara
+  setting: yard
+  characters:
+  - mara
+  beats:
+  - Mara talks with her friend at the pier.
+  - She weighs her debt in the evening.
+  research: []
+  end_state: ''
+  events: []
+- id: t.ch02.s1
+  chapter: t.ch02
+  purpose: p
+  pov: mara
+  setting: yard
+  characters:
+  - mara
+  beats:
+  - Mara forces the rusted lock on the hatch and slips inside the ferry.
+  - Mara enters the ferry and walks the dark corridor to the cabin.
+  - Mara reads the vibration as sensor noise per IEC 61508 and checks the spectral kurtosis.
+  research: []
+  end_state: ''
+  events: []
+- id: t.ch03.s1
+  chapter: t.ch03
+  purpose: p
+  pov: mara
+  setting: yard
+  characters:
+  - mara
+  beats:
+  - Mara forces the rusted lock on the hatch and slips inside the ferry.
+  - Mara enters the ferry and walks the dark corridor to the cabin.
+  research: []
+  end_state: ''
+  events: []
+- id: t.ch04.s1
+  chapter: t.ch04
+  purpose: p
+  pov: mara
+  setting: yard
+  characters:
+  - mara
+  beats:
+  - Mara forces the rusted lock on the hatch and slips inside the ferry.
+  - Mara enters the ferry and walks the dark corridor to the cabin.
+  - Mara reads the vibration as sensor noise per IEC 61508 and checks the spectral kurtosis.
+  research: []
+  end_state: ''
+  events: []
+- id: t.ch05.s1
+  chapter: t.ch05
+  purpose: p
+  pov: mara
+  setting: yard
+  characters:
+  - mara
+  beats:
+  - Mara forces the rusted lock on the hatch and slips inside the ferry.
+  - Mara enters the ferry and walks the dark corridor to the cabin.
+  - Mara reads the vibration as sensor noise per IEC 61508 and checks the spectral kurtosis.
+  research: []
+  end_state: ''
+  events: []
+- id: t.ch06.s1
+  chapter: t.ch06
+  purpose: p
+  pov: mara
+  setting: yard
+  characters:
+  - mara
+  beats:
+  - Mara forces the rusted lock on the hatch and slips inside the ferry.
+  - Mara enters the ferry and walks the dark corridor to the cabin.
+  - Mara reads the vibration as sensor noise per IEC 61508 and checks the spectral kurtosis.
+  research: []
+  end_state: ''
+  events: []
+- id: t.ch07.s1
+  chapter: t.ch07
+  purpose: p
+  pov: mara
+  setting: yard
+  characters:
+  - mara
+  beats:
+  - Mara forces the rusted lock on the hatch and slips inside the ferry.
+  - Mara enters the ferry and walks the dark corridor to the cabin.
+  - Mara reads the vibration as sensor noise per IEC 61508 and checks the spectral kurtosis.
+  research: []
+  end_state: ''
+  events: []
+- id: t.ch08.s1
+  chapter: t.ch08
+  purpose: p
+  pov: mara
+  setting: yard
+  characters:
+  - mara
+  beats:
+  - Mara forces the rusted lock on the hatch and slips inside the ferry.
+  - Mara enters the ferry and walks the dark corridor to the cabin.
+  - Mara reads the vibration as sensor noise per IEC 61508 and checks the spectral kurtosis.
+  research: []
+  end_state: ''
+  events: []
+- id: t.ch09.s1
+  chapter: t.ch09
+  purpose: p
+  pov: mara
+  setting: yard
+  characters:
+  - mara
+  beats:
+  - Mara forces the rusted lock on the hatch and slips inside the ferry.
+  - Mara enters the ferry and walks the dark corridor to the cabin.
+  - Mara reads the vibration as sensor noise per IEC 61508 and checks the spectral kurtosis.
+  research: []
+  end_state: ''
+  events: []
+- id: t.ch10.s1
+  chapter: t.ch10
+  purpose: p
+  pov: mara
+  setting: yard
+  characters:
+  - mara
+  beats:
+  - Mara talks with her friend at the pier.
+  - She weighs her debt in the evening.
+  - Mara reads the vibration as sensor noise per IEC 61508 and checks the spectral kurtosis.
+  research: []
+  end_state: ''
+  events: []
+- id: t.ch11.s1
+  chapter: t.ch11
+  purpose: p
+  pov: mara
+  setting: yard
+  characters:
+  - mara
+  beats:
+  - Mara forces the rusted lock on the hatch and slips inside the ferry.
+  - Mara enters the ferry and walks the dark corridor to the cabin.
+  research: []
+  end_state: ''
+  events: []
+- id: t.ch12.s1
+  chapter: t.ch12
+  purpose: p
+  pov: mara
+  setting: yard
+  characters:
+  - mara
+  beats:
+  - Mara talks with her friend at the pier.
+  - She weighs her debt in the evening.
+  - Mara reads the vibration as sensor noise per IEC 61508 and checks the spectral kurtosis.
+  research: []
+  end_state: ''
+  events: []

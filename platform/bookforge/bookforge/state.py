@@ -96,6 +96,17 @@ def load_state(path: Path) -> BookState:
             f"{path}: unsupported schema_version "
             f"{raw.get('schema_version') if isinstance(raw, dict) else None} (expected {STATE_SCHEMA_VERSION})"
         )
+    # A state written before a layer or checkpoint existed gets the new ones. A book whose acts were already accepted was planned
+    # without the story-event ledger: its ledger layer and checkpoint count as done so the book carries on as it was.
+    if isinstance(raw.get("layers"), dict) and isinstance(raw.get("checkpoints"), dict):
+        planned = (raw["layers"].get("acts") or {}).get("status") == "accepted"
+        for name in LAYER_ORDER:
+            if name not in raw["layers"]:
+                raw["layers"][name] = ({"status": "accepted", "version": 1, "note": "not used: planned before the ledger existed"}
+                                       if planned and name == "ledger" else {})
+        for name in CHECKPOINTS:
+            if name not in raw["checkpoints"]:
+                raw["checkpoints"][name] = {"status": "approved"} if planned and name == "ledger" else {}
     try:
         return BookState.model_validate(raw)
     except ValidationError as e:

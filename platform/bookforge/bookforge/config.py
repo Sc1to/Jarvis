@@ -73,7 +73,7 @@ class Models(_Strict):
 
 class LayerSettings(_Strict):
     model: str  # writer, critic or a key of models.extra: the endpoint that answers this layer
-    checkpoint: Literal["direction", "structure"] | None = None
+    checkpoint: Literal["direction", "ledger", "structure"] | None = None
     count: tuple[int, int] | None = None
     per_chapter: tuple[int, int] | None = None
     drafts: int | None = None
@@ -88,6 +88,7 @@ def _default_layers() -> dict[str, LayerSettings]:
         "series_north_star": LayerSettings(model="critic", checkpoint="direction"),
         "book_north_star": LayerSettings(model="critic", checkpoint="direction"),
         "synopsis": LayerSettings(model="critic", checkpoint="direction"),
+        "ledger": LayerSettings(model="critic", checkpoint="ledger"),
         "acts": LayerSettings(model="critic", count=(3, 4), checkpoint="structure"),
         "chapters": LayerSettings(model="critic", count=(25, 35), checkpoint="structure"),
         "scenes": LayerSettings(model="critic", per_chapter=(2, 4), checkpoint="structure"),
@@ -194,11 +195,18 @@ class GitSettings(_Strict):
     tag_checkpoints: bool = True
 
 
+class LedgerSettings(_Strict):
+    """How the story-event ledger decides a synopsis is too thin for a novel. Defaults are starting points; nothing needs setting."""
+    weight_per_chapter: float = Field(2.0, gt=0)  # story weight one chapter carries (events weigh 1 minor, 2 ordinary, 3 major)
+    min_chapters: int = Field(12, ge=1)  # fewer chapters' worth of story than this is "thin": ask the author, never pad
+
+
 class Config(_Strict):
     data_dir: str = "/opt/platform/data/bookforge"
     models: Models = Models()
     layers: dict[str, LayerSettings] = _default_layers()
     research: Research = Research()
+    ledger: LedgerSettings = LedgerSettings()
     book: BookSettings = BookSettings()
     briefing: Briefing = Briefing()
     qc: QC = QC()
@@ -209,11 +217,10 @@ class Config(_Strict):
     @classmethod
     def _layers_complete(cls, v: dict[str, LayerSettings]) -> dict[str, LayerSettings]:
         unknown = set(v) - set(LAYER_ORDER)
-        missing = set(LAYER_ORDER) - set(v)
         if unknown:
             raise ValueError(f"unknown layers: {sorted(unknown)}")
-        if missing:
-            raise ValueError(f"missing layers: {sorted(missing)}")
+        for name, default in _default_layers().items():  # a config written before a layer existed keeps working
+            v.setdefault(name, default)
         for name, s in v.items():
             if s.checkpoint is not None and s.checkpoint not in CHECKPOINTS:
                 raise ValueError(f"layer {name}: unknown checkpoint {s.checkpoint}")

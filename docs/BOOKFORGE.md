@@ -178,6 +178,7 @@ The book is written top-down through seven layers, each refining the one above i
 | 1 | Series north star | 1 per series | Broad: genre, era, world | You | `north-star.md` |
 | 2 | Book north star | 1 per book | What is specific to this book | You | `books/b1/north-star.md` |
 | 3 | Synopsis | 1 | Gaps the synopsis reveals | You, quickly | `synopsis.md` |
+| 3b | Story-event ledger | 1 | None | You (own checkpoint) | `ledger.yaml` |
 | 4 | Acts | 3–4 | Rarely | Critic; you skim | `acts.yaml` |
 | 5 | Chapters | 25–35 | Settings, events | Critic | `chapters.yaml`, new state tracks |
 | 6 | Scenes | 80–100 | Concrete details | Critic + System One | `scenes.yaml` |
@@ -206,6 +207,29 @@ The book is written top-down through seven layers, each refining the one above i
 - **Chapter 1 goes first.** Its prose is written and reviewed alone before the rest (voice checkpoint).
 
 - **Calls are grouped by model,** so only one model needs to be warm at a time.
+
+## Story-event ledger and stage validators (Phase 14.14, in progress)
+
+**Why.** A first full run (b1, ~180k words) repeated itself: each stage planned from prose, blind to what earlier stages had already used, so the same events were planned again and again. The fix is structural: plans are made of *commitments* (event ids, end states, state changes) that later stages and validators can check mechanically.
+
+**The ledger** (`books/<b>/ledger.yaml`, layer `ledger`, between the synopsis and the acts, its own `ledger` checkpoint). The synopsis is extracted into numbered story events: `id` (e1; a minor complication derived by the chapter planner is e5.1, with `parent: e5` and `source: derived`), `text`, `excerpt` (the synopsis's own words, verbatim), `once_only`, `after` (causes), `kind` (event, setup, reveal, payoff, flashback), `weight` (1 minor, 2 ordinary, 3 major), `ending`, `pays_off` (the setup a payoff or reveal resolves), `pov`, `carried_in` (true at the start, from an earlier book), `source` (synopsis, derived, author). List order is the order of telling. Only the synopsis is a source of events: the ledger never pads.
+
+**Capacity, not a target.** `estimated_chapters = total_weight / weight_per_chapter` (events of the synopsis and the author's, derived ones do not count); thin when below `ledger.min_chapters`. Both are optional settings (defaults 2.0 and 12); the numbers are written to `ledger.yaml` (`capacity`) and shown in the report. A thin synopsis gets `questions`, each with the reason and proposed complications, and the layer stops at the ledger checkpoint.
+
+**Author answers revise the ledger.** (1) `run` writes the ledger; open questions stop it at the checkpoint (layer drafted, nothing downstream runs). (2) You answer: `ledger-answer <series> q1 "..."` or edit `answer:` in the file. (3) The next `run` has the model work each answer into new events with `source: author`; every synopsis event must come back unchanged; the ledger validators run again, failures are fed back (at most `qc.max_revision_rounds`), a hard finding that survives stops the layer. The question is marked `applied`, `revision` goes up, `capacity` is recomputed. (4) Still thin: new questions, back to (2). Otherwise the layer is accepted and the checkpoint waits for your approval. (5) Approving the checkpoint while questions are open dismisses them: go on as it is. `ledger` (CLI) previews what the stage makes of a synopsis without touching anything else.
+
+**Validators** (`bookforge/validators/`, functions over parsed data returning findings: `hard` or `soft`). A hard finding is fed back to the model for a correction; if it survives the retries the stage stops and nothing flows downstream. Findings are saved to `books/<b>/validation/<stage>.json`. They detect patterns, never specific story content:
+
+| Module | Finds |
+|---|---|
+| `ledger` | unknown/duplicate ids, cycles, order, excerpts not in the synopsis, synopsis paragraphs with no event (the resolution), no ending event, setups without payoff, reveal before setup, derived events that are not minor children; acts: every event in exactly one act, last act holds the resolution, turning point is an event of its act, chapter counts implausible for the weight; chapters: once_only events twice, events before their causes, chapters with nothing new, events uncovered; scenes without end_state |
+| `repeats` | event repeats by meaning (units are chapter-summary sentences and scene beats; stems, merged verb classes, same names); chapters that replan another; action patterns (the same verb + object in many chapters) |
+| `state` | a track returning to an earlier value without a `cause`, a character in two places at once, story days running backwards |
+| `tension` | long flat stretches |
+| `research_leak` | research-only terms or copied phrases in beats |
+| `prose` | repeated sentences, chapters opening with the previous ending, wrap-up endings (soft only), tic words |
+
+Test data lives in `platform/bookforge/tests/fixtures/known_bad/` (generated by `_make.py`, a small invented story); b1's real output goes in `tests/fixtures/b1/`.
 
 ## Story bible: state over time
 

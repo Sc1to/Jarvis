@@ -1,0 +1,138 @@
+chapters:
+- id: t.ch01
+  act: t.act1
+  title: Chapter 1
+  purpose: p
+  summary: Mara reels from her debt to Corso. She walks the harbor yard and sees the derelict ferry rusting at the
+    pier.
+  pov: mara
+  setting: yard
+  tension: 3
+  events_covered:
+  - e1
+  - e2
+  end_state: ''
+- id: t.ch02
+  act: t.act1
+  title: Chapter 2
+  purpose: p
+  summary: Mara forces the rusted lock and enters the ferry through the cargo hatch. She explores the dark corridors.
+  pov: mara
+  setting: yard
+  tension: 4
+  events_covered:
+  - e3
+  end_state: ''
+- id: t.ch03
+  act: t.act1
+  title: Chapter 3
+  purpose: p
+  summary: Mara enters the ferry again through the cargo hatch after forcing the rusted lock. She explores the dark
+    corridors once more.
+  pov: mara
+  setting: yard
+  tension: 5
+  events_covered:
+  - e3
+  end_state: ''
+- id: t.ch04
+  act: t.act1
+  title: Chapter 4
+  purpose: p
+  summary: Mara searches the cabin and finds a data drive that names Corso as a smuggler.
+  pov: mara
+  setting: yard
+  tension: 8
+  events_covered:
+  - e4
+  end_state: ''
+- id: t.ch05
+  act: t.act2
+  title: Chapter 5
+  purpose: p
+  summary: Corso hears about the drive from a dockhand and sends two men to the yard to question Mara about the
+    drive.
+  pov: mara
+  setting: yard
+  tension: 9
+  events_covered:
+  - e5
+  end_state: ''
+- id: t.ch06
+  act: t.act2
+  title: Chapter 6
+  purpose: p
+  summary: Mara starts the engines and launches the ferry from the yard to escape Corso's men.
+  pov: mara
+  setting: yard
+  tension: 8
+  events_covered:
+  - e8
+  end_state: ''
+- id: t.ch07
+  act: t.act2
+  title: Chapter 7
+  purpose: p
+  summary: Corso hears about the drive from a dockhand and sends two men to the yard to question Mara about the
+    drive again.
+  pov: mara
+  setting: yard
+  tension: 10
+  events_covered:
+  - e5
+  end_state: ''
+- id: t.ch08
+  act: t.act2
+  title: Chapter 8
+  purpose: p
+  summary: Mara searches the cabin again and finds the data drive that names Corso as a smuggler.
+  pov: mara
+  setting: yard
+  tension: 9
+  events_covered:
+  - e4
+  end_state: ''
+- id: t.ch09
+  act: t.act2
+  title: Chapter 9
+  purpose: p
+  summary: 'Corso meets Mara and offers a deal: the drive for the debt.'
+  pov: mara
+  setting: yard
+  tension: 8
+  events_covered:
+  - e6
+  end_state: ''
+- id: t.ch10
+  act: t.act3
+  title: Chapter 10
+  purpose: p
+  summary: Mara hesitates over the deal and walks the harbor wall at night.
+  pov: mara
+  setting: yard
+  tension: 10
+  events_covered:
+  - e6
+  end_state: ''
+- id: t.ch11
+  act: t.act3
+  title: Chapter 11
+  purpose: p
+  summary: Mara starts the engines and launches the ferry from the yard once more.
+  pov: mara
+  setting: yard
+  tension: 9
+  events_covered:
+  - e8
+  end_state: ''
+- id: t.ch12
+  act: t.act3
+  title: Chapter 12
+  purpose: p
+  summary: The inspector arrests Corso on the strength of the drive.
+  pov: mara
+  setting: yard
+  tension: 8
+  events_covered:
+  - e9
+  end_state: ''

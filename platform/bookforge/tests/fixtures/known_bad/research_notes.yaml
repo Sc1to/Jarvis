@@ -1,0 +1,5 @@
+notes:
+- id: r1
+  claim: Vibration can be misread as sensor noise; IEC 61508 sets safety integrity levels for such sensors.
+- id: r2
+  claim: Spectral kurtosis helps detect impulsive faults in rotating machinery.

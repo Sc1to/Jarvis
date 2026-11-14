@@ -65,8 +65,8 @@ def test_top_level_must_be_a_mapping(tmp_path):
 
 def test_layers_must_be_complete_and_known():
     layers = {k: v.model_dump() for k, v in Config().layers.items()}
-    with pytest.raises(ValueError):
-        Config(layers={"acts": layers["acts"]})
+    only_acts = Config(layers={"acts": layers["acts"]})  # a config written before a layer existed: the missing layers take their defaults
+    assert set(only_acts.layers) == set(Config().layers)
     with pytest.raises(ValueError):
         Config(layers={**layers, "epilogue": layers["acts"]})
 
