@@ -22,7 +22,7 @@ from ..bible.validate import (
 )
 from ..constants import REDO_NOTE
 from ..errors import LayerError
-from ..ledger_view import status_text
+from ..ledger_view import carried_for_prompt, status_text
 from ..prompts import render
 from ..qc.plan_review import review_plan
 from ..research.notes import stores_for
@@ -173,9 +173,10 @@ def _north_stars(project) -> dict[str, str]:
     }
 
 
-def _reviewer(ctx: StepContext, label: str, what: str, parent: str, tracks_text: str, stars: dict[str, str]):
-    """A soft check for get_piece / generate_document: the critic's review of a plan against its parent."""
-    return lambda text: review_plan(ctx, label, what, parent, text, tracks_text, stars)
+def _reviewer(ctx: StepContext, label: str, what: str, parent: str, tracks_text: str, stars: dict[str, str], ledger_text: str | None = None):
+    """A soft check for get_piece / generate_document: the critic's review of a plan against its parent (and the ledger, when there is one)."""
+    extra = {} if ledger_text is None else {"ledger": ledger_text}
+    return lambda text: review_plan(ctx, label, what, parent, text, tracks_text, stars, **extra)
 
 
 def _note_reviews(project, layer: str, note: str, files: list[str]) -> str:
@@ -219,15 +220,16 @@ def _ledger_acts(ctx: StepContext, ledger) -> StepResult:
     spec = DocumentSpec(
         layer="acts", prompt="acts_ledger", out_path="books/{book}/acts.yaml",
         validate=lambda text: parse_acts(text, project, ledger)[1], max_tokens=3500, strip_preamble=False,
-        slots=lambda c: {**stars, "ledger_events": events_text(ledger.events), "constraints": _forced_counts(project),
+        slots=lambda c: {**stars, "ledger_events": events_text(ledger.events), "constraints": _forced_counts(project), "carried": carried_for_prompt(project),
                          "weight_per_chapter": f"{project.config.ledger.weight_per_chapter:g}"},
         normalize=normalize, research_scope="book",
-        review=_reviewer(ctx, "acts", "acts of the book", stars["synopsis"], "none yet", stars) if project.config.qc.review_structure else None,
+        review=_reviewer(ctx, "acts", "acts of the book", stars["synopsis"], "none yet", stars, events_text(ledger.events)) if project.config.qc.review_structure else None,
         research_focus="Rarely needed: only real-world facts that the large-scale structure of the story depends on.",
     )
     result = generate_document(ctx, spec)
     act_list = store.load_acts(project)
-    findings = ledger_checks.check_acts([a.model_dump() for a in act_list], plain_events, weight_per_chapter=project.config.ledger.weight_per_chapter)
+    from ..validators import accepted
+    findings = accepted.apply(project, ledger_checks.check_acts([a.model_dump() for a in act_list], plain_events, weight_per_chapter=project.config.ledger.weight_per_chapter), "acts")
     hard_left = [f.line() for f in findings if f.severity == "hard"]
     if hard_left:  # an adopted (hand-edited) file passes through the same checks
         raise LayerError("acts.yaml does not fit the ledger: " + "; ".join(hard_left[:6]))
@@ -342,14 +344,15 @@ def _build_chapters(ctx: StepContext, files: list[str]) -> str:
                 ctx, "chapters", act.id.split(".")[-1],
                 lambda act=act, first=first, last=last, before=before, ledger=ledger: _messages(
                     project, "chapters_ledger", act=dump_yaml(to_plain(act)), acts_overview=acts_digest(act_list),
-                    ledger_status=status_text(ledger, set(act.events), before), story_so_far=chapters_end_digest(before),
+                    ledger_status=status_text(ledger, set(act.events), before), story_so_far=chapters_end_digest(before), carried=carried_for_prompt(project),
                     cast=cast_digest(constants), tracks_so_far=tracks_digest(tracks), research_notes=notes_text(project, act_text),
                     chapter_count=str(act.chapter_count), first_chapter=_ch(project, first), last_chapter=_ch(project, last), **stars),
                 lambda text, act=act, first=first, before=before, ledger=ledger: parse_chapters(
                     text, project=project, act=act, first_number=first, constants=constants, tracks_so_far=tracks,
                     fact_ids=_fact_ids(project), ledger=ledger, chapters_before=before, acts=act_list),
                 max_tokens=7000,
-                review=_reviewer(ctx, f"chapters {act.id}", f"chapters of {act.id}", dump_yaml(to_plain(act)), tracks_digest(tracks), stars),
+                review=_reviewer(ctx, f"chapters {act.id}", f"chapters of {act.id}", dump_yaml(to_plain(act)), tracks_digest(tracks), stars,
+                                 status_text(ledger, set(act.events), before)),
             )
             if bundle.derived:  # minor complications join the ledger, so later acts and the validators see them
                 ledger = ledger.model_copy(update={"events": merge_derived(ledger.events, bundle.derived)})
@@ -366,7 +369,7 @@ def _build_chapters(ctx: StepContext, files: list[str]) -> str:
     if ledger is not None:
         store.save_ledger(project, ledger)
         files.append("books/%s/ledger.yaml" % project.book)
-        files.append(_book_chapter_checks(project, done, ledger))
+        files.append(_book_chapter_checks(project, done, ledger, ctx))
     problems = validate_chapters_file(project)
     if problems:
         store.chapters_path(project).unlink(missing_ok=True)  # keep the saved pieces so a rerun does not start over
@@ -379,13 +382,16 @@ def _build_chapters(ctx: StepContext, files: list[str]) -> str:
             + (f"; added to the cast because chapters used them: {', '.join(adopted)}" if adopted else ""))
 
 
-def _book_chapter_checks(project, chapters: list[Chapter], ledger) -> str:
+def _book_chapter_checks(project, chapters: list[Chapter], ledger, ctx=None) -> str:
     """Whole-book checks once every act is planned: events and flat stretches. Hard findings stop the layer (the pieces are kept)."""
-    from ..validators import HARD, ledger as ledger_checks, repeats, store as findings_store, tension
+    from ..validators import HARD, accepted, ledger as ledger_checks, repeats, store as findings_store, tension
     ch = [c.model_dump() for c in chapters]
     ev = [e.model_dump() for e in ledger.events]
     acts_plain = [a.model_dump() for a in store.load_acts(project)]
-    findings = (ledger_checks.check_chapters(ch, ev, acts_plain) + repeats.repeated_events(ch, [], ledger_events=ev) + tension.flat_stretches(ch))
+    findings = (ledger_checks.check_chapters(ch, ev, acts_plain) + ledger_checks.check_chapter_texts(ch, ev) + repeats.repeated_events(ch, [], ledger_events=ev)
+                + tension.flat_stretches(ch) + [f for f in ledger_checks.check_ledger(ev) if f.severity == "soft"])
+    from ..qc.repeat_confirm import confirm_repeats
+    findings = accepted.apply(project, confirm_repeats(ctx, findings), "chapters")
     rel = findings_store.save(project, "chapters", findings)
     hard_left = [f.line() for f in findings if f.severity == HARD]
     if hard_left:
@@ -411,9 +417,9 @@ def story_so_far_planning(project, chapters_before: list[Chapter], scenes_before
     return "\n".join(lines) or "nothing yet: this is the first chapter"
 
 
-def _book_scene_checks(project, chapters: list[Chapter], scenes_all: list, timeline: list, tracks: list[Track], constants, ledger) -> str:
+def _book_scene_checks(project, chapters: list[Chapter], scenes_all: list, timeline: list, tracks: list[Track], constants, ledger, ctx=None) -> str:
     """Whole-book checks on the planned scenes. Hard findings stop the layer (the pieces are kept for a rerun)."""
-    from ..validators import HARD, ledger as ledger_checks, repeats, research_leak, state as state_checks, store as findings_store
+    from ..validators import HARD, accepted, ledger as ledger_checks, repeats, research_leak, state as state_checks, store as findings_store
     ch = [c.model_dump() for c in chapters]
     sc = [s.model_dump() for s in scenes_all]
     tl = [t.model_dump() for t in timeline]
@@ -423,9 +429,11 @@ def _book_scene_checks(project, chapters: list[Chapter], scenes_all: list, timel
     story_texts = [_read(project, f"books/{project.book}/synopsis.md"), _read(project, "north-star.md"), _read(project, f"books/{project.book}/north-star.md"),
                    " ".join(e.text for e in ledger.events), " ".join(" ".join(e.facts) + " " + e.name for e in constants.entities)]
     tracks_plain = [to_plain(t) for t in tracks]
-    findings = (ledger_checks.check_scenes_vs_chapters(sc, ch, ev) + repeats.repeated_events(ch, sc, names, ev, stage="scenes")
+    findings = (ledger_checks.check_scenes_vs_chapters(sc, ch, ev) + ledger_checks.check_scene_texts(sc, ch, ev) + repeats.repeated_events(ch, sc, names, ev, stage="scenes")
                 + repeats.action_patterns(sc, ch, names) + research_leak.research_in_beats(sc, claims, story_texts)
                 + state_checks.track_regressions(tracks_plain) + state_checks.location_conflicts(sc, tl, tracks_plain) + state_checks.day_regressions(sc, tl))
+    from ..qc.repeat_confirm import confirm_repeats
+    findings = accepted.apply(project, confirm_repeats(ctx, findings), "scenes")
     rel = findings_store.save(project, "scenes", findings)
     hard_left = [f.line() for f in findings if f.severity == HARD]
     if hard_left:
@@ -502,7 +510,7 @@ def _build_scenes(ctx: StepContext, files: list[str]) -> str:
                 return _messages(
                     project, "scenes_ledger", chapter=dump_yaml(to_plain(chapter)), act=act_line,
                     ledger_status=status_text(ledger, set(chapter.events_covered), ch_list[:idx], "SHOWN IN THIS CHAPTER: plan scenes for these"),
-                    story_so_far=story_so_far_planning(project, ch_list[:idx], scenes_so_far),
+                    story_so_far=story_so_far_planning(project, ch_list[:idx], scenes_so_far), carried=carried_for_prompt(project),
                     cast=cast_digest(constants), tracks_in_chapter=tracks_in_chapter_digest(tracks, project.book, ch_num),
                     other_tracks="\n".join(f"- {t.id} (owner {t.entity})" for t in others) or "none",
                     previous_time=prev_when, research_notes=notes_text(project, dump_yaml(to_plain(chapter))),
@@ -521,10 +529,11 @@ def _build_scenes(ctx: StepContext, files: list[str]) -> str:
             ctx, "scenes", chapter.id.split(".", 1)[1], build,
             lambda text, chapter=chapter, prev_day=prev_day, tracks=tracks: parse_scenes(
                 text, project=project, chapter=chapter, prev_day=prev_day, constants=constants, tracks_so_far=tracks,
-                fact_ids=_fact_ids(project), ledger=ledger),
+                fact_ids=_fact_ids(project), ledger=ledger, all_chapters=ch_list),
             max_tokens=3500, before=before,
             review=_reviewer(ctx, f"scenes {chapter.id}", f"scenes of {chapter.id}",
-                             dump_yaml(to_plain(chapter)), tracks_in_chapter_digest(tracks, project.book, ch_num), stars),
+                             dump_yaml(to_plain(chapter)), tracks_in_chapter_digest(tracks, project.book, ch_num), stars,
+                             None if ledger is None else status_text(ledger, set(chapter.events_covered), ch_list[:idx], "SHOWN IN THIS CHAPTER")),
         )
         if bundle.new_entities:  # places the planner needed that the cast did not list: they join the cast
             adopted += [e.id for e in bundle.new_entities if e.id not in {x.id for x in constants.entities}]
@@ -546,7 +555,7 @@ def _build_scenes(ctx: StepContext, files: list[str]) -> str:
         log.info("scenes: %d place(s) added to the cast: %s", len(adopted), ", ".join(adopted))
     store.save_scenes(project, scenes_all)
     if ledger is not None:
-        files.append(_book_scene_checks(project, ch_list, scenes_all, timeline_all, tracks, constants, ledger))
+        files.append(_book_scene_checks(project, ch_list, scenes_all, timeline_all, tracks, constants, ledger, ctx))
     problems = validate_scenes_file(project)
     if problems:
         store.scenes_path(project).unlink(missing_ok=True)  # keep the saved pieces so a rerun does not start over

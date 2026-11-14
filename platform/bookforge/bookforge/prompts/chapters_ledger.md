@@ -24,6 +24,10 @@ Plan the CHAPTERS of one act of the book, and the state tracks they create. The 
 
 {story_so_far}
 
+## Already true when this book begins (inherited from the books before it; not events of this book, but every plan must agree with it)
+
+{carried}
+
 ## Cast and world (use these ids)
 
 {cast}

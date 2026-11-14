@@ -13,6 +13,7 @@ import yaml
 from pydantic import ValidationError
 
 from ..project import Project
+from ..validators import accepted
 from . import store
 from .models import Act, Chapter, Constants, Entity, Rule, Scene, TimelineEntry, Track, problems_from
 from .positions import act_id, canonical, chapter_id, parse_act_id, parse_position, scene_id
@@ -174,7 +175,7 @@ def parse_acts(text: str, project: Project, ledger=None) -> tuple[list[Act] | No
     if ledger is not None and acts and len(acts) == len(raw):
         from ..validators import HARD, ledger as ledger_checks
         findings = ledger_checks.check_acts([a.model_dump() for a in acts], [e.model_dump() for e in ledger.events], weight_per_chapter=project.config.ledger.weight_per_chapter)
-        problems += [f.line() for f in findings if f.severity == HARD]
+        problems += accepted.hard_lines(project, findings, "acts")
     return (None, problems) if problems else (acts, [])
 
 
@@ -361,7 +362,7 @@ def parse_chapters(
                            allowed_from=allowed, prefix="tracks", problems=problems)
     derived: list = []
     if ledger is not None:
-        derived = _ledger_chapter_checks(data, chapters, act, ledger, chapters_before or [], acts or [], problems)
+        derived = _ledger_chapter_checks(project, data, chapters, act, ledger, chapters_before or [], acts or [], problems)
     if raw and not any(t.plan for t in tracks):
         # Without tracks the story's changes (injuries, who knows what, where people are) are neither planned nor checked later.
         problems.append(f"{act.id} defines no state tracks: add a 'tracks:' list with at least one track created or extended in these chapters "
@@ -369,9 +370,9 @@ def parse_chapters(
     return (None, problems) if problems else (ChaptersBundle(chapters, tracks, new_places, derived), [])
 
 
-def _ledger_chapter_checks(data, chapters: list[Chapter], act: Act, ledger, before: list[Chapter], acts: list[Act], problems: list[str]) -> list:
+def _ledger_chapter_checks(project, data, chapters: list[Chapter], act: Act, ledger, before: list[Chapter], acts: list[Act], problems: list[str]) -> list:
     """Ledger rules for the chapters of one act: derived complications, events told once, in order, each chapter with something new."""
-    from ..validators import HARD, ledger as ledger_checks, repeats
+    from ..validators import HARD, hard, ledger as ledger_checks, repeats
     from .models import StoryEvent
     derived: list = []
     for i, raw in enumerate(data.get("derived_events") or [] if isinstance(data, dict) else []):
@@ -398,7 +399,12 @@ def _ledger_chapter_checks(data, chapters: list[Chapter], act: Act, ledger, befo
                  if f.severity == HARD and (set(f.items) & ({c["id"] for c in now} | mine))]
     findings += [f for f in repeats.repeated_events(before_plain + now, [], names=set(), ledger_events=plain)
                  if f.severity == HARD and set(f.items) & {c["id"] for c in now}]
-    problems += [f.line() for f in findings]
+    findings += [f for f in ledger_checks.check_chapter_texts(now, plain) if f.severity == HARD]
+    limit = max(1, round(ledger_checks.MAX_DERIVED_ACT_SHARE * len(act.events)))
+    if len(derived) > limit:
+        findings.append(hard("chapters", "too_many_derived", f"{len(derived)} derived complications in {act.id}, which has {len(act.events)} events: at most {limit}. "
+                             "Minor complications are for the odd chapter that has too little to tell, not a way to fill chapters; tell the events more slowly or ask for fewer chapters", [act.id]))
+    problems += accepted.hard_lines(project, findings, "chapters")
     return derived
 
 
@@ -422,7 +428,7 @@ def _in_chapter(entry_from: str, book: str, chapter: int) -> bool:
 
 def parse_scenes(
     text: str, *, project: Project, chapter: Chapter, prev_day: int | None, constants: Constants,
-    tracks_so_far: list[Track], fact_ids: set[str], ledger=None,
+    tracks_so_far: list[Track], fact_ids: set[str], ledger=None, all_chapters: list[Chapter] | None = None,
 ) -> tuple[ScenesBundle | None, list[str]]:
     data, error = load_reply_yaml(text)
     if error:
@@ -475,8 +481,12 @@ def parse_scenes(
     tracks_after = _apply_refinement(refined, tracks_so_far, project.book, ch_num, chapter.id, problems)
     if ledger is not None and scenes:
         from ..validators import HARD, ledger as ledger_checks
-        found = ledger_checks.check_scenes_vs_chapters([x.model_dump() for x in scenes], [chapter.model_dump()], [e.model_dump() for e in ledger.events])
-        problems += [f.line() for f in found if f.severity == HARD]
+        plain_events = [e.model_dump() for e in ledger.events]
+        plain_scenes = [x.model_dump() for x in scenes]
+        found = ledger_checks.check_scenes_vs_chapters(plain_scenes, [chapter.model_dump()], plain_events)
+        found += ledger_checks.check_scene_texts(plain_scenes, [c.model_dump() for c in all_chapters or [chapter]], plain_events)
+        found += ledger_checks.scene_count_plausibility(chapter.model_dump(), plain_scenes, plain_events, max_scenes=count_range(project, "scenes")[1])
+        problems += accepted.hard_lines(project, found, "scenes")
     return (None, problems) if problems else (ScenesBundle(scenes, timeline, tracks_after, new_places), [])
 
 

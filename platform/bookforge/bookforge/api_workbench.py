@@ -44,6 +44,17 @@ class AnswerBody(BaseModel):
     answer: str = Field(min_length=1, max_length=4000)
 
 
+class AcceptBody(BaseModel):
+    stage: str
+    code: str
+    items: list[str] = []
+    message: str = ""
+
+
+class UnacceptBody(BaseModel):
+    fingerprint: str
+
+
 class PromptBody(BaseModel):
     text: str
 
@@ -132,7 +143,28 @@ def register(router: APIRouter, h: Helpers) -> None:
         """What the validators found at each planning stage and in the prose, as saved by the last run of that stage."""
         from .validators import store as findings_store
         p = h.open_project(series, book)
-        return h.ok({"stages": {st: findings_store.load(p, st) for st in ("ledger", "acts", "chapters", "scenes", "prose")}})
+        from .validators import accepted
+        return h.ok({"stages": {st: findings_store.load(p, st) for st in ("ledger", "acts", "chapters", "scenes", "prose")},
+                     "accepted": [{"fingerprint": fp, **rec} for fp, rec in accepted.load(p).items()]})
+
+    @router.post(W + "/validation/accept")
+    def validation_accept(series: str, book: str, body: AcceptBody):
+        """Accept a hard finding you judge to be a false alarm: it stays in the report, marked accepted, and stops blocking the stage."""
+        from .validators import accepted
+        p = h.open_project(series, book)
+        h.require_idle(series)
+        if body.stage not in ("ledger", "acts", "chapters", "scenes", "prose"):
+            raise HTTPException(422, "unknown stage")
+        return h.ok({"fingerprint": accepted.accept(p, body.stage, body.code, body.items, body.message)})
+
+    @router.post(W + "/validation/unaccept")
+    def validation_unaccept(series: str, book: str, body: UnacceptBody):
+        from .validators import accepted
+        p = h.open_project(series, book)
+        h.require_idle(series)
+        if not accepted.unaccept(p, body.fingerprint):
+            raise HTTPException(404, "that finding is not accepted")
+        return h.ok({"removed": body.fingerprint})
 
     @router.get(W + "/ledger")
     def ledger_view(series: str, book: str):

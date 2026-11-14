@@ -48,3 +48,22 @@ def status_text(ledger: Ledger, mine: set[str], chapters_done: list[Chapter], mi
     return ("DONE (already told; never tell again, refer to them only as the past):\n" + ("\n".join(done) or "none yet")
             + f"\n\n{mine_label}:\n" + ("\n".join(here) or "none")
             + "\n\nRESERVED FOR LATER (do NOT use, hint at, stage or resolve any of these yet):\n" + ("\n".join(later) or "none"))
+
+
+def carried_text(project, max_chars: int = 1800) -> str:
+    """What the series ledger says is already true when this book begins (state inherited from the books before it).
+
+    '' for a first book, where the series ledger is still empty."""
+    import yaml
+    try:
+        data = yaml.safe_load((project.root / "ledger.yaml").read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return ""
+    if not isinstance(data, dict) or not any(data.values()):
+        return ""
+    text = yaml.safe_dump({k: v for k, v in data.items() if v}, sort_keys=False, allow_unicode=True).strip()
+    return text if len(text) <= max_chars else text[: max_chars - 3].rstrip() + "..."
+
+
+def carried_for_prompt(project) -> str:
+    return carried_text(project) or "nothing: this is the first book"

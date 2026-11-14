@@ -252,6 +252,15 @@ def _assemble(d: _Data, k: _Knobs) -> tuple[list[Section], Deps]:
     if prev_when:
         deps.timeline.append(tag(prev_when.id, prev_when.model_dump()))
 
+    # 3b. state inherited from earlier books (only for a book planned from a ledger: older books keep their briefings as they were)
+    from .bible.store import active_ledger
+    from .ledger_view import carried_text
+    if active_ledger(project) is not None:
+        inherited = carried_text(project, 1500)
+        if inherited:
+            sections.append(Section("Already true when this book begins (inherited from the earlier books)", inherited))
+            deps.bible.append(tag("inherited", inherited))
+
     # 4. the scene, the chapter, research
     beats = "\n".join(f"{i}. {b}" for i, b in enumerate(scene.beats, 1))
     sections.append(Section("This scene", f"Scene {scene.id}\nPurpose: {scene.purpose}\nViewpoint character: {d.name(scene.pov)}\n"

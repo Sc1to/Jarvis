@@ -24,6 +24,10 @@ Plan the SCENES of one chapter, when they happen, and how they pin down the stat
 
 {story_so_far}
 
+## Already true when this book begins (inherited from the books before it; not events of this book, but every plan must agree with it)
+
+{carried}
+
 ## Cast and world (use these ids)
 
 {cast}

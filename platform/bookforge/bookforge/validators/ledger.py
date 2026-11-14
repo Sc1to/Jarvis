@@ -9,6 +9,7 @@ from .text import WORD, content_stems, dice
 
 MAX_DERIVED_PER_PARENT = 3
 MAX_DERIVED_SHARE = 0.4
+MAX_DERIVED_ACT_SHARE = 0.34  # derived complications in one act, as a share of its events
 
 
 def _norm(text: str) -> str:
@@ -416,3 +417,88 @@ def acts_text_coverage(acts: list[dict], synopsis: str, stage: str = "acts", min
             last = " (the final paragraph: the resolution)" if i == len(paras) - 1 else ""
             out.append(hard(stage, "synopsis_not_in_acts", f"paragraph {i + 1} of the synopsis{last} is taken up by no act ({recall:.0%} of its words appear in the acts): {p[:100]}...", [f"paragraph {i + 1}"]))
     return out
+
+
+# ── do the chapters' and scenes' own words describe the events they list? ────
+
+DESCRIBES_MIN = 0.25  # share of an event's content words that must appear in the text that claims it
+RETELLS_SOFT, RETELLS_HARD = 0.5, 0.7  # share of ANOTHER once_only event's words found in the text: a retelling
+SCENE_WEIGHT = 3.0  # story weight one scene carries; scenes per chapter follow from the chapter's weight
+
+
+def _stems_wo_names(text: str) -> set:
+    from .text import proper_nouns
+    return set(content_stems(text, drop=proper_nouns(text)))
+
+
+def _event_text_checks(unit_id: str, unit_text: str, listed: list[str], by_id: dict, others: list[dict], stage: str, what: str) -> list[Finding]:
+    out: list[Finding] = []
+    unit = _stems_wo_names(unit_text)
+    for ev_id in listed:
+        ev = by_id.get(ev_id)
+        if not ev:
+            continue
+        need = _stems_wo_names(ev.get("text", ""))
+        if len(need) < 2:
+            continue  # too little to compare
+        recall = len(need & unit) / len(need)
+        if recall == 0 and len(need) >= 3:
+            out.append(soft(stage, f"{what}_text_misses_event", f"{unit_id} lists {ev_id} but its own text shares no words with it ('{ev['text'][:90]}'): check that it really tells that event", [unit_id, ev_id]))
+        elif recall < DESCRIBES_MIN:
+            out.append(soft(stage, f"{what}_text_thin_on_event", f"{unit_id} lists {ev_id} but its text barely describes it ({recall:.0%} of the event's words)", [unit_id, ev_id]))
+    for ev in others:
+        if not ev.get("once_only", True):
+            continue
+        need = _stems_wo_names(ev.get("text", ""))
+        if len(need) < 4:
+            continue
+        shared = need & unit
+        recall = len(shared) / len(need)
+        if len(shared) >= 4 and recall >= RETELLS_SOFT:
+            make = hard if recall >= RETELLS_HARD else soft
+            out.append(make(stage, f"{what}_retells_event", f"{unit_id} describes {ev['id']} again ('{ev['text'][:90]}'), which belongs to another chapter: do not retell it", [unit_id, ev["id"]],
+                            [unit_text[:120]]))
+    return out
+
+
+def check_chapter_texts(chapters: list[dict], events: list[dict], stage: str = "chapters") -> list[Finding]:
+    """Each chapter's summary must describe the events it lists, and must not retell events that belong to other chapters."""
+    by_id = {e["id"]: e for e in events}
+    out: list[Finding] = []
+    for c in chapters:
+        text = " ".join(str(c.get(k, "")) for k in ("title", "purpose", "summary"))
+        mine = set(c.get("events_covered") or [])
+        others = [e for e in events if e["id"] not in mine and not e.get("carried_in")]
+        out += _event_text_checks(c["id"], text, list(mine), by_id, others, stage, "chapter")
+    return out
+
+
+def check_scene_texts(scenes: list[dict], chapters: list[dict], events: list[dict], stage: str = "scenes") -> list[Finding]:
+    """Each scene's purpose and beats must describe the events it lists; they must not retell an event of another chapter."""
+    by_id = {e["id"]: e for e in events}
+    ch_events = {c["id"]: set(c.get("events_covered") or []) for c in chapters}
+    out: list[Finding] = []
+    for s in scenes:
+        ch = s.get("chapter") or s["id"].rsplit(".s", 1)[0]
+        text = " ".join([str(s.get("purpose", ""))] + [str(b) for b in s.get("beats") or []])
+        others = [e for e in events if e["id"] not in ch_events.get(ch, set()) and not e.get("carried_in")]
+        out += _event_text_checks(s["id"], text, list(s.get("events") or []), by_id, others, stage, "scene")
+    return out
+
+
+def scene_count_plausibility(chapter: dict, scenes: list[dict], events: list[dict], stage: str = "scenes", max_scenes: int = 4) -> list[Finding]:
+    """The number of scenes in a chapter must fit the weight of its events: about SCENE_WEIGHT each, within 0.2x..1.75x (padded or crammed)."""
+    by_id = {e["id"]: e for e in events}
+    weight = sum(int(by_id[x].get("weight", 1)) for x in chapter.get("events_covered") or [] if x in by_id)
+    n = len(scenes)
+    if not weight or not n:
+        return []
+    per = weight / n
+    lo = max(1, math.ceil(weight / (1.75 * SCENE_WEIGHT)))
+    hi = min(max_scenes, max(lo, math.floor(weight / (0.2 * SCENE_WEIGHT))))
+    crammed, padded = per > 1.75 * SCENE_WEIGHT, per < 0.2 * SCENE_WEIGHT and n >= 3
+    if crammed or padded:
+        kind = "crammed: too few scenes for this material" if crammed else "padded: too many scenes for this material"
+        return [hard(stage, "implausible_scene_count", f"{chapter['id']}: its events weigh {weight} in total (the ledger's weights) and you gave {n} scene(s), {per:.1f} weight each: {kind}. "
+                     f"At about {SCENE_WEIGHT:g} weight per scene give between {lo} and {hi}", [chapter["id"]])]
+    return []
