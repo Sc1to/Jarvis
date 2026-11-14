@@ -399,7 +399,7 @@ def _ledger_chapter_checks(project, data, chapters: list[Chapter], act: Act, led
                  if f.severity == HARD and (set(f.items) & ({c["id"] for c in now} | mine))]
     findings += [f for f in repeats.repeated_events(before_plain + now, [], names=set(), ledger_events=plain)
                  if f.severity == HARD and set(f.items) & {c["id"] for c in now}]
-    findings += [f for f in ledger_checks.check_chapter_texts(now, plain) if f.severity == HARD]
+    findings += [f for f in ledger_checks.check_chapter_texts(before_plain + now, plain) if f.severity == HARD and f.items and f.items[0] in {c['id'] for c in now}]
     limit = max(1, round(ledger_checks.MAX_DERIVED_ACT_SHARE * len(act.events)))
     if len(derived) > limit:
         findings.append(hard("chapters", "too_many_derived", f"{len(derived)} derived complications in {act.id}, which has {len(act.events)} events: at most {limit}. "

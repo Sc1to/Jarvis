@@ -424,3 +424,21 @@ def test_the_last_acts_summary_must_describe_the_resolution_softly():
     acts[2]["summary"] += " He lands on an unclaimed moon, realizing survival requires compromise and the system remains intact."
     assert L.resolution_in_summary(acts, REAL_EVENTS) == []
     assert L.resolution_in_summary([], REAL_EVENTS) == []
+
+
+def test_a_chapter_may_lead_into_the_next_event_of_its_act_but_not_use_a_later_acts_events():
+    ch = lambda n, ev, text: dict(id=f"b2.ch{n:02d}", act="b2.act1", purpose="p", summary=text, events_covered=ev)
+    chapters = [ch(1, ["e1"], "Eli arrives at Erebus-7 and steps onto the asteroid surface, then observes the decaying industrial environment and realizes his debt binds him to the Astra Dominion."),
+                ch(2, ["e2"], "Eli observes the decaying industrial environment and realizes his debt binds him. Mara reveals that Eli's grandfather was executed by the corporation for discovering mining destabilization."),
+                ch(3, ["e3"], "Eli seeks out Mara Kovic, a technician suffering from radiation-induced cognitive decline. Eli and Mara locate the buried Kestrel beneath the processing plant."),
+                ch(4, ["e4"], "Mara reveals that Eli's grandfather was executed by the corporation for discovering mining destabilization. Halloway intercepts them at the launch bay with drones and a plasma cutter.")]
+    f = L.check_chapter_texts(chapters, REAL_EVENTS)
+    hard_ = {(x.items[0], x.items[1]) for x in f if x.severity == HARD}
+    assert ("b2.ch03", "e7") in hard_ and ("b2.ch04", "e9") in hard_  # events of act 2: reserved
+    assert not any(x.items[:2] == ["b2.ch01", "e2"] and x.severity == HARD for x in f)  # the next event of the same act: soft
+    assert not any(x.items[:2] == ["b2.ch02", "e4"] and x.severity == HARD for x in f)
+    assert ("b2.ch02", "e2") not in hard_
+    msg = next(x.message for x in f if x.items[:2] == ["b2.ch03", "e7"])
+    assert "reserved for a later act" in msg
+    again = next(x.message for x in f if x.items[:2] == ["b2.ch04", "e4"] ) if any(x.items[:2] == ["b2.ch04", "e4"] for x in f) else ""
+    assert again == "" or "already told" in again or "its own" in again
