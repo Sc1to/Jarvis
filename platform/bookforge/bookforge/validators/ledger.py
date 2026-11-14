@@ -766,6 +766,26 @@ def check_chapter_texts(chapters: list[dict], events: list[dict], stage: str = "
     return out
 
 
+def one_sentence_chapters(chapters: list[dict], events: list[dict]) -> list[str]:
+    """Ids of chapters that tell exactly one event of the synopsis and nothing else (no continued event, no complication of their own)."""
+    by_id = {e["id"]: e for e in events}
+    out = []
+    for c in chapters:
+        covered = c.get("events_covered") or []
+        if len(covered) == 1 and not c.get("events_continued") and by_id.get(covered[0], {}).get("source", "synopsis") == "synopsis":
+            out.append(c["id"])
+    return out
+
+
+def thin_chapters(chapters: list[dict], events: list[dict], stage: str = "chapters") -> list[Finding]:
+    """When most chapters are one synopsis sentence each, the middle of the book is thin: the material was carried over, not worked out (soft)."""
+    ids = one_sentence_chapters(chapters, events)
+    if len(chapters) >= 4 and len(ids) / len(chapters) > 0.5:
+        return [soft(stage, "chapters_one_sentence_each", f"{len(ids)} of {len(chapters)} chapters tell exactly one synopsis event and nothing of their own (no continued event, no local complication): "
+                     "the plan follows the synopsis sentence by sentence. Local obstacles, setbacks and reversals (child events) would give the chapters something to do", ids[:8])]
+    return []
+
+
 def check_scene_texts(scenes: list[dict], chapters: list[dict], events: list[dict], stage: str = "scenes") -> list[Finding]:
     """Each scene's purpose and beats must describe the events it lists, and must not retell an event of an earlier chapter or one reserved
     for a later act (hard). Touching what the next chapters of the same act tell is only soft."""

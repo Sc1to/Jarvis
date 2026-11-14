@@ -32,9 +32,10 @@ def unknown_names(synopsis: str, constants) -> list[dict]:
     a new book's cast is made later, from the plan, so its absence says nothing."""
     if not constants.entities:
         return []
+    from .ledger import paragraphs
     known = cast_tokens(constants)
     seen: dict[str, str] = {}
-    for s in sentences(synopsis):
+    for s in [x for para in paragraphs(synopsis) for x in sentences(para)]:  # prose only: a heading's words are not names
         for token in WORD.findall(s)[1:]:
             low = token.lower()
             if token[0].isupper() and low in proper_nouns(s) and low not in known and low not in seen:

@@ -12,7 +12,7 @@ from ..validators import HARD, SOFT, Finding
 from .support import ask_json
 
 log = logging.getLogger("platform_bookforge.qc")
-CONFIRMABLE = ("event_repeated", "chapter_replans_chapter", "scene_retells_event", "chapter_retells_event")
+CONFIRMABLE = ("event_repeated", "chapter_replans_chapter", "scene_retells_event", "chapter_retells_event", "end_state_overreach", "state_change_repeated")
 MAX_CALLS = 10
 _ANSWERS: dict[tuple, dict] = {}  # the critic's answer per set of passages: a piece check runs again for every correction round and every cached reuse
 

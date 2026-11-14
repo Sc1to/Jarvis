@@ -37,6 +37,8 @@ Each act:
 
 Respect "What it is not" in both north stars. Do not plan chapters or scenes here and do not add events, sensory detail or plot.
 
+- Your counts and your reasoning must agree with the numbers: the ledger estimates about {capacity_estimate} chapters of story in all, and your `chapter_count` values must add up to within {tolerance} of that. The weight you quote in `sizing_reason` is the sum of the ledger's weights for the act's events, and the chapters you name there are the `chapter_count` you give. If you mean to depart from the estimate, start that act's `sizing_reason` with `override:` and say why.
+
 ## Format
 
 Return YAML only, exactly in this shape (quote any text that contains a colon):

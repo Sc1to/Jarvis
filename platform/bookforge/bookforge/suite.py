@@ -243,6 +243,8 @@ def render_report(results: list[CaseResult], regression: list[Check], mode: str,
     out += ["## Known-bad fixtures: every failure must be caught", ""] + [f"- {'PASS' if c.passed else 'FAIL'}  {c.name}: {c.detail}" for c in regression] + [""]
     if before_after:
         out += ["## b1: before and after", ""] + before_after + [""]
+    out += ["## Sensitivity to the constants (weight per chapter x minimum chapters)", ""] + sensitivity_table(results) + [""]
+    out += ["## Author questions by kind", ""] + question_stats([q for r in results for q in r.questions]) + [""]
     for r in results:
         out += [f"## Case: {r.name}", ""]
         cap = r.capacity
@@ -277,8 +279,111 @@ def b1_before(folder: Path) -> list[str]:
             "- After (live): run `suite --live --case b1` once the ledger stage is approved for b1; the ending and each act's turning point must each be told in exactly one chapter."]
 
 
+# ── the synopsis audit: planted problems must be found, a clean synopsis must raise nothing ──
+
+AUDIT_CAST = [("ines", "Ines Vale"), ("dorrin", "Dorrin Pell"), ("teague", "Teague")]
+# What a model that read the planted synopsis well would report (scripted: the suite needs no model). Quotes are exact words of the synopsis.
+AUDIT_PLANTED_FINDINGS = [
+    ("contradiction", ["burns its papers in the stove", "Ines later presents the papers to the magistrate"]),
+    ("condition_order", ["but only on the condition that she hands over the case, and she has already handed it over"]),
+    ("unestablished_object", ["opens the vault with a brass key she was never given"]),
+    ("unknown_name", ["Harbor Master Corvane releases Ines"]),
+    ("motive_gap", ["Dorrin gives Ines the vault key without a word of explanation"]),
+]
+
+
+def audit_checks() -> list[Check]:
+    from .bible.models import Constants, Entity
+    from .layers import audit as A
+    from .validators import audit as AC
+    cast = Constants(entities=[Entity(id=i, kind="character", name=n, facts=["x"]) for i, n in AUDIT_CAST])
+    planted = (DATA / "audit_planted.md").read_text(encoding="utf-8")
+    clean = (DATA / "audit_clean.md").read_text(encoding="utf-8")
+    kept, dropped = A.parse_findings({"findings": [{"type": t, "quotes": q, "why": "w", "fixes": ["a", "b"]} for t, q in AUDIT_PLANTED_FINDINGS]}, planted)
+    fake, _ = A.parse_findings({"findings": [{"type": "contradiction", "quotes": ["words the synopsis does not contain"], "why": "w", "fixes": []}]}, planted)
+    names_planted = [n["name"] for n in AC.unknown_names(planted, cast)]
+    checks = [
+        Check("audit: the planted synopsis's five problems keep their exact quotes", len(kept) == 5 and dropped == 0 and {k["type"] for k in kept} == {t for t, _ in AUDIT_PLANTED_FINDINGS}, f"{len(kept)} kept"),
+        Check("audit: a finding quoting words that are not in the synopsis is dropped", fake == [], f"{len(fake)} kept"),
+        Check("audit: the marker check sees the condition in the planted synopsis", [c["marker"] for c in AC.causal_sentences(planted)] == ["but only"], str([c["marker"] for c in AC.causal_sentences(planted)])),
+        Check("audit: the name check sees the names the cast does not have", {"corvane", "marsh"} <= set(names_planted), ", ".join(names_planted)),
+        Check("audit: the clean synopsis raises no marker, no unknown name (false-positive guard)", AC.causal_sentences(clean) == [] and AC.unknown_names(clean, cast) == [],
+              f"{len(AC.causal_sentences(clean))} markers, {len(AC.unknown_names(clean, cast))} names"),
+    ]
+    return checks
+
+
+def b2_checks() -> list[Check]:
+    """The second known-bad case (a synthetic stand-in, or the real b2 files when present): every problem it showed has a check that fires."""
+    import importlib.util
+    path = FIXTURES / "known_bad" / "b2_standin.py"
+    if not path.exists():
+        return []
+    spec = importlib.util.spec_from_file_location("b2_standin", path)
+    B2 = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(B2)
+    from .bible.models import Constants, Entity
+    from .validators import names as N, state_claims as SC
+    cast = Constants(entities=[Entity(id=i, kind="character", name=n, facts=["x"]) for i, n in B2.CAST])
+    ev = copy.deepcopy(B2.LEDGER)
+    codes = {f.code for f in L.check_ledger(ev, B2.SYNOPSIS)}
+    for e in ev:
+        e["ending"], e["decision"] = e["id"] == "e16", e["id"] == "e10"
+    return [
+        Check("b2: a dropped sentence is found by sentence", "sentence_not_covered" in codes),
+        Check("b2: a condition after its consequence is found", any(f.code == "causal_order" for f in L.causal_order(B2.LEDGER))),
+        Check("b2: three endings are refused", "several_endings" in codes),
+        Check("b2: flat weights are refused", "weights_flat" in codes),
+        Check("b2: a launch as the final turning point is refused", any(f.code == "final_turning_point_is_transition" for f in L.check_acts(B2.ACTS, ev))),
+        Check("b2: sizing text that contradicts its numbers is refused", len(L.sizing_consistency(B2.ACTS, B2.LEDGER)) >= 2),
+        Check("b2: acts far from the ledger's estimate are refused", bool(L.acts_vs_capacity(B2.ACTS, 21.5))),
+        Check("b2: a chapter claiming what a later one does is refused", any(f.items[:2] == ["b2.ch10", "e12"] for f in SC.end_state_overreach(B2.CHAPTERS, B2.LEDGER))),
+        Check("b2: the same change in two chapters is reported", bool(SC.state_change_repeated(B2.CHAPTERS, B2.LEDGER))),
+        Check("b2: a POV that is not the chapter's is refused", any(f.code == "pov_not_in_text" and f.severity == "hard" for f in N.pov_findings(B2.CHAPTERS, cast, "chapters"))),
+        Check("b2: a name the cast lacks is found", any(f.code == "unknown_name" for f in N.unknown_names(B2.CHAPTERS, cast, "chapters"))),
+        Check("b2: chapters that are one synopsis sentence each are reported", bool(L.thin_chapters(B2.CHAPTERS, B2.LEDGER))),
+    ]
+
+
+# ── how sensitive the sizing is to its constants, and how noisy each kind of question is ──
+
+def sensitivity_table(results: list[CaseResult]) -> list[str]:
+    """Estimated chapters and thin / not thin for each case over a grid of the two constants. A case that flips says its verdict rests on a constant."""
+    from .layers.ledger import capacity
+    grid_w, grid_m = (1.5, 2.0, 2.5), (8, 12, 16)
+    out = ["| case | " + " | ".join(f"w/ch {w:g}, min {m}" for w in grid_w for m in grid_m) + " | verdict |", "|---|" + "---|" * (len(grid_w) * len(grid_m) + 1)]
+    for r in results:
+        if not r.ledger:
+            continue
+        cells, verdicts = [], set()
+        for w in grid_w:
+            for m in grid_m:
+                c = capacity(r.ledger, w, m)
+                cells.append(f"{c['estimated_chapters']:g} {'thin' if c['thin'] else 'ok'}")
+                verdicts.add(c["thin"])
+        out.append(f"| {r.name} | " + " | ".join(cells) + f" | {'FLIPS: depends on the constants' if len(verdicts) > 1 else 'stable'} |")
+    return out
+
+
+def question_stats(questions: list[dict]) -> list[str]:
+    """Per kind of question: raised, answered, dismissed and the dismissal rate: a check whose questions are mostly dismissed is noise."""
+    by: dict[str, dict[str, int]] = {}
+    for q in questions:
+        row = by.setdefault(q.get("type") or "(untyped)", {"raised": 0, "answered": 0, "dismissed": 0})
+        row["raised"] += 1
+        if q.get("status") in ("answered", "dismissed"):
+            row[q["status"]] += 1
+    if not by:
+        return ["No questions recorded."]
+    out = ["| kind | raised | answered | dismissed | dismissal rate |", "|---|---|---|---|---|"]
+    for kind, r in sorted(by.items()):
+        decided = r["answered"] + r["dismissed"]
+        out.append(f"| {kind} | {r['raised']} | {r['answered']} | {r['dismissed']} | {(str(round(100 * r['dismissed'] / decided)) + '%') if decided else 'n/a'} |")
+    return out
+
+
 def run_scripted() -> tuple[list[CaseResult], list[Check], list[str]]:
-    regression = regression_checks(FIXTURES / "known_bad", "known_bad") + regression_checks(FIXTURES / "b1", "b1")
+    regression = regression_checks(FIXTURES / "known_bad", "known_bad") + regression_checks(FIXTURES / "b1", "b1") + audit_checks() + b2_checks()
     results = [scripted_case(name, spec) for name, spec in CASES.items()]
     return results, regression, b1_before(FIXTURES / "b1")
 

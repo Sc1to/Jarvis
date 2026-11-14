@@ -91,3 +91,13 @@ def test_the_acts_must_add_up_to_about_what_the_ledger_estimated():
     assert found and found[0].code == "acts_differ_from_capacity" and found[0].severity == HARD and "12" in found[0].message and "21.5" in found[0].message
     assert L.acts_vs_capacity([a1, a2], 13) == [] and L.acts_vs_capacity([a1, a2], None) == []
     assert L.acts_vs_capacity([a1, dict(a2, sizing_reason="override: the second act is short on purpose")], 21.5) == []
+
+
+def test_a_book_whose_chapters_are_one_synopsis_sentence_each_is_reported():
+    events = [ev(f"e{i}", f"event {i}") for i in range(1, 7)] + [ev("e2.1", "a local setback", source="derived", parent="e2")]
+    one_each = [dict(id=f"b2.ch{i:02d}", events_covered=[f"e{i}"]) for i in range(1, 7)]
+    found = L.thin_chapters(one_each, events)
+    assert found and found[0].code == "chapters_one_sentence_each" and found[0].severity == "soft" and "6 of 6" in found[0].message
+    richer = [dict(id="b2.ch01", events_covered=["e1"]), dict(id="b2.ch02", events_covered=["e2", "e2.1"]), dict(id="b2.ch03", events_covered=["e3"], events_continued=["e2"]),
+              dict(id="b2.ch04", events_covered=["e4", "e5"])]
+    assert L.thin_chapters(richer, events) == [] and L.one_sentence_chapters(richer, events) == ["b2.ch01"]
