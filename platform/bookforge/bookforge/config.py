@@ -89,9 +89,9 @@ def _default_layers() -> dict[str, LayerSettings]:
         "book_north_star": LayerSettings(model="critic", checkpoint="direction"),
         "synopsis": LayerSettings(model="critic", checkpoint="direction"),
         "ledger": LayerSettings(model="critic", checkpoint="ledger"),
-        "acts": LayerSettings(model="critic", count=(3, 4), checkpoint="structure"),
-        "chapters": LayerSettings(model="critic", count=(25, 35), checkpoint="structure"),
-        "scenes": LayerSettings(model="critic", per_chapter=(2, 4), checkpoint="structure"),
+        "acts": LayerSettings(model="critic", checkpoint="structure"),
+        "chapters": LayerSettings(model="critic", checkpoint="structure"),
+        "scenes": LayerSettings(model="critic", checkpoint="structure"),
         "prose": LayerSettings(model="writer", drafts=2, words=(1500, 3000)),
     }
 

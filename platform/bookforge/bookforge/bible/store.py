@@ -179,3 +179,11 @@ def save_ledger(project: Project, ledger: Ledger) -> None:
     path = ledger_path(project)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(dump_yaml(to_plain(ledger)), encoding="utf-8")
+
+
+def active_ledger(project: Project) -> Ledger | None:
+    """The ledger the planning stages work from: accepted, and not a placeholder for a book planned before the ledger existed."""
+    item = project.state.layers.get("ledger")
+    if item is None or item.status != "accepted" or (item.note or "").startswith("not used"):
+        return None
+    return load_ledger(project)

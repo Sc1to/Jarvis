@@ -65,6 +65,9 @@ def check_ledger(events: list[dict], synopsis: str = "", stage: str = "ledger") 
                 out.append(hard(stage, "reveal_before_setup", f"{e['id']} comes before the setup {target} it pays off: a reveal cannot precede its setup",
                                 [target, e["id"]]))
             payoffs[target].append(e["id"])
+            if by_id[target].get("kind") == "setup" and not (set(content_stems(e.get("text", ""))) & set(content_stems(by_id[target].get("text", "")))):
+                out.append(soft(stage, "payoff_unrelated_to_setup", f"{e['id']} pays off {target}, but the two share nothing: check that it resolves what {target} planted",
+                                [e["id"], target], [by_id[target]["text"][:100], e["text"][:100]]))
     for e in events:
         if e.get("kind") == "setup" and not payoffs.get(e["id"]):
             out.append(hard(stage, "setup_without_payoff", f"setup {e['id']} is never paid off: add the payoff event or drop the setup", [e["id"]], [e["text"][:120]]))
@@ -212,12 +215,16 @@ def sizing_plausibility(acts: list[dict], events: list[dict], stage: str = "acts
     return out
 
 
-def check_chapters(chapters: list[dict], events: list[dict], acts: list[dict] | None = None, stage: str = "chapters") -> list[Finding]:
+def check_chapters(chapters: list[dict], events: list[dict], acts: list[dict] | None = None, stage: str = "chapters",
+                   scope: set[str] | None = None) -> list[Finding]:
     """Chapters list events_covered. Each event once (if once_only), in order, each chapter with something new; no event from another act."""
     out: list[Finding] = []
     by_id = {e["id"]: e for e in events}
     index = {e["id"]: n for n, e in enumerate(events)}
     act_of = {ev: a["id"] for a in (acts or []) for ev in a.get("events", []) or []}
+    for e in events:  # a derived complication belongs to its parent's act
+        if e.get("parent") in act_of:
+            act_of.setdefault(e["id"], act_of[e["parent"]])
     told: dict[str, str] = {}
     seen: set[str] = set()
     last_idx = -1
@@ -249,24 +256,36 @@ def check_chapters(chapters: list[dict], events: list[dict], acts: list[dict] | 
             out.append(hard(stage, "chapter_nothing_new", f"{c['id']} brings no event that has not already happened: every chapter must move the story forward (add a new event, or a minor complication derived from one)", [c["id"]]))
         seen.update(covered)
     for e in events:
-        if e["id"] not in seen and not e.get("carried_in"):
+        if e["id"] not in seen and not e.get("carried_in") and (scope is None or e["id"] in scope):
             out.append(hard(stage, "event_not_covered", f"{e['id']} is covered by no chapter: {e['text'][:90]}", [e["id"]]))
     return out
 
 
 def check_scenes_vs_chapters(scenes: list[dict], chapters: list[dict], events: list[dict], stage: str = "scenes") -> list[Finding]:
-    """Scenes carry end_state; scene events stay inside their chapter's events; ledger status: no event reserved for later."""
+    """Scenes carry end_state and the chapter's events: each event of a chapter is shown in a scene, a once_only one in exactly one."""
     out: list[Finding] = []
-    allowed = {c["id"]: set(c.get("events_covered") or []) for c in chapters}
-    seen_chapter: dict[str, str] = {}
-    for c in chapters:
-        for ev in c.get("events_covered") or []:
-            seen_chapter.setdefault(ev, c["id"])
+    once = {e["id"]: e.get("once_only", True) for e in events}
+    allowed = {c["id"]: list(c.get("events_covered") or []) for c in chapters}
+    by_chapter: dict[str, list[dict]] = defaultdict(list)
+    for s in scenes:
+        by_chapter[s.get("chapter") or s["id"].rsplit(".s", 1)[0]].append(s)
     for s in scenes:
         ch = s.get("chapter") or s["id"].rsplit(".s", 1)[0]
         if not (s.get("end_state") or "").strip():
-            out.append(hard(stage, "scene_without_end_state", f"{s['id']} has no end_state", [s["id"]]))
+            out.append(hard(stage, "scene_without_end_state", f"{s['id']} has no end_state: say where things stand when the scene ends", [s["id"]]))
         for ev in s.get("events") or []:
-            if ev not in allowed.get(ch, set()):
-                out.append(hard(stage, "scene_event_not_in_chapter", f"{s['id']} uses {ev}, which is not an event of {ch}", [s["id"], ev]))
+            if ev not in allowed.get(ch, []):
+                out.append(hard(stage, "scene_event_not_in_chapter", f"{s['id']} uses {ev}, which is not an event of {ch}: it is told elsewhere or reserved for later", [s["id"], ev]))
+    for cid, evs in allowed.items():
+        if cid not in by_chapter:
+            continue
+        used: dict[str, list[str]] = defaultdict(list)
+        for s in by_chapter[cid]:
+            for ev in s.get("events") or []:
+                used[ev].append(s["id"])
+        for ev in evs:
+            if not used.get(ev):
+                out.append(hard(stage, "chapter_event_not_in_scenes", f"{cid} covers {ev}, but no scene lists it in `events`: show it in the scene where it happens", [cid, ev]))
+            elif len(used[ev]) > 1 and once.get(ev, True):
+                out.append(hard(stage, "once_only_repeated", f"{ev} is once_only but is shown in {len(used[ev])} scenes of {cid} ({', '.join(used[ev])}): once", [ev] + used[ev]))
     return out

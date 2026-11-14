@@ -216,3 +216,10 @@ def test_tic_report_flags_habits():
     scenes = [(f"s{i}", f"Anna felt a heavy silence. The silence was heavy and the room hummed with a low hum number {i}. " * 5 + f"Unique thing {chr(97 + i) * 5}.") for i in range(8)]
     f, report = P.tic_report(scenes)
     assert f and any("silence" in x.message for x in f) and report["top"]
+
+
+def test_a_payoff_that_resolves_something_else_is_flagged_softly():
+    ev = copy.deepcopy(EVENTS)
+    next(e for e in ev if e["id"] == "e9")["text"] = "A storm passes over the harbor"
+    f = [x for x in L.check_ledger(ev, SYN) if x.code == "payoff_unrelated_to_setup"]
+    assert f and f[0].severity == SOFT
