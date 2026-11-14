@@ -27,8 +27,9 @@ Cut the ledger into acts. The number of acts follows from the shape of the story
 Each act:
 - takes a continuous run of events, in ledger order, and ends on a turning point that changes what the characters want or can do. Name that event in `turning_point_event`; it must be one of the act's own events;
 - lists its events in `events`. EVERY event of the ledger belongs to exactly one act. The last act contains the resolution (the events marked ENDING);
-- gives `chapter_count`, which follows from the weight of its events (roughly one chapter per two points of weight; a heavy event may take a chapter alone, several light ones can share one) and NOT from a word target. Never stretch an act with too little material to fill chapters, and never cram it;
-- gives `sizing_reason`: one line saying why that many chapters.
+- gives `chapter_count`, which follows from the weight of its events: add up the weights shown in the ledger above and plan about one chapter per {weight_per_chapter} points of weight (never fewer than a chapter per two or three events of weight 3). It does NOT follow from a word target. Never stretch an act with too little material to fill chapters, and never cram it. Your count is checked against the real weights;
+- gives `sizing_reason`: one line saying why that many chapters (the weights it quotes must be the ledger's);
+- `turning_point` describes the `turning_point_event` and nothing else.
 
 Respect "What it is not" in both north stars. Do not plan chapters or scenes here and do not add events, sensory detail or plot.
 

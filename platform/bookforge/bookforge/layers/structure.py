@@ -211,19 +211,23 @@ def _ledger_acts(ctx: StepContext, ledger) -> StepResult:
 
     def normalize(text: str) -> str:
         parsed, _ = parse_acts(text, project, ledger)
+        for a in parsed:  # the real weights next to the model's reasoning, so the saved file is honest about its sizing
+            note = ledger_checks.sizing_note(a.model_dump(), plain_events, project.config.ledger.weight_per_chapter)
+            a.sizing_reason = f"{a.sizing_reason} {note}".strip() if "[computed:" not in a.sizing_reason else a.sizing_reason
         return dump_yaml({"acts": [to_plain(a) for a in parsed]})
 
     spec = DocumentSpec(
         layer="acts", prompt="acts_ledger", out_path="books/{book}/acts.yaml",
         validate=lambda text: parse_acts(text, project, ledger)[1], max_tokens=3500, strip_preamble=False,
-        slots=lambda c: {**stars, "ledger_events": events_text(ledger.events), "constraints": _forced_counts(project)},
+        slots=lambda c: {**stars, "ledger_events": events_text(ledger.events), "constraints": _forced_counts(project),
+                         "weight_per_chapter": f"{project.config.ledger.weight_per_chapter:g}"},
         normalize=normalize, research_scope="book",
         review=_reviewer(ctx, "acts", "acts of the book", stars["synopsis"], "none yet", stars) if project.config.qc.review_structure else None,
         research_focus="Rarely needed: only real-world facts that the large-scale structure of the story depends on.",
     )
     result = generate_document(ctx, spec)
     act_list = store.load_acts(project)
-    findings = ledger_checks.check_acts([a.model_dump() for a in act_list], plain_events)
+    findings = ledger_checks.check_acts([a.model_dump() for a in act_list], plain_events, weight_per_chapter=project.config.ledger.weight_per_chapter)
     hard_left = [f.line() for f in findings if f.severity == "hard"]
     if hard_left:  # an adopted (hand-edited) file passes through the same checks
         raise LayerError("acts.yaml does not fit the ledger: " + "; ".join(hard_left[:6]))
