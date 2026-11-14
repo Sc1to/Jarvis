@@ -401,7 +401,7 @@ def check_chapters(chapters: list[dict], events: list[dict], acts: list[dict] | 
         if idxs:
             last_idx = max(last_idx, max(idxs))
         if covered and not new and not continued:
-            out.append(hard(stage, "chapter_nothing_new", f"{c['id']} brings no event that has not already happened: every chapter must move the story forward (add a new event, continue a weight 3 event from the chapter before, or add a minor complication derived from an event)", [c["id"]]))
+            out.append(hard(stage, "chapter_nothing_new", f"{c['id']} brings no event that has not already happened: every chapter must move the story forward (add a new event, continue a weight 3 event from the chapter before, or add a minor complication derived from an event). If the act has no more events, end it here with fewer chapters", [c["id"]]))
         seen.update(covered)
         previous_active = set(covered) | set(continued)
     for e in events:

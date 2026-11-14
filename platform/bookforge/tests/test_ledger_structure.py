@@ -316,3 +316,20 @@ def test_an_act_whose_events_run_out_ends_with_fewer_chapters_than_its_ceiling(p
     summary = run(p, llm, HANDLERS, until="chapters")
     assert summary.ran == ["acts", "chapters"], summary.detail
     assert [a.chapter_count for a in store.load_acts(p)] == [2, 2] and len(store.load_chapters(p)) == 4
+
+
+def test_a_last_chapter_that_only_repeats_the_acts_events_is_dropped(project):
+    p = project_ready(project)
+    p.config.layers["chapters"].count = None
+    plan = copy.deepcopy(acts())
+    for a in plan["acts"]:
+        a["chapter_count"] = 3
+    padded = chapters(1)
+    extra = copy.deepcopy(padded["chapters"][1])
+    extra["id"] = "b1.ch03"
+    padded["chapters"].append(extra)  # the same event as chapter 2, nothing new
+    llm = RuleLLM([("Divide the book into ACTS by assigning", dump(plan)), ("Plan up to 3 chapters, b1.ch01 to b1.ch03", dump(padded)),
+                   ("Plan up to 3 chapters, b1.ch03 to b1.ch05", dump(chapters(3)))] + rules())
+    summary = run(p, llm, HANDLERS, until="chapters")
+    assert summary.ran == ["acts", "chapters"], summary.detail
+    assert len(store.load_chapters(p)) == 4 and [a.chapter_count for a in store.load_acts(p)] == [2, 2]

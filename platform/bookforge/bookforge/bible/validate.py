@@ -325,6 +325,22 @@ def merge_derived(events: list, derived: list) -> list:
     return out
 
 
+def _drop_empty_tail(raw: list) -> list:
+    """Chapters at the end of an act that only repeat events earlier chapters of the act already tell, and continue nothing: the act's events ran
+    out and the model filled the ceiling. Nothing new is lost by leaving them out, so they are dropped instead of failing the act."""
+    items = list(raw)
+    while len(items) > 1:
+        last = items[-1]
+        if not isinstance(last, dict) or last.get("events_continued"):
+            break
+        covered = last.get("events_covered")
+        told = {e for c in items[:-1] if isinstance(c, dict) for e in (c.get("events_covered") or []) if isinstance(e, str)}
+        if not isinstance(covered, list) or not covered or not all(isinstance(e, str) and e in told for e in covered):
+            break
+        items.pop()
+    return items
+
+
 def parse_chapters(
     text: str, *, project: Project, act: Act, first_number: int, constants: Constants,
     tracks_so_far: list[Track], fact_ids: set[str], ledger=None, chapters_before: list[Chapter] | None = None, acts: list[Act] | None = None, ctx=None,
@@ -336,6 +352,8 @@ def parse_chapters(
     raw = _items(data, "chapters", problems)
     entities = entity_map(constants)
     new_places = adopt_places(raw, entities, act.id)
+    if ledger is not None:
+        raw = _drop_empty_tail(raw)
     if raw and ledger is not None and len(raw) > act.chapter_count:  # with a ledger the count is a ceiling: an act whose events run out ends sooner
         problems.append(f"{act.id} plans at most {act.chapter_count} chapters, got {len(raw)}")
     elif raw and ledger is None and len(raw) != act.chapter_count:
