@@ -239,7 +239,7 @@ def test_the_pov_character_is_added_to_characters(p, constants):
     (lambda d: d["scenes"][1].update(id="b1.ch02.s9"), ("scenes[1].id is 'b1.ch02.s9', expected 'b1.ch02.s2'",)),
     (lambda d: d["scenes"][0].update(characters=["anna", "nobody"]), ("'nobody' is not in the cast",)),
     (lambda d: d["scenes"][0].update(setting="jonas"), ("'jonas' is a character, expected a place",)),
-    (lambda d: d["scenes"][0].update(beats=["only one"]), ("scenes[0].beats",)),
+    (lambda d: d["scenes"][0].update(beats=[]), ("scenes[0].beats",)),
     (lambda d: d["scenes"][0].pop("day"), ("day",)),
     (lambda d: d["scenes"][0].pop("time"), ("time",)),
     (lambda d: d["scenes"][0].update(day=0), ("day",)),
