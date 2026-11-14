@@ -59,6 +59,41 @@ def resolve_references(raw_events: list) -> int:
     return fixed
 
 
+def repair_setups(raw_events: list) -> list[str]:
+    """Fix the setup/payoff confusions a model makes, in place, and say what was done.
+
+    - `pays_off` names an event that comes LATER: the direction is reversed. When the later event names nothing yet, swap them: the
+      earlier event becomes the setup and the later one its payoff.
+    - `pays_off` names an earlier event that is not marked a setup: it is a setup; mark it.
+    Anything else is left for the validator to report.
+    """
+    events = [e for e in raw_events if isinstance(e, dict) and e.get("id")]
+    pos = {str(e["id"]): i for i, e in enumerate(events)}
+    notes: list[str] = []
+    for e in events:
+        t = str(e.get("pays_off") or "")
+        if not t or t not in pos or t == e["id"]:
+            continue
+        target = events[pos[t]]
+        if pos[t] > pos[str(e["id"])]:
+            if not target.get("pays_off"):
+                e["pays_off"], target["pays_off"] = "", e["id"]
+                e["kind"] = "setup"
+                if target.get("kind") not in ("payoff", "reveal"):
+                    target["kind"] = "payoff"
+                notes.append(f"{e['id']} named the later event {t} as the thing it pays off; reversed: {e['id']} is the setup, {t} its payoff")
+        elif target.get("kind") != "setup":
+            target["kind"] = "setup"
+            notes.append(f"{t} is paid off by {e['id']}, so it was marked as a setup")
+    return notes
+
+
+def unpaid_setup_question(event: dict) -> dict:
+    return dict(question=f"Setup {event['id']} is planted but never paid off: {event['text'][:140]}",
+                why="Something planted for later should be resolved before the book ends, but nothing in the synopsis resolves it.",
+                options=[f"Add a payoff: describe the event that resolves {event['id']}", f"It is only atmosphere: change {event['id']} to a plain event"])
+
+
 def check_ledger(events: list[dict], synopsis: str = "", stage: str = "ledger") -> list[Finding]:
     """Structure of the ledger. `events` are plain dicts (as in ledger.yaml), in narrative order."""
     out: list[Finding] = []
@@ -104,7 +139,7 @@ def check_ledger(events: list[dict], synopsis: str = "", stage: str = "ledger") 
                                 [e["id"], target], [by_id[target]["text"][:100], e["text"][:100]]))
     for e in events:
         if e.get("kind") == "setup" and not payoffs.get(e["id"]):
-            out.append(hard(stage, "setup_without_payoff", f"setup {e['id']} is never paid off. Either set `pays_off: {e['id']}` on the event that resolves it, or, if nothing in the synopsis pays it off, change {e['id']} to kind: event (a setup is only something planted for a later payoff)", [e["id"]], [e["text"][:120]]))
+            out.append(soft(stage, "setup_without_payoff", f"setup {e['id']} is never paid off: the author is asked (add the payoff event, or change it to a plain event)", [e["id"]], [e["text"][:120]]))
 
     # the resolution
     if not any(e.get("ending") for e in events):

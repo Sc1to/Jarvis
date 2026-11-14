@@ -167,3 +167,21 @@ def test_a_setup_that_names_the_text_instead_of_the_id_is_repaired_without_a_cor
     summary, llm = run_ledger(p, [sloppy])
     assert summary.ran == ["ledger"] and len(llm.calls) == 1
     assert next(e for e in store.load_ledger(p).events if e.id == "e9").pays_off == "e7"
+
+
+def test_a_reversed_pair_is_repaired_and_an_unpaid_setup_becomes_a_question(project_with_ledger):
+    p = prepared(project_with_ledger)
+    p.config.ledger.min_chapters = 4
+    sloppy = copy.deepcopy(GOOD)
+    by = {e["id"]: e for e in sloppy["events"]}
+    by["e9"].update(kind="event", pays_off="")           # the real payoff, forgotten
+    by["e7"].update(kind="event", pays_off="e8")          # e7 names the LATER e8 (reversed)
+    by["e5"].update(kind="setup", pays_off="")            # a setup nothing resolves
+    summary, llm = run_ledger(p, [sloppy])
+    led = store.load_ledger(p)
+    assert len(llm.calls) == 1 and summary.stopped == "checkpoint" and p.state.layers["ledger"].status == "drafted"
+    assert next(e for e in led.events if e.id == "e7").kind == "setup" and next(e for e in led.events if e.id == "e8").pays_off == "e7"
+    open_q = [q for q in led.questions if q.status == "open"]
+    assert any(q.question.startswith("Setup e5 ") for q in open_q)  # asked, not failed
+    report = json.loads((p.book_dir / "validation" / "ledger.json").read_text())
+    assert "auto_repaired" in report["summary"]["codes"] and "setup_without_payoff" in report["summary"]["codes"]
