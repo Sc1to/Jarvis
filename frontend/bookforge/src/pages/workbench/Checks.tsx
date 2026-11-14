@@ -43,6 +43,12 @@ export default function Checks({ series, book }: { series: string; book: string 
                       <span className="font-medium">{f.code}</span> {f.items.length > 0 && <span className="text-xs">[{f.items.slice(0, 6).join(', ')}]</span>}
                       <span className="block break-words">{f.message}</span>
                       {f.evidence.map((e, j) => <span key={j} className="block break-words text-xs italic text-slate-600">“{e}”</span>)}
+                      {f.severity === 'hard' && (
+                        <span className="mt-1 block">
+                          <Button disabled={act.busy} title="A false alarm? The finding stays in the report, marked accepted, and stops blocking this stage. Run again afterwards."
+                            onClick={() => act.run(async () => { await api(`${base}/workbench/validation/accept`, { method: 'POST', body: { stage: st, code: f.code, items: f.items, message: f.message } }); checks.reload() })}>Accept this finding</Button>
+                        </span>
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -51,6 +57,19 @@ export default function Checks({ series, book }: { series: string; book: string 
           )
         })}
       </ul>
+      {(checks.data?.accepted?.length ?? 0) > 0 && (
+        <div className="mt-3 space-y-2 border-t border-slate-200 pt-3">
+          <h3 className="text-xs font-semibold uppercase text-slate-500">Findings you accepted</h3>
+          <ul className="space-y-2 text-sm">
+            {checks.data!.accepted!.map((a) => (
+              <li key={a.fingerprint} className="flex items-start justify-between gap-2">
+                <span className="min-w-0 break-words"><span className="font-medium">{a.code}</span> <span className="text-xs text-slate-600">[{a.items.slice(0, 4).join(', ')}] ({a.stage})</span></span>
+                <Button disabled={act.busy} onClick={() => act.run(async () => { await api(`${base}/workbench/validation/unaccept`, { method: 'POST', body: { fingerprint: a.fingerprint } }); checks.reload() })}>Undo</Button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {questions.length > 0 && (
         <div className="mt-3 space-y-3 border-t border-slate-200 pt-3">
           <h3 className="text-xs font-semibold uppercase text-slate-500">Questions about the story's events</h3>

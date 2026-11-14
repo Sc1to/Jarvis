@@ -228,7 +228,8 @@ def _ledger_acts(ctx: StepContext, ledger) -> StepResult:
     )
     result = generate_document(ctx, spec)
     act_list = store.load_acts(project)
-    findings = ledger_checks.check_acts([a.model_dump() for a in act_list], plain_events, weight_per_chapter=project.config.ledger.weight_per_chapter)
+    from ..validators import accepted
+    findings = accepted.apply(project, ledger_checks.check_acts([a.model_dump() for a in act_list], plain_events, weight_per_chapter=project.config.ledger.weight_per_chapter), "acts")
     hard_left = [f.line() for f in findings if f.severity == "hard"]
     if hard_left:  # an adopted (hand-edited) file passes through the same checks
         raise LayerError("acts.yaml does not fit the ledger: " + "; ".join(hard_left[:6]))
@@ -368,7 +369,7 @@ def _build_chapters(ctx: StepContext, files: list[str]) -> str:
     if ledger is not None:
         store.save_ledger(project, ledger)
         files.append("books/%s/ledger.yaml" % project.book)
-        files.append(_book_chapter_checks(project, done, ledger))
+        files.append(_book_chapter_checks(project, done, ledger, ctx))
     problems = validate_chapters_file(project)
     if problems:
         store.chapters_path(project).unlink(missing_ok=True)  # keep the saved pieces so a rerun does not start over
@@ -381,14 +382,16 @@ def _build_chapters(ctx: StepContext, files: list[str]) -> str:
             + (f"; added to the cast because chapters used them: {', '.join(adopted)}" if adopted else ""))
 
 
-def _book_chapter_checks(project, chapters: list[Chapter], ledger) -> str:
+def _book_chapter_checks(project, chapters: list[Chapter], ledger, ctx=None) -> str:
     """Whole-book checks once every act is planned: events and flat stretches. Hard findings stop the layer (the pieces are kept)."""
-    from ..validators import HARD, ledger as ledger_checks, repeats, store as findings_store, tension
+    from ..validators import HARD, accepted, ledger as ledger_checks, repeats, store as findings_store, tension
     ch = [c.model_dump() for c in chapters]
     ev = [e.model_dump() for e in ledger.events]
     acts_plain = [a.model_dump() for a in store.load_acts(project)]
     findings = (ledger_checks.check_chapters(ch, ev, acts_plain) + ledger_checks.check_chapter_texts(ch, ev) + repeats.repeated_events(ch, [], ledger_events=ev)
                 + tension.flat_stretches(ch) + [f for f in ledger_checks.check_ledger(ev) if f.severity == "soft"])
+    from ..qc.repeat_confirm import confirm_repeats
+    findings = accepted.apply(project, confirm_repeats(ctx, findings), "chapters")
     rel = findings_store.save(project, "chapters", findings)
     hard_left = [f.line() for f in findings if f.severity == HARD]
     if hard_left:
@@ -414,9 +417,9 @@ def story_so_far_planning(project, chapters_before: list[Chapter], scenes_before
     return "\n".join(lines) or "nothing yet: this is the first chapter"
 
 
-def _book_scene_checks(project, chapters: list[Chapter], scenes_all: list, timeline: list, tracks: list[Track], constants, ledger) -> str:
+def _book_scene_checks(project, chapters: list[Chapter], scenes_all: list, timeline: list, tracks: list[Track], constants, ledger, ctx=None) -> str:
     """Whole-book checks on the planned scenes. Hard findings stop the layer (the pieces are kept for a rerun)."""
-    from ..validators import HARD, ledger as ledger_checks, repeats, research_leak, state as state_checks, store as findings_store
+    from ..validators import HARD, accepted, ledger as ledger_checks, repeats, research_leak, state as state_checks, store as findings_store
     ch = [c.model_dump() for c in chapters]
     sc = [s.model_dump() for s in scenes_all]
     tl = [t.model_dump() for t in timeline]
@@ -429,6 +432,8 @@ def _book_scene_checks(project, chapters: list[Chapter], scenes_all: list, timel
     findings = (ledger_checks.check_scenes_vs_chapters(sc, ch, ev) + ledger_checks.check_scene_texts(sc, ch, ev) + repeats.repeated_events(ch, sc, names, ev, stage="scenes")
                 + repeats.action_patterns(sc, ch, names) + research_leak.research_in_beats(sc, claims, story_texts)
                 + state_checks.track_regressions(tracks_plain) + state_checks.location_conflicts(sc, tl, tracks_plain) + state_checks.day_regressions(sc, tl))
+    from ..qc.repeat_confirm import confirm_repeats
+    findings = accepted.apply(project, confirm_repeats(ctx, findings), "scenes")
     rel = findings_store.save(project, "scenes", findings)
     hard_left = [f.line() for f in findings if f.severity == HARD]
     if hard_left:
@@ -550,7 +555,7 @@ def _build_scenes(ctx: StepContext, files: list[str]) -> str:
         log.info("scenes: %d place(s) added to the cast: %s", len(adopted), ", ".join(adopted))
     store.save_scenes(project, scenes_all)
     if ledger is not None:
-        files.append(_book_scene_checks(project, ch_list, scenes_all, timeline_all, tracks, constants, ledger))
+        files.append(_book_scene_checks(project, ch_list, scenes_all, timeline_all, tracks, constants, ledger, ctx))
     problems = validate_scenes_file(project)
     if problems:
         store.scenes_path(project).unlink(missing_ok=True)  # keep the saved pieces so a rerun does not start over

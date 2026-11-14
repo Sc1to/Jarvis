@@ -27,7 +27,7 @@ from ..bible.validate import load_reply_yaml
 from ..constants import REDO_NOTE
 from ..errors import LayerError
 from ..prompts import render
-from ..validators import HARD, Finding
+from ..validators import HARD, Finding, accepted
 from ..validators.findings import soft as _soft
 from ..validators import ledger as ledger_checks
 from ..validators import store as findings_store
@@ -94,7 +94,7 @@ def parse_ledger(text: str, synopsis: str, project, prior: Ledger | None = None)
         if any(q.id in {p.id for p in prior.questions} for q in questions):
             problems.append("new questions need new ids (continue the numbering); do not repeat existing questions")
     findings = ledger_checks.check_ledger(plain, synopsis)
-    problems += [f.line() for f in findings if f.severity == HARD]
+    problems += accepted.hard_lines(project, findings, "ledger")
     findings += [soft_finding("auto_repaired", note) for note in repairs]
     # A setup nothing pays off is the author's call, not a failure: it becomes a question (once per setup).
     known = [q.question for q in questions] + ([q.question for q in prior.questions] if prior else [])

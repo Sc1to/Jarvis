@@ -729,3 +729,13 @@ def test_the_status_reports_the_planned_words_from_the_beats(full):
     got = data(client.get(f"{B}/status"))
     pw = got["planned_words"]
     assert pw["scenes"] == got["scenes"]["total"] and pw["chapters"] == 4 and 0 < pw["low"] < pw["high"]
+
+
+def test_a_finding_can_be_accepted_and_unaccepted_through_the_api(full):
+    got = data(client.post(f"{WB}/validation/accept", json={"stage": "scenes", "code": "event_repeated", "items": ["b1.ch02", "b1.ch05"]}))
+    listed = data(client.get(f"{WB}/validation"))["accepted"]
+    assert listed[0]["fingerprint"] == got["fingerprint"] and listed[0]["code"] == "event_repeated"
+    error(client.post(f"{WB}/validation/accept", json={"stage": "nonsense", "code": "x"}), 422)
+    data(client.post(f"{WB}/validation/unaccept", json={"fingerprint": got["fingerprint"]}))
+    assert data(client.get(f"{WB}/validation"))["accepted"] == []
+    error(client.post(f"{WB}/validation/unaccept", json={"fingerprint": got["fingerprint"]}), 404)

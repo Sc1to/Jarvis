@@ -153,9 +153,10 @@ export interface DocumentFull { key: string; title: string; group: string; kind:
 
 export interface TrashItem { name: string; series: string; deleted: string | null; books: string[] }
 
-export interface Finding { stage: string; code: string; severity: 'hard' | 'soft'; message: string; items: string[]; evidence: string[] }
+export interface Finding { stage: string; code: string; severity: 'hard' | 'soft'; message: string; items: string[]; evidence: string[]; accepted?: boolean }
 export interface StageChecks { stage: string; summary: { hard: number; soft: number; codes: string[] }; findings: Finding[]; capacity?: Record<string, any> }
-export interface ValidationResult { stages: Record<'ledger' | 'acts' | 'chapters' | 'scenes' | 'prose', StageChecks> }
+export interface AcceptedFinding { fingerprint: string; stage: string; code: string; items: string[]; message: string; at: string }
+export interface ValidationResult { stages: Record<'ledger' | 'acts' | 'chapters' | 'scenes' | 'prose', StageChecks>; accepted?: AcceptedFinding[] }
 export interface LedgerEvent { id: string; text: string; once_only: boolean; kind: string; weight: number; ending: boolean; source: string; parent: string; pays_off: string }
 export interface LedgerQuestion { id: string; question: string; why: string; options: string[]; answer: string; status: 'open' | 'answered' | 'dismissed'; applied: boolean }
 export interface LedgerView { events: LedgerEvent[]; questions: LedgerQuestion[]; thin: boolean; capacity: Record<string, any>; revision: number }

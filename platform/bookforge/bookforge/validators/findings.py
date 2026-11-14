@@ -13,10 +13,11 @@ class Finding:
     message: str  # written for a model to act on and for the author to read
     items: list[str] = field(default_factory=list)  # ids the finding concerns (event, chapter, scene...)
     evidence: list[str] = field(default_factory=list)  # short quotations
+    accepted: bool = False  # a hard finding the author accepted: kept, shown, no longer blocking
 
     def to_dict(self) -> dict:
         return {"stage": self.stage, "code": self.code, "severity": self.severity, "message": self.message,
-                "items": self.items, "evidence": self.evidence}
+                "items": self.items, "evidence": self.evidence, "accepted": self.accepted}
 
     def line(self) -> str:
         where = f" [{', '.join(self.items[:6])}{'...' if len(self.items) > 6 else ''}]" if self.items else ""

@@ -5,7 +5,7 @@ What each planning stage takes in, what it must produce, and what the validators
 phrase listed here; run `python -m bookforge suite` after any prompt, setting or validator change.
 
 Hard findings are fed back to the model (at most `qc.max_revision_rounds` times); one that survives stops the stage, and nothing flows
-downstream. Soft findings are recorded in `books/<book>/validation/<stage>.json` and shown in the dashboard (Workbench, Briefing tab,
+downstream. A hard finding you judge to be a false alarm can be accepted (dashboard: Stage checks, "Accept this finding"; `validation/accepted.json`): it stays in the report, marked accepted, and stops blocking that stage. Hard repeat findings are also put once to the critic (`qc.confirm_repeats`): only a clear "different events" downgrades them. Soft findings are recorded in `books/<book>/validation/<stage>.json` and shown in the dashboard (Workbench, Briefing tab,
 "Stage checks"). Every validator detects a pattern (repeats, regressions, missing coverage, flat tension), never story content.
 
 | Stage | Reads | Writes | Must hold (hard) |
@@ -15,6 +15,8 @@ downstream. Soft findings are recorded in `books/<book>/validation/<stage>.json`
 | chapters (`chapters_ledger.md`) | ledger status (done / assigned / reserved), earlier end states, tracks, <=3 research notes | `chapters.yaml`: events_covered, end_state; `derived_events`; tracks | no once_only event twice; nothing reserved for later; a chapter's summary must not retell another chapter's event (soft: it shares no words with an event it lists); at most about a third of an act's events as derived complications; every assigned event covered, in order; each chapter has an event not told before; no chapter replans another; no flat stretch of tension across the book |
 | scenes (`scenes_ledger.md`) | ledger status, story so far (end states), chapter, tracks, <=3 research notes | `scenes.yaml`: events, end_state, beats (>=1); timeline; tracks | each chapter event shown in a scene, a once_only one in exactly one; scene count fits the chapter's weight (about 3 weight per scene: crammed or padded fails); beats must not retell an event of another chapter; scenes have end_state; no repeated event or action pattern across chapters; research terms do not become beats; no state flips back without a `cause`; nobody in two places; story days never run backwards |
 | prose (`prose.md`, `prose_system.md`, briefing) | briefing: previous-scene tail (~250 words), story so far (accepted prose / end states), reserved events | scene text | no copied sentences between scenes, no chapter opening with the previous ending; soft: wrap-up endings, tic words |
+
+Inherited state: what the series ledger says is true when the book begins reaches the acts, chapters and scenes prompts (`{carried}`) and every scene briefing of a ledger book. The critic's plan review also gets the ledger status. Times of day are compared as parts of the day (`dusk` = `evening`), and the semantic repeat check also runs on the written scene summaries.
 
 ## Load-bearing prompt text
 - Every ledger-mode planning prompt lists events as DONE / ASSIGNED / RESERVED FOR LATER and says reserved events must not be used.

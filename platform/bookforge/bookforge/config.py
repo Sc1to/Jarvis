@@ -170,6 +170,7 @@ class QC(_Strict):
     critic_check: bool = True  # the rubric critique
     extract_observed: bool = True  # record what each accepted scene says about the tracked states
     review_structure: bool = True  # critic review of acts, chapters and scene plans against their parents
+    confirm_repeats: bool = True  # each hard repeat finding is put to the critic once: only 'different events' downgrades it
     confirm_contradictions: bool = True  # every contradiction flag is checked again in a narrow call before it counts
     continuity_batch_size: int = Field(8, gt=0)  # questions per model call
     continuity_max_questions: int = Field(40, gt=0)  # per scene

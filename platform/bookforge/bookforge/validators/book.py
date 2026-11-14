@@ -6,7 +6,7 @@ from ..bible.positions import parse_position
 from . import prose as P, repeats as R
 from .text import sentences
 from .findings import Finding, HARD
-from . import store as findings_store
+from . import accepted, store as findings_store
 
 
 def prose_findings(project) -> tuple[list[Finding], dict]:
@@ -27,7 +27,7 @@ def prose_findings(project) -> tuple[list[Finding], dict]:
     except Exception:  # a missing or unreadable cast must not hide the prose findings
         pass
     tics, table = P.tic_report(texts, names)
-    findings = P.repeated_sentences(texts) + P.chapter_openings_copy(chapter_texts) + P.wrap_up_endings(texts) + tics + _event_repeats(project, scenes, names)
+    findings = accepted.apply(project, P.repeated_sentences(texts) + P.chapter_openings_copy(chapter_texts) + P.wrap_up_endings(texts) + tics + _event_repeats(project, scenes, names), "prose")
     return findings, table
 
 
