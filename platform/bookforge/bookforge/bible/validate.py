@@ -344,6 +344,7 @@ def _drop_empty_tail(raw: list) -> list:
 def parse_chapters(
     text: str, *, project: Project, act: Act, first_number: int, constants: Constants,
     tracks_so_far: list[Track], fact_ids: set[str], ledger=None, chapters_before: list[Chapter] | None = None, acts: list[Act] | None = None, ctx=None,
+    max_chapters: int | None = None,
 ) -> tuple[ChaptersBundle | None, list[str]]:
     data, error = load_reply_yaml(text)
     if error:
@@ -354,8 +355,9 @@ def parse_chapters(
     new_places = adopt_places(raw, entities, act.id)
     if ledger is not None:
         raw = _drop_empty_tail(raw)
-    if raw and ledger is not None and len(raw) > act.chapter_count:  # with a ledger the count is a ceiling: an act whose events run out ends sooner
-        problems.append(f"{act.id} plans at most {act.chapter_count} chapters, got {len(raw)}")
+    limit = (max_chapters or act.chapter_count) if ledger is not None else act.chapter_count
+    if raw and ledger is not None and len(raw) > limit:  # with a ledger the count follows from the act's events: at most what they can supply
+        problems.append(f"{act.id} has events for at most {limit} chapters, got {len(raw)}: a chapter needs an event of its own")
     elif raw and ledger is None and len(raw) != act.chapter_count:
         problems.append(f"{act.id} needs exactly {act.chapter_count} chapters, got {len(raw)}")
     chapters: list[Chapter] = []
@@ -376,7 +378,7 @@ def parse_chapters(
         _check_entity(entities, ch.setting, "place", f"{label}.setting", problems, SETTING_ALSO)
         _check_research_ids(ch.research, fact_ids, label, problems)
         chapters.append(ch)
-    allowed = {chapter_id(project.book, first_number + i) for i in range(act.chapter_count)}
+    allowed = {chapter_id(project.book, first_number + i) for i in range(limit)}
     existing = {t.id: t for t in tracks_so_far}
     tracks = _parse_tracks(_items(data, "tracks", problems, required=False), entities=entities, existing=existing,
                            allowed_from=allowed, prefix="tracks", problems=problems)

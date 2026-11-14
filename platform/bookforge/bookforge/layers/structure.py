@@ -334,13 +334,18 @@ def _build_chapters(ctx: StepContext, files: list[str]) -> str:
     )
     constants = merge_constants(existing, cast_new)
 
+    from ..validators import ledger as ledger_checks
+
     tracks = store.load_tracks(project)
     ledger = store.active_ledger(project)
     done: list[Chapter] = []
     adopted: list[str] = []
     first = 1
     for act in act_list:
-        last = first + act.chapter_count - 1
+        limit = act.chapter_count
+        if ledger is not None:  # the number of chapters follows from the act's events: at most what they can supply, as many as they need
+            limit = ledger_checks.act_capacity(act.model_dump(), [e.model_dump() for e in ledger.events])[0]
+        last = first + limit - 1
         if ledger is None:
             bundle = get_piece(
                 ctx, "chapters", act.id.split(".")[-1],
@@ -363,10 +368,10 @@ def _build_chapters(ctx: StepContext, files: list[str]) -> str:
                     project, "chapters_ledger", act=act_for_chapters(act), acts_overview=acts_overview_for_chapters(act_list, act),
                     ledger_status=status_text(ledger, set(act.events), before), story_so_far=chapters_end_digest(before), carried=carried_for_prompt(project),
                     cast=cast_digest(constants), tracks_so_far=tracks_digest(tracks), research_notes=notes_text(project, act_text),
-                    chapter_count=str(act.chapter_count), first_chapter=_ch(project, first), last_chapter=_ch(project, last), **stars),
-                lambda text, act=act, first=first, before=before, ledger=ledger: parse_chapters(
+                    chapter_count=str(act.chapter_count), max_chapters=str(limit), first_chapter=_ch(project, first), last_chapter=_ch(project, last), **stars),
+                lambda text, act=act, first=first, before=before, ledger=ledger, limit=limit: parse_chapters(
                     text, project=project, act=act, first_number=first, constants=constants, tracks_so_far=tracks,
-                    fact_ids=_fact_ids(project), ledger=ledger, chapters_before=before, acts=act_list, ctx=ctx),
+                    fact_ids=_fact_ids(project), ledger=ledger, chapters_before=before, acts=act_list, ctx=ctx, max_chapters=limit),
                 max_tokens=7000,
                 review=_reviewer(ctx, f"chapters {act.id}", f"chapters of {act.id}", dump_yaml(to_plain(act)), tracks_digest(tracks), stars,
                                  status_text(ledger, set(act.events), before)),
@@ -374,9 +379,10 @@ def _build_chapters(ctx: StepContext, files: list[str]) -> str:
             if bundle.derived:  # minor complications join the ledger, so later acts and the validators see them
                 ledger = ledger.model_copy(update={"events": merge_derived(ledger.events, bundle.derived)})
         done += bundle.chapters
-        if ledger is not None and len(bundle.chapters) < act.chapter_count:  # the act's events ran out first: it ends sooner, nothing is padded
-            log.info("chapters: %s has material for %d of its %d chapters", act.id, len(bundle.chapters), act.chapter_count)
-            act_list = [a.model_copy(update={"chapter_count": len(bundle.chapters)}) if a.id == act.id else a for a in act_list]
+        if ledger is not None:  # the act is as long as its events made it, not as the estimate or the ceiling said
+            if len(bundle.chapters) != act.chapter_count:
+                log.info("chapters: %s took %d chapters (estimated %d)", act.id, len(bundle.chapters), act.chapter_count)
+                act_list = [a.model_copy(update={"chapter_count": len(bundle.chapters)}) if a.id == act.id else a for a in act_list]
             last = first + len(bundle.chapters) - 1
         if bundle.new_entities:  # places the planner needed that the cast did not list: they join the cast
             adopted += [e.id for e in bundle.new_entities if e.id not in {x.id for x in constants.entities}]
