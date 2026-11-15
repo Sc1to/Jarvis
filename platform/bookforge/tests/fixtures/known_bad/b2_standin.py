@@ -22,13 +22,15 @@ Q_DRIVE = "Eli presents the evidence drive to the tribunal"
 Q_LOST = "The drive is lost in the void when the Kestrel is struck"
 Q_HIDDEN = "a copy is hidden within the ship's logs"
 Q_HALLOWAY = "Foreman Halloway orders the sector sealed"
+Q_SEALED = "orders the sector sealed"
 
 AUDIT_REPLY = {"findings": [
     {"type": "contradiction", "quotes": [Q_BROADCAST, Q_BURIED], "why": "the data cannot be both broadcast to the local network and buried", "fixes": ["The broadcast reaches only a few before it is cut off", "The corporation buries it after a failed broadcast"]},
     {"type": "condition_order", "quotes": [Q_ESCAPE, Q_CONDITION], "why": "the condition for escaping comes after the escape", "fixes": ["Move the condition before the launch", "They let him go only because he already signed"]},
     {"type": "unestablished_object", "quotes": [Q_DRIVE], "why": "Eli never acquires an evidence drive before presenting it", "fixes": ["Have Eli copy the data to a drive in the first act", "Present the broadcast log instead"]},
     {"type": "contradiction", "quotes": [Q_LOST, Q_HIDDEN], "why": "the drive is lost, yet a copy is hidden in the logs in the same sentence", "fixes": ["The drive is lost; the copy in the logs is a different record", "Drop the loss"]},
-    {"type": "cast_conflict", "quotes": [Q_HALLOWAY], "why": "the cast has silas-thorne in the foreman's role", "fixes": ["Use the cast's name", "Replace the cast entry with Halloway"]},
+    {"type": "unknown_name", "quotes": [Q_HALLOWAY], "why": "Halloway is not in the cast; silas-thorne holds the foreman's role", "fixes": ["Use the cast's name", "Replace the cast entry with Halloway"]},
+    {"type": "cast_conflict", "quotes": [Q_SEALED], "why": "the cast says the sector is open to all workers but the synopsis has it sealed", "fixes": ["Change the cast fact", "Change the synopsis"], "cast_fact": "the sector is open to all workers"},
 ]}
 
 
@@ -53,6 +55,7 @@ for e in LEDGER:
     e["weight"] = 2  # every weight the same: the weights say nothing
 
 CAST = [("eli", "Eli Voss"), ("mara", "Mara Reil"), ("silas-thorne", "Silas Thorne")]
+CAST_FACTS = {"silas-thorne": ["the sector is open to all workers", "foreman of the mining sector"]}
 
 ACTS = [
     dict(id="b2.act1", events=["e1", "e2", "e3", "e10"], chapter_count=6, turning_point_event="e10", turning_point="x",

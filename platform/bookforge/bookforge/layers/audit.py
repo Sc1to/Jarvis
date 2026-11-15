@@ -58,6 +58,11 @@ def hints_text(synopsis: str, constants: Constants) -> str:
         parts.append(f"- condition or cause marker \"{c['marker']}\": {c['sentence']}")
     for n in checks.unknown_names(synopsis, constants):
         parts.append(f"- the name \"{n['name']}\" is in nobody's name in the cast: {n['sentence']}")
+    for c in checks.condition_after_effect(synopsis):
+        parts.append(f"- a condition stated after what it conditions: \"{c['condition']}\" comes after \"{c['earlier']}\"")
+    things = checks.unintroduced_things(synopsis, constants)
+    if things:
+        parts.append("- things mentioned with \"the\" that the text may never have introduced (a keyword is a hint, not a finding): " + ", ".join(f"{t['noun']} ({t['sentence'][:60]}...)" for t in things))
     absent = checks.cast_roles_absent(synopsis, constants)
     if absent:
         parts.append("- cast characters never named in this synopsis (maybe another name now fills their role): " + ", ".join(f"{a['name']} ({a['id']})" for a in absent))
@@ -71,9 +76,23 @@ def _validate(text: str) -> list[str]:
     return []
 
 
-def parse_findings(data: dict, synopsis: str) -> tuple[list[dict], int]:
-    """(findings with exact quotes and a known type, how many were dropped)."""
+def _stems(text: str) -> set:
+    from ..validators.text import content_stems
+    return set(content_stems(text))
+
+
+def _cast_facts(constants) -> list[tuple[str, str]]:
+    """(entity id, normalised fact or name) for everything the cast says."""
+    return [(e.id, _norm(t)) for e in constants.entities for t in [e.name, *e.facts]]
+
+
+def parse_findings(data: dict, synopsis: str, constants: Constants | None = None) -> tuple[list[dict], int]:
+    """(findings that hold up, how many were dropped). A finding holds up when its type is known, every quote is an exact passage of the synopsis,
+    every quote is about what the finding says (a quote sharing no word with the reason is dropped, and a finding left with none goes), and what
+    it says about the cast is true of the cast: an unknown name really is in nobody's name, a cast conflict quotes a fact the cast really holds."""
     haystack, kept, dropped = _norm(synopsis), [], 0
+    unknown = {n["name"] for n in checks.unknown_names(synopsis, constants)} if constants is not None else None
+    cast_facts = _cast_facts(constants) if constants is not None else None
     for f in data.get("findings") or []:
         if not isinstance(f, dict) or f.get("type") not in TYPES:
             dropped += 1
@@ -82,8 +101,36 @@ def parse_findings(data: dict, synopsis: str) -> tuple[list[dict], int]:
         if not quotes or any(_norm(q) not in haystack for q in quotes):
             dropped += 1  # not a verbatim quotation: not a finding
             continue
-        kept.append({"type": f["type"], "quotes": quotes[:3], "why": str(f.get("why", "")).strip(), "fixes": [str(x).strip() for x in (f.get("fixes") or []) if str(x).strip()][:4]})
+        why = str(f.get("why", "")).strip()
+        fixes = [str(x).strip() for x in (f.get("fixes") or []) if str(x).strip()][:4]
+        about = _stems(why + " " + " ".join(fixes))
+        relevant = [q for q in quotes if _stems(q) & about] if about else quotes  # a passage the reason never touches is not one of the conflicting ones
+        if not relevant:
+            dropped += 1
+            continue
+        item = {"type": f["type"], "quotes": relevant[:3], "why": why, "fixes": fixes}
+        if unknown is not None and f["type"] == "unknown_name":
+            if not any(n in _norm(" ".join(relevant)).split() for n in unknown):
+                dropped += 1  # the cast does have every name the quotes use
+                continue
+        if cast_facts is not None and f["type"] == "cast_conflict":
+            fact = str(f.get("cast_fact", "")).strip()
+            held = [(i, t) for i, t in cast_facts if fact and _norm(fact) and _norm(fact) in t]
+            if not held:
+                dropped += 1  # the cast says no such thing
+                continue
+            item["cast_fact"] = fact
+            item["why"] = (why + f" The cast ({held[0][0]}) says: \"{fact}\".").strip()
+        kept.append(item)
     return kept, dropped
+
+
+def deterministic_findings(synopsis: str) -> list[dict]:
+    """Findings that need no model: a condition stated after the thing it conditions."""
+    return [{"type": "condition_order", "quotes": [c["earlier"], c["condition"]],
+             "why": f"The condition (\"{c['marker']}\") comes after the passage that already tells what it conditions, so it has nothing left to hold over.",
+             "fixes": ["Move the condition before it: they allow it only because he already agreed", "Drop the condition, or make the earlier passage a plan he has not carried out yet",
+                       "Keep the order and say what still holds him after the escape"]} for c in checks.condition_after_effect(synopsis)]
 
 
 def _key(quotes: list[str]) -> frozenset:
@@ -101,7 +148,8 @@ def audit(ctx: StepContext, synopsis: str, questions: list[AuthorQuestion]) -> t
     messages = [{"role": "system", "content": render("system", project.root, **values)},
                 {"role": "user", "content": render("synopsis_audit", project.root, **values) + steering.addendum(project, "ledger")}]
     text = ask_until_valid(ctx, "ledger/audit", project.config.layers["ledger"].model, messages, _validate, {"max_tokens": 3500}, strip_preamble=False)
-    found, dropped = parse_findings(json.loads(json.dumps(parse_json_object(text) or {})), synopsis)
+    found, dropped = parse_findings(json.loads(json.dumps(parse_json_object(text) or {})), synopsis, constants)
+    found = deterministic_findings(synopsis) + found  # what simple checks find is asked first, quoted exactly
     asked = {_key(q.quotes) for q in questions if q.quotes}
     new, n = [], next_question_id(questions)
     counts: dict[str, int] = {}

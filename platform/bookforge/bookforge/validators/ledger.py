@@ -538,7 +538,13 @@ def sizing_plausibility(acts: list[dict], events: list[dict], stage: str = "acts
     return out
 
 
-_CHAPTERS_SAID = re.compile(r"(\d+(?:\.\d+)?)\s*(?:-\s*\d+(?:\.\d+)?\s*)?chapters?", re.I)
+_NUMBER_WORDS = {w: i for i, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty".split())}
+_CHAPTERS_SAID = re.compile(r"(\d+(?:\.\d+)?|" + "|".join(sorted(_NUMBER_WORDS, key=len, reverse=True)) + r")\s*(?:-\s*\d+(?:\.\d+)?\s*)?chapters?", re.I)
+_COMPUTED = re.compile(r"\[computed: weight (\d+) over (\d+) events", re.I)
+
+
+def _said_number(raw: str) -> float:
+    return float(_NUMBER_WORDS.get(raw.lower(), raw)) if not raw.replace(".", "").isdigit() else float(raw)
 _WEIGHT_SAID = re.compile(r"weigh(?:s|ts|t)?\s*(?:of|is|at|about|:)?\s*(\d+)(?!\s*(?:each|per|apiece|a piece|or|/))", re.I)  # "weight 2 each" is one event's, not the act's
 OVERRIDE = "override:"
 
@@ -553,13 +559,16 @@ def sizing_consistency(acts: list[dict], events: list[dict], stage: str = "acts"
         if not reason or reason.lower().startswith(OVERRIDE):
             continue
         weight, _ = act_weight(a, events)
+        if not weight:  # no ledger at hand: the computed note the acts stage appended carries the real weight
+            m = _COMPUTED.search(str(a.get("sizing_reason") or ""))
+            weight = int(m.group(1)) if m else 0
         said_w = _WEIGHT_SAID.search(reason)
         if said_w and weight and int(said_w.group(1)) != weight:
             out.append(hard(stage, "sizing_reason_mismatch", f"{a['id']}: its sizing_reason says weight {said_w.group(1)} but the ledger's weights for its events add up to {weight}. "
                             f"Quote the real weight, or start the reason with '{OVERRIDE}' if you mean to depart from it", [a["id"]], [reason[:140]]))
         said_c = _CHAPTERS_SAID.search(reason)
         n = a.get("chapter_count")
-        if said_c and n and abs(float(said_c.group(1)) - int(n)) > 1:
+        if said_c and n and abs(_said_number(said_c.group(1)) - int(n)) > 1:
             out.append(hard(stage, "sizing_reason_mismatch", f"{a['id']}: its sizing_reason talks of {said_c.group(1)} chapters but chapter_count is {n}. "
                             f"Make them agree, or start the reason with '{OVERRIDE}' and say why the count differs", [a["id"]], [reason[:140]]))
     return out

@@ -83,7 +83,10 @@ import pytest
 @pytest.mark.parametrize("kind", audit.BLOCKING_TYPES)
 def test_every_kind_of_audit_finding_stops_the_stage(project_with_ledger, kind):
     p = prepared(project_with_ledger)
-    one = finding(kind=kind, quotes=("Corso learns of the drive and offers Mara a deal",), why="a reason")
+    store.save_constants(p, Constants(entities=[Entity(id="mara", kind="character", name="Mara Voss", facts=["a salvage pilot"]),
+                                                Entity(id="rhee", kind="character", name="Rhee Okafor", facts=["the harbor board's clerk"])]))
+    one = finding(kind=kind, quotes=("Corso learns of the drive and offers Mara a deal",), why="Corso offers Mara a deal and nothing makes her listen")
+    one["cast_fact"] = "a salvage pilot"  # only a cast conflict needs one
     summary, llm = run_ledger(p, [GOOD], audit=reply(one))
     led = store.load_ledger(p)
     assert led.events == [] and [(q.type, q.status) for q in led.questions] == [(kind, "open")] and len(extraction_calls(llm)) == 0

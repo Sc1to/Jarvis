@@ -29,7 +29,7 @@ def codes(findings, severity=None):
 
 
 def cast():
-    return Constants(entities=[Entity(id=i, kind="character", name=n, facts=["x"]) for i, n in B2.CAST])
+    return Constants(entities=[Entity(id=i, kind="character", name=n, facts=B2.CAST_FACTS.get(i, ["x"])) for i, n in B2.CAST])
 
 
 def test_the_audit_raises_each_planted_synopsis_problem_with_exact_quotes_and_stops_on_the_hard_ones(project_with_ledger):
@@ -37,9 +37,10 @@ def test_the_audit_raises_each_planted_synopsis_problem_with_exact_quotes_and_st
     store.save_constants(p, cast())
     llm = FakeLLMClient({"critic": [json.dumps(B2.AUDIT_REPLY)]})
     questions, summary = audit.audit(StepContext(project=p, layer="ledger", llm=llm), B2.SYNOPSIS, [])
-    assert [q.type for q in questions] == ["contradiction", "condition_order", "unestablished_object", "contradiction", "cast_conflict"] and summary["dropped"] == 0
-    assert all(q.quotes and all(q.startswith(("Eli", "The", "They", "Foreman", "a copy")) or True for q in q.quotes) for q in questions)
-    assert {q.type for q in audit.blocking(questions)} == set(audit.BLOCKING_TYPES) - {"unknown_name", "motive_gap"} and len(audit.blocking(questions)) == 5
+    assert [q.type for q in questions] == ["condition_order", "contradiction", "unestablished_object", "contradiction", "unknown_name", "cast_conflict"]  # the condition is found without the model and not asked twice
+    assert summary["dropped"] == 0 and {q.type for q in questions} == {"contradiction", "condition_order", "unestablished_object", "unknown_name", "cast_conflict"}
+    assert all(q.quotes for q in questions) and "The cast (silas-thorne) says" in questions[-1].why
+    assert all(audit.is_blocking(q) for q in questions) and len(audit.blocking(questions)) == len(questions)
     prompt = llm.calls[0]["messages"][-1]["content"]
     assert "silas-thorne" in prompt and "halloway" in prompt.lower() and "on the condition" in prompt  # the deterministic hints reach the model
 
@@ -105,3 +106,46 @@ def test_the_real_b2_files_pass_through_the_same_checks_when_they_are_present():
     chapters = yaml.safe_load((real / "chapters.yaml").read_text(encoding="utf-8"))["chapters"]
     found = L.check_ledger(ledger, synopsis) + L.check_acts(acts, ledger) + S.end_state_overreach(chapters, ledger) + L.thin_chapters(chapters, ledger)
     assert found, "b2 showed problems: at least one of these checks must report them"
+
+
+REAL = HERE / "b2"
+
+
+def test_the_real_b2_acts_say_one_size_and_plan_another():
+    """b2's real acts.yaml (from the mini PC): act 1 quotes weight 8 against a computed 9; acts 2 and 3 say 'eight' and 'nine' chapters and plan six."""
+    acts = yaml.safe_load((REAL / "acts.yaml").read_text(encoding="utf-8"))["acts"]
+    found = L.sizing_consistency(acts, [])  # no ledger at hand: the computed note inside the reason carries the weight
+    by_act = {}
+    for f in found:
+        by_act.setdefault(f.items[0], []).append(f.message)
+    assert set(by_act) == {"b2.act1", "b2.act2", "b2.act3"}
+    assert any("weight 8" in m for m in by_act["b2.act1"]) and any("eight chapters" in m for m in by_act["b2.act2"]) and any("nine chapters" in m for m in by_act["b2.act3"])
+    assert L.acts_vs_capacity(acts, 21.5)  # the ledger estimated 21.5 chapters, the acts planned 16
+
+
+def test_the_real_b2_audit_keeps_the_real_finding_drops_the_two_wrong_ones_and_finds_the_condition_without_a_model():
+    """What the model said about b2's real synopsis (the saved ledger.yaml of the first audit run): q1 was right; q2 attached an unrelated second
+    sentence to a contradiction inside one sentence; q3 invented a conflict with the cast. And the condition stated after the escape was missed."""
+    synopsis = (REAL / "synopsis.md").read_text(encoding="utf-8")
+    cast_ = Constants(entities=[Entity(id="eli-vance", kind="character", name="Eli Vance", facts=["a debtor"]), Entity(id="mara-kovic", kind="character", name="Mara Kovic", facts=["a technician"]),
+                                Entity(id="silas-thorne", kind="character", name="Silas Thorne", facts=["the site foreman"]),
+                                Entity(id="kestrel", kind="object", name="Kestrel", facts=["buried behind a collapsed toxic waste bulkhead"])])
+    q1 = ["Foreman Halloway, a ruthless enforcer who views Eli as a liability, begins hunting them down.", "Halloway intercepts them at the launch bay, armed with a plasma cutter and backed by automated drones."]
+    lost = "The drive containing the truth is lost in the void, hidden within the ship's internal logs, available only for future generations to discover."
+    unrelated = "Eli realizes that he cannot save her; the medical supplies are insufficient, and the corporation will not provide aid to a worker who has become a liability."
+    q3 = ["She warns Eli that his grandfather did not simply vanish; he was executed by the corporation for discovering that the mining operations were destabilizing the asteroid's core to maximize yield.",
+          "The corporation buried the ship and the evidence to protect its structural stability, prioritizing the asset over the lives of the workers."]
+    model = {"findings": [
+        {"type": "unknown_name", "quotes": q1, "why": "The synopsis repeatedly names the antagonist 'Halloway', but the cast defines the site foreman as 'Silas Thorne'.", "fixes": ["Replace Halloway with Silas Thorne"]},
+        {"type": "contradiction", "quotes": [lost, unrelated], "why": "The synopsis states the drive is 'lost in the void' but immediately says it is 'hidden within the ship's internal logs'.",
+         "fixes": ["Clarify that the physical drive was destroyed but the information was saved to the ship's internal logs"]},
+        {"type": "cast_conflict", "quotes": q3, "why": "The synopsis says the corporation buried the ship to protect structural stability, but the cast entry for the Kestrel says it is buried behind a collapsed bulkhead.",
+         "fixes": ["Revise the synopsis"]}]}
+    kept, dropped = audit.parse_findings(model, synopsis, cast_)
+    assert [(f["type"], len(f["quotes"])) for f in kept] == [("unknown_name", 2), ("contradiction", 1)] and kept[1]["quotes"] == [lost] and dropped == 1  # the cast conflict names no cast fact
+    found = audit.deterministic_findings(synopsis)
+    assert len(found) == 1 and found[0]["type"] == "condition_order" and found[0]["quotes"][1].startswith("They allow Eli to escape, but only on the condition")
+    assert found[0]["quotes"][0].startswith("The ship breaks through the asteroid's crust, escaping")
+    from bookforge.validators import audit as checks
+    things = {t["noun"] for t in checks.unintroduced_things(synopsis, cast_)}
+    assert {"drive", "data"} <= things  # the objects the text never introduces are among the model's starting points
