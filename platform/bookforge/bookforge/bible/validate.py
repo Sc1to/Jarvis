@@ -9,6 +9,8 @@ import difflib
 import re
 from dataclasses import dataclass, field
 
+import logging
+
 import yaml
 from pydantic import ValidationError
 
@@ -22,6 +24,9 @@ from .positions import act_id, canonical, chapter_id, parse_act_id, parse_positi
 # A model often writes `summary: Anna finds it: the ledger` with the colon unquoted, which is not valid YAML.
 _KEY_LINE = re.compile(r"^(?P<lead>\s*(?:-\s+)*)(?P<key>[A-Za-z_][\w .-]*?):[ \t]+(?P<value>\S.*?)\s*$")
 _ALREADY_FINE = ('"', "'", "|", ">", "[", "{", "&", "*", "!", "#")
+
+
+log = logging.getLogger("platform_bookforge.validate")
 
 
 def quote_plain_colons(text: str) -> str:
@@ -168,6 +173,10 @@ def parse_acts(text: str, project: Project, ledger=None) -> tuple[list[Act] | No
         return None, [error]
     problems: list[str] = []
     raw = _items(data, "acts", problems)
+    if ledger is not None and raw:  # mechanical slips (events in no act, in two acts, out of order) are put right, not asked about
+        from . import repair
+        for note in repair.repair_acts(raw, [e.model_dump() for e in ledger.events]):
+            log.info("acts: %s", note)
     cfg = project.config.layers
     forced = cfg["acts"].count
     lo, hi = forced or (3, 4)
@@ -339,6 +348,7 @@ class ChaptersBundle:
     tracks: list[Track] = field(default_factory=list)
     new_entities: list[Entity] = field(default_factory=list)  # places used as a setting that the cast did not list
     derived: list = field(default_factory=list)  # minor complications the planner added to the ledger (StoryEvent, source derived)
+    repairs: list = field(default_factory=list)  # mechanical slips corrected before the checks (bible/repair.py): what was done, for the layer's note
 
 
 def merge_derived(events: list, derived: list) -> list:
@@ -378,7 +388,12 @@ def parse_chapters(
     raw = _items(data, "chapters", problems)
     entities = entity_map(constants)
     new_places = adopt_places(raw, entities, act.id)
+    repairs: list[str] = []
     if ledger is not None:
+        from . import repair
+        repairs = repair.repair_chapters(raw, data.get("tracks") if isinstance(data, dict) else None, [e.model_dump() for e in ledger.events], list(act.events), project.book, first_number)
+        for note in repairs:
+            log.info("chapters %s: %s", act.id, note)
         raw = _drop_empty_tail(raw)
     limit = (max_chapters or act.chapter_count) if ledger is not None else act.chapter_count
     if raw and ledger is not None and len(raw) > limit:  # with a ledger the count follows from the act's events: at most what they can supply
@@ -414,7 +429,7 @@ def parse_chapters(
         # Without tracks the story's changes (injuries, who knows what, where people are) are neither planned nor checked later.
         problems.append(f"{act.id} defines no state tracks: add a 'tracks:' list with at least one track created or extended in these chapters "
                         "(an injury, where a key character is, a relationship, a possession, who knows which secret)")
-    return (None, problems) if problems else (ChaptersBundle(chapters, tracks, new_places, derived), [])
+    return (None, problems) if problems else (ChaptersBundle(chapters, tracks, new_places, derived, repairs), [])
 
 
 _TEXT_KEYS = ("description", "summary", "event", "title", "name", "what", "complication", "details")
@@ -529,6 +544,11 @@ def parse_scenes(
     raw = _items(data, "scenes", problems)
     entities = entity_map(constants)
     new_places = adopt_places(raw, entities, chapter.id)
+    if ledger is not None and raw:  # mechanical slips (a scene id's number, an event shown twice or nowhere) are put right, not asked about
+        from . import repair
+        for note in repair.repair_scenes(raw, data.get("tracks") if isinstance(data, dict) else None, list(chapter.events_covered),
+                                         list(chapter.events_covered) + list(chapter.events_continued), [e.model_dump() for e in ledger.events], project.book, parse_position(chapter.id).chapter):
+            log.info("scenes %s: %s", chapter.id, note)
     lo, hi = count_range(project, "scenes")
     if raw and not lo <= len(raw) <= hi:
         problems.append(f"{chapter.id} needs {lo} to {hi} scenes, got {len(raw)}")
