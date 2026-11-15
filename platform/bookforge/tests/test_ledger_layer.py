@@ -81,6 +81,9 @@ def test_a_failed_check_is_fed_back_and_survivors_stop_the_layer(project_with_le
     summary, _ = run_ledger(q, [bad, bad, bad])
     assert summary.stopped == "failed" and q.state.layers["ledger"].status == "flagged"  # never flows downstream
     assert store.load_ledger(q) is None
+    from bookforge.layers.ledger import load_attempt_events
+    assert [e["id"] for e in load_attempt_events(q)] == [e["id"] for e in bad["events"]]  # the failed attempt is kept for the Inbox's suggestions
+    assert load_attempt_events(p) == []  # a ledger that passed leaves none
 
 
 def test_a_thin_synopsis_asks_questions_and_stops(project_with_ledger):

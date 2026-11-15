@@ -59,6 +59,10 @@ def collect(project, include_done: bool = True) -> list[dict]:
             status = "dismissed" if fp in known else "open"
             if status == "open" or include_done:
                 items.append(_finding_item(project, stage, f, known, status))
+    from . import resolve
+    suggestions = resolve.load(project)
+    for it in items:
+        it["proposal"] = suggestions.get(it["id"])
     order = {s: i for i, s in enumerate(STAGES)}
     items.sort(key=lambda it: (not it["blocking"], it["status"] != "open", order.get(it["stage"], 9), it["id"]))
     return items

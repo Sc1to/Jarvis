@@ -84,6 +84,12 @@ def run_pipeline(project: Project, llm: LLMClient | None, web: WebClient | None,
             summary.detail = f"not assembled: {e}"
     if llm is not None:
         out.milestones_error = milestones.refresh_quietly(StepContext(project=project, layer="prose", llm=llm))
+    if llm is not None:  # what the tool would answer for what stopped a stage, as suggestions only (it never throws)
+        try:
+            from . import resolve
+            resolve.propose_all(project, llm)
+        except Exception as e:  # a suggestion must never fail a run
+            log.info("proposals skipped: %s", e)
     try:
         out.report_path = morning_report.write_report(project, since=started)
         if project.config.git.commit_each_step:
