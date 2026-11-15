@@ -101,3 +101,42 @@ def test_a_book_whose_chapters_are_one_synopsis_sentence_each_is_reported():
     richer = [dict(id="b2.ch01", events_covered=["e1"]), dict(id="b2.ch02", events_covered=["e2", "e2.1"]), dict(id="b2.ch03", events_covered=["e3"], events_continued=["e2"]),
               dict(id="b2.ch04", events_covered=["e4", "e5"])]
     assert L.thin_chapters(richer, events) == [] and L.one_sentence_chapters(richer, events) == ["b2.ch01"]
+
+
+SYN2 = ("Mara pries the hatch open and finds a data drive hidden in the asteroid’s crust.\n\n"
+        "The corporation has turned the asteroid into a closed economic loop where workers are paid in scrip valid only at company stores.\n\n"
+        "Halloway intercepts them at the launch bay, armed with a plasma cutter and backed by automated drones.")
+
+
+def test_a_typographic_apostrophe_does_not_make_an_excerpt_a_misquotation():
+    events = [ev("e1", "Mara finds a drive", "Mara pries the hatch open and finds a data drive hidden in the asteroid's crust")]  # a plain apostrophe for the synopsis's curly one
+    assert "excerpt_not_in_synopsis" not in codes(L.check_ledger(events, SYN2))
+
+
+def test_an_excerpt_that_is_not_a_quotation_is_pointed_at_the_sentence_it_came_from():
+    events = [ev("e1", "Mara opens the hatch and finds the drive", "Mara opens the hatch ... finds a data drive in the crust"),
+              ev("e2", "Halloway stops them at the launch bay", "Halloway stops them at the launch bay with drones")]
+    assert "excerpt_not_in_synopsis" in codes(L.check_ledger(events, SYN2))
+    notes = L.repair_excerpts(events, SYN2)
+    assert len(notes) == 2 and events[0]["excerpt"].startswith("Mara pries the hatch open") and events[1]["excerpt"].startswith("Halloway intercepts them at the launch bay")
+    assert "excerpt_not_in_synopsis" not in codes(L.check_ledger(events, SYN2))
+    unrelated = [ev("e3", "x", "something that is nowhere in the synopsis at all")]
+    assert L.repair_excerpts(unrelated, SYN2) == [] and unrelated[0]["excerpt"].startswith("something")  # nothing close enough: left for the check to report
+
+
+def test_description_the_model_lists_as_needing_no_event_is_not_a_missing_event():
+    events = [ev("e1", "Mara finds a drive", "Mara pries the hatch open and finds a data drive hidden in the asteroid's crust"),
+              ev("e3", "Halloway intercepts them", "Halloway intercepts them at the launch bay, armed with a plasma cutter and backed by automated drones")]
+    found = [f for f in L.check_ledger(events, SYN2) if f.code == "sentence_not_covered"]
+    assert len(found) == 1 and "closed economic loop" in found[0].message and "no_event_needed" in found[0].message
+    waived = [{"quote": "The corporation has turned the asteroid into a closed economic loop where workers are paid in scrip valid only at company stores", "reason": "scene-setting"}]
+    assert not [f for f in L.check_ledger(events, SYN2, no_event_needed=waived) if f.code == "sentence_not_covered"]
+
+
+def test_a_condition_that_fits_several_earlier_events_equally_is_a_guess_not_a_verdict():
+    early1 = ev("e6", "Eli and Mara escape the sector through the vents")
+    early2 = ev("e7", "Eli and Mara escape the sector through the cargo bay")
+    grant = ev("e27", "They allow Eli to escape on condition that he signs", "They allow Eli to escape the sector, but only on the condition that he signs")
+    found = L.causal_order([early1, early2, grant])
+    assert len(found) == 1 and found[0].severity == "soft" and "2 earlier events fit" in found[0].message
+    assert L.causal_order([early1, grant])[0].severity == "hard"  # one clear match is a verdict

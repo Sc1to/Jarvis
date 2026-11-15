@@ -67,6 +67,7 @@ def parse_ledger(text: str, synopsis: str, project, prior: Ledger | None = None)
         return None, ["the top level must be a mapping with an 'events:' list"], []
     ledger_checks.resolve_references(data["events"])  # an event's text written where its id belongs is mapped back to the id
     repairs = ledger_checks.repair_setups(data["events"])  # reversed or unmarked setup/payoff pairs are put right
+    repairs += ledger_checks.repair_excerpts(data["events"], synopsis)  # an excerpt that is not a quotation points at the sentence it came from
     events: list[StoryEvent] = []
     for i, raw in enumerate(data["events"]):
         try:
@@ -97,7 +98,8 @@ def parse_ledger(text: str, synopsis: str, project, prior: Ledger | None = None)
                 problems.append(f"new event {e.id} must have source: author")
         if any(q.id in {p.id for p in prior.questions} for q in questions):
             problems.append("new questions need new ids (continue the numbering); do not repeat existing questions")
-    findings = ledger_checks.check_ledger(plain, synopsis)
+    waived = [{"quote": str(q.get("quote", "")).strip(), "reason": str(q.get("reason", "")).strip()} for q in (data.get("no_event_needed") or []) if isinstance(q, dict) and str(q.get("quote", "")).strip()]
+    findings = ledger_checks.check_ledger(plain, synopsis, no_event_needed=waived)
     problems += accepted.hard_lines(project, findings, "ledger")
     findings += [soft_finding("auto_repaired", note) for note in repairs + links]
     # A setup nothing pays off is the author's call, not a failure: it becomes a question (once per setup).
@@ -118,7 +120,7 @@ def parse_ledger(text: str, synopsis: str, project, prior: Ledger | None = None)
                         "Do not pad: add `questions` saying what is missing, each with proposed complications for the author to choose from")
     if problems:
         return None, problems, findings
-    ledger = Ledger(events=events, questions=questions, thin=cap["thin"], capacity=cap, revision=prior.revision if prior else 1)
+    ledger = Ledger(events=events, questions=questions, thin=cap["thin"], capacity=cap, revision=prior.revision if prior else 1, no_event_needed=waived or (prior.no_event_needed if prior else []))
     return ledger, [], findings
 
 
@@ -303,7 +305,7 @@ def ledger(ctx: StepContext) -> StepResult:
                 if q.status == "open":
                     q.status = "dismissed"
         plain = [to_plain(e) for e in led.events]
-        findings = ledger_checks.check_ledger(plain, synopsis)
+        findings = ledger_checks.check_ledger(plain, synopsis, no_event_needed=led.no_event_needed)
         problems = [f.line() for f in findings if f.severity == HARD]
         if problems:
             raise LayerError("the existing ledger.yaml is not acceptable: " + "; ".join(problems[:6]) + " (fix the file, or delete it to have it regenerated)")
