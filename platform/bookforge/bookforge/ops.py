@@ -469,10 +469,16 @@ def rewrite_scenes(project: Project, targets: list[str], force: bool = False, re
 STAGE_LAYERS = {"ledger": "ledger", "acts": "acts", "chapters": "chapters", "scenes": "scenes", "prose": "prose"}
 
 
-def answer_question(project: Project, question_id: str, answer: str):
-    """Answer (or re-answer, until a run has applied it) a ledger question."""
+def answer_question(project: Project, question_id: str, answer: str, llm=None):
+    """Answer (or re-answer, until a run has applied it) a ledger question. With a model, what the answer introduces (a person, an object, a rule of the
+    world) is recorded as canon in your own words (bookforge/canon.py); without one nothing else happens."""
     from .layers.ledger import answer_question as _answer
-    return _answer(project, question_id, answer)
+    ledger = _answer(project, question_id, answer)
+    if llm is not None:
+        from . import canon
+        q = next((x for x in ledger.questions if x.id == question_id), None)
+        canon.intake(project, f"question:{question_id}", q.question if q else "", answer, llm)
+    return ledger
 
 
 def dismiss_question(project: Project, question_id: str, reason: str = ""):

@@ -69,6 +69,7 @@ class Need:
     fact_ids: list[str] = field(default_factory=list)
     decided_by: str = ""  # "auto" for a lookup, "author" once you decided
     applies_to: list[str] = field(default_factory=list)  # chapter or scene ids it applies to; empty = the whole book (or series)
+    canon: bool = False  # something the author invented in their own words: held like a fact, so a scene that contradicts it is revised, not just warned about
 
 
 def normalize_question(q: str) -> str:

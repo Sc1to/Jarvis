@@ -192,5 +192,6 @@ export interface InboxView {
   stats: Record<string, { raised: number; answered: number; dismissed: number; reasons: string[]; dismissal_rate: number | null }>
   proposal_stats?: Record<string, { proposed: number; accepted: number; edited: number; overridden: number; applied?: number; undone?: number; override_rate: number | null }>
   mode?: 'shadow' | 'assist'
+  canon?: { id: string; item: string; answer: string; entities: string[]; needs: string[]; at: string; undone?: boolean }[]
   policy?: { world_facts: 'research' | 'extrapolate' | 'invent'; invention: string; source: string }
 }

@@ -84,7 +84,7 @@ def build_questions(project, scene: Scene, scenes: list[Scene]) -> tuple[list[Qu
     items += [("contradiction", f"World rule: {r.text}", None) for r in constants.rules]
     # A decision is asked about as a warning only: it is a statement of how this story's world works, often long and descriptive,
     # and a scene that dramatises it differently is not necessarily wrong. A clash is recorded as "unsure" for you to read.
-    items += [("contradiction", f"Author's decision about this world ({n.id}): {n.rule}", _Warn()) for n in approved_decisions(project, scene.id)]
+    items += [("contradiction", f"Author's decision about this world ({n.id}): {n.rule}", None if n.canon else _Warn()) for n in approved_decisions(project, scene.id)]  # your own invention is held like a fact
     items += [("contradiction", f"Author's rule {r.id}: {r.text}", r) for r in rules.rules_for(project, scene, ("hard_constraint",))]
     facts = {f.id: f for st in stores_for(project).values() for f in st.facts()}
     for fid in dict.fromkeys(scene.research):

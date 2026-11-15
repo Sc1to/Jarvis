@@ -10,7 +10,7 @@ All writes call the same functions as the command line (bookforge/ops.py) and wa
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from . import answers, inbox, ops, resolve
+from . import answers, canon, inbox, ops, resolve
 from .project import Project
 
 I = "/series/{series}/books/{book}/inbox"
@@ -41,7 +41,7 @@ class DismissItem(BaseModel):
 def register(router: APIRouter, h) -> None:
     def view(project) -> dict:
         return {"items": inbox.collect(project), "summary": inbox.summary(project), "last_run": inbox.last_run(project), "stats": inbox.dismissal_stats(project),
-                "proposal_stats": resolve.decision_stats(project), "mode": answers.load(project)["mode"], "policy": answers.policy_for(project)}
+                "proposal_stats": resolve.decision_stats(project), "canon": canon.active(project), "mode": answers.load(project)["mode"], "policy": answers.policy_for(project)}
 
     @router.get(I)
     def inbox_list(series: str, book: str):
@@ -54,7 +54,11 @@ def register(router: APIRouter, h) -> None:
         kind, _, key = body.id.partition(":")
         resolve.record_decision(project, body.id, "answer", body.answer)
         if kind == "question":
-            ops.answer_question(project, key, body.answer)
+            try:
+                llm = h.make_llm()(project)
+            except Exception:  # no model at hand: the answer is recorded, nothing is extracted from it
+                llm = None
+            ops.answer_question(project, key, body.answer, llm)
         elif kind == "finding":
             found = inbox.find_finding(project, key)
             if not found:
@@ -116,4 +120,12 @@ def register(router: APIRouter, h) -> None:
         project = h.open_project(series, book)
         h.require_idle(series)
         answers.set_policy(project, body.world_facts)
+        return h.ok(view(project))
+
+    @router.post(I + "/canon/undo")
+    def inbox_canon_undo(series: str, book: str, body: UndoItem):
+        """Take back what an answer of yours introduced (its cast entries and rules)."""
+        project = h.open_project(series, book)
+        h.require_idle(series)
+        canon.undo(project, body.id)
         return h.ok(view(project))

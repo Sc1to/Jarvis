@@ -7,7 +7,7 @@ from typing import Optional
 
 import typer
 
-from . import books as book_mgmt, assemble as assembly, changes as change_requests, deletion, export as exporting, ops, report as morning_report, stale as staleness, vcs
+from . import canon as canon_mod, books as book_mgmt, assemble as assembly, changes as change_requests, deletion, export as exporting, ops, report as morning_report, stale as staleness, vcs
 from .constants import CHECKPOINTS, LAYER_ORDER
 from . import scenefiles
 from .bible import store as bible_store
@@ -160,13 +160,24 @@ def style_suggest_cmd(
 
 @app.command("ledger-answer")
 def ledger_answer(path: Path = PathArg, question: str = typer.Argument(..., help="Question id, like q1"),
-                  answer: str = typer.Argument(..., help="Your answer"), book: str = BookOpt) -> None:
+                  answer: str = typer.Argument(..., help="Your answer"), book: str = BookOpt,
+                  canon: bool = typer.Option(False, "--canon", help="Also record what the answer introduces (a person, an object, a rule) as canon: needs a model; the Inbox always does")) -> None:
     """Answer a ledger question (or change an answer no run has applied yet). The next `run` revises the ledger from your answers. The Inbox does the same."""
     try:
-        ops.answer_question(Project.open(path, book), question, answer)
+        project = Project.open(path, book)
+        llm = None
+        if canon:
+            try:
+                llm = build_client(project)
+            except Exception:  # no model reachable: the answer is still recorded
+                llm = None
+        ops.answer_question(project, question, answer, llm)
+        introduced = [e for e in canon_mod.active(project) if e["item"] == f"question:{question}"]
     except BookforgeError as e:
         _fail(e)
     typer.echo(f"Recorded your answer to {question}. Run again to revise the ledger.")
+    for e in introduced:
+        typer.echo(f"  canon {e['id']}: added {', '.join(e['entities']) or 'no cast entry'}" + (f" and {len(e['needs'])} rule(s)" if e["needs"] else "") + " (undo in the Inbox)")
 
 
 @app.command("propose")
