@@ -29,6 +29,11 @@ class ModeBody(BaseModel):
     mode: str
 
 
+class RedoBody(BaseModel):
+    layer: str
+    note: str = Field("", max_length=4000)
+
+
 class AcceptItem(BaseModel):
     id: str
 
@@ -68,6 +73,8 @@ def register(router: APIRouter, h) -> None:
                 llm = None
             ops.answer_question(project, key, body.answer, llm)
         elif kind == "finding":
+            if key == "acts:acts_stale":
+                raise HTTPException(422, "these acts belong to an earlier ledger: plan them again instead (the button under the item)")
             found = inbox.find_finding(project, key)
             if not found:
                 raise HTTPException(404, "that finding is no longer reported")
@@ -85,6 +92,8 @@ def register(router: APIRouter, h) -> None:
         if kind == "question":
             ops.dismiss_question(project, key, body.reason)
         elif kind == "finding":
+            if key == "acts:acts_stale":
+                raise HTTPException(422, "these acts belong to an earlier ledger: plan them again instead; dismissing would build on a plan that misses events")
             found = inbox.find_finding(project, key)
             if not found:
                 raise HTTPException(404, "that finding is no longer reported")
@@ -152,4 +161,15 @@ def register(router: APIRouter, h) -> None:
         project = h.open_project(series, book)
         h.require_idle(series)
         resolve.accept(project, body.id)
+        return h.ok(view(project))
+
+    @router.post(I + "/redo")
+    def inbox_redo(series: str, book: str, body: RedoBody):
+        """Plan a layer (and the ones built on it) again from the current ledger, steered by your note. Earlier files are kept under previous/. Refused once
+        scenes have been written."""
+        project = h.open_project(series, book)
+        h.require_idle(series)
+        if body.layer not in ("acts", "chapters", "scenes"):
+            raise HTTPException(422, "only acts, chapters and scenes are planned again from here")
+        ops.redo_layer(project, body.layer, body.note, cascade=True)
         return h.ok(view(project))

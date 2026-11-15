@@ -462,6 +462,8 @@ def _book_chapter_checks(project, chapters: list[Chapter], ledger, ctx=None) -> 
     rel = findings_store.save(project, "chapters", findings)
     hard_left = [f.line() for f in findings if f.severity == HARD]
     if hard_left:
+        from .. import versions
+        versions.keep(project, versions.layer_files(project, "chapters"), "chapters-failed-checks")  # a failed run saves nothing, but what was there is kept
         store.chapters_path(project).unlink(missing_ok=True)
         acts_ = store.load_acts(project)
         act_of_chapter = {c.id: c.act.split(".")[-1] for c in chapters}
@@ -511,6 +513,8 @@ def _book_scene_checks(project, chapters: list[Chapter], scenes_all: list, timel
     rel = findings_store.save(project, "scenes", findings)
     hard_left = [f.line() for f in findings if f.severity == HARD]
     if hard_left:
+        from .. import versions
+        versions.keep(project, versions.layer_files(project, "scenes"), "scenes-failed-checks")
         store.scenes_path(project).unlink(missing_ok=True)
         chapter_names = [c.id.split(".", 1)[1] for c in chapters]
         covering = {ev: c.id.split(".", 1)[1] for c in chapters for ev in c.events_covered}

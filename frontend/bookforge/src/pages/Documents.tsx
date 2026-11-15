@@ -121,6 +121,48 @@ function SuggestRow({ series, book, onDone }: { series: string; book: string; on
 }
 
 /** An older series shares one cast, one set of state tracks and one timeline between its books: this gives each book its own. */
+interface Version { name: string; reason: string; at: string; files: string[] }
+
+const REASONS: Record<string, string> = {
+  'before-redo-acts': 'before you redid the acts', 'before-redo-chapters': 'before you redid the chapters', 'before-redo-scenes': 'before you redid the scenes',
+  'before-redo-ledger': 'before you redid the ledger', 'before-reset-by-new-ledger': 'before a new ledger reset the plan built on the old one',
+  'chapters-failed-checks': 'chapters removed by a failed check', 'scenes-failed-checks': 'scene plans removed by a failed check',
+  'ledger-before-audit-stop': 'the ledger before the audit stopped the stage', 'ledger-before-new-version': 'the ledger before a new version replaced it', 'before-restore': 'before you restored an earlier version',
+}
+
+/** Earlier versions of the plan files that a redo, a failed check or a new ledger replaced or removed, each restorable. */
+function Versions({ series, book, onDone }: { series: string; book: string; onDone: () => void }) {
+  const base = bookPath(series, book)
+  const list = useApi<Version[]>(`${base}/versions`)
+  const act = useAction()
+  if (!list.data || list.data.length === 0) return null
+  const restore = async (v: Version, only?: string) => {
+    if (window.confirm(only ? `Put ${only} back as it was ${v.at}? The file as it is now is kept first.` : `Put all ${v.files.length} file(s) back as they were ${v.at}? The files as they are now are kept first.`)
+      && (await act.run(() => post(`${base}/versions/restore`, only ? { name: v.name, only } : { name: v.name })))) { list.reload(); onDone() }
+  }
+  return (
+    <Card title={`Earlier versions (${list.data.length})`}>
+      <p className="mb-2 text-xs text-slate-600">Every time a redo, a failed check or a new ledger replaces or removes a plan file, the file as it was is kept here. Nothing in this list is deleted by the pipeline.</p>
+      <ErrorBanner message={act.error} onClose={act.clear} />
+      <ul className="space-y-2">
+        {list.data.map((v) => (
+          <li key={v.name} className="rounded-md border border-slate-200 p-2 text-sm">
+            <details>
+              <summary className="min-h-11 cursor-pointer py-2">{REASONS[v.reason] ?? v.reason} <span className="text-xs text-slate-500">· {v.at.slice(0, 8)} {v.at.slice(9, 13)}</span></summary>
+              <ul className="space-y-1">
+                {v.files.map((f) => (
+                  <li key={f} className="flex items-center justify-between gap-2"><span className="min-w-0 break-all text-xs">{f.replace(/^books\/[^/]+\//, '')}</span><Button disabled={act.busy} onClick={() => restore(v, f)}>Restore</Button></li>
+                ))}
+              </ul>
+              {v.files.length > 1 && <div className="mt-2"><Button disabled={act.busy} onClick={() => restore(v)}>Restore all</Button></div>}
+            </details>
+          </li>
+        ))}
+      </ul>
+    </Card>
+  )
+}
+
 function SplitBible({ series, book }: { series: string; book: string }) {
   const base = bookPath(series, book)
   const status = useApi<BookStatus>(`${base}/status`)
@@ -190,6 +232,7 @@ export default function Documents({ series, book, docKey }: { series: string; bo
   return (
     <div className="space-y-3">
       <SplitBible series={series} book={book} />
+      <Versions series={series} book={book} onDone={() => list.reload()} />
       {groups.map((g) => (
         <Card key={g} title={g}>
           <ul className="divide-y divide-slate-100">

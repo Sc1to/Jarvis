@@ -286,12 +286,36 @@ def _last_run(kind: str, before: Ledger | None, after: Ledger, applied: list[str
             "new_questions": [q.id for q in after.questions if q.id not in known], "events": len(after.events)}
 
 
+def _reset_downstream(project) -> list[str]:
+    """The ledger has new events, so the acts, chapters and scenes planned from the old ones are no longer the plan: they are put back to pending (to be
+    planned again from this ledger in the same run), after a copy of each file is kept. Written prose is never touched: with scenes written, nothing is reset
+    and the Inbox says so. Returns the layers reset."""
+    from .. import steering, versions
+    from ..constants import LAYER_CHECKPOINTS, REDO_NOTE
+    from ..state import Checkpoint
+    from .structure import _clean_work
+    stale = [l for l in ("acts", "chapters", "scenes") if project.state.layers[l].status != "pending"]
+    if not stale or any(project.book_dir.glob("scenes/*/*/final.md")) or any(project.book_dir.glob("scenes/*/*/revised.md")):
+        return []
+    versions.keep(project, [f for l in stale for f in versions.layer_files(project, l)], "before-reset-by-new-ledger")
+    for l in stale:
+        project.state.set_layer_status(l, "pending", REDO_NOTE)
+        _clean_work(project, l)
+        steering.clear(project, l)
+    project.state.items = {}
+    for cp in LAYER_CHECKPOINTS:
+        if cp != "ledger" and any(project.config.layers[l].checkpoint == cp for l in stale):
+            project.state.checkpoints[cp] = Checkpoint()
+    return stale
+
+
 def ledger(ctx: StepContext) -> StepResult:
     project = ctx.project
     path = store.ledger_path(project)
     rel = store.rel(project, path)
     synopsis = project.resolve(f"books/{project.book}/synopsis.md").read_text(encoding="utf-8").strip()
     redoing = project.state.layers["ledger"].note == REDO_NOTE
+    changed = False  # this run made new events: what was planned from the old ones is stale
     try:
         existing = None if redoing else store.load_ledger(project)
     except store.BibleError as e:
@@ -322,11 +346,13 @@ def ledger(ctx: StepContext) -> StepResult:
         led.audit = {**summary, "revision": 1 + int((existing.audit if existing else {}).get("revision", 0))}
         led.last_run = _last_run("extract", existing, led, applied_now)
         note = "extracted from the synopsis"
+        changed = True
     elif any(q.status == "answered" and not q.applied for q in existing.questions):
         applied_now = [q.id for q in existing.questions if q.status == "answered" and not q.applied]
         led, findings = revise(ctx, synopsis, existing)
         led.last_run = _last_run("revise", existing, led, applied_now)
         note = f"revised from your answers (revision {led.revision})"
+        changed = True
     else:
         led = existing
         if any(q.status == "open" for q in led.questions) and project.state.checkpoints["ledger"].status == "approved":
@@ -342,8 +368,15 @@ def ledger(ctx: StepContext) -> StepResult:
         led.thin = led.capacity["thin"]
         note = "adopted existing file"
 
+    if existing is None or (existing is not None and [e.id for e in existing.events] != [e.id for e in led.events]):
+        from .. import versions
+        versions.keep(project, [store.ledger_path(project)], "ledger-before-new-version")  # the ledger as it was before this run replaced it
     store.save_ledger(project, led)
     files = [rel, findings_store.save(project, "ledger", findings, {"capacity": led.capacity})]
+    if changed and led.events:
+        reset = _reset_downstream(project)
+        if reset:
+            note += f"; {', '.join(reset)} were planned from the earlier ledger and will be planned again from this one (the earlier files are kept under previous/)"
     open_q = [q for q in led.questions if q.status == "open"]
     if open_q:
         return StepResult(files=files, outcome="partial", checkpoint="ledger",

@@ -29,6 +29,12 @@ function ItemCard({ item, base, locked, onDone }: { item: InboxItem; base: strin
   const canEdit = item.status === 'answered' || (item.status === 'dismissed' && item.kind === 'question')
   const showForm = open || editing
   const accept = async () => { if (await act.run(() => post(`${base}/inbox/accept`, { id: item.id }))) onDone() }
+  const redoActs = async () => {
+    let also: string[] = []
+    try { also = (await api<{ also_resets: string[] }>(`${base}/redo/acts`)).also_resets } catch { /* the redo itself says what is wrong */ }
+    const msg = `Plan the acts again from the current ledger?${also.length ? ` This also resets: ${also.join(', ')}.` : ''} Nothing is deleted: the current files are kept under Earlier versions in the Documents tab.`
+    if (window.confirm(msg) && (await act.run(() => post(`${base}/inbox/redo`, { layer: 'acts', note: text.trim() })))) onDone()
+  }
   const send = async () => { if (await act.run(() => post(`${base}/inbox/answer`, { id: item.id, answer: text.trim() }))) { setEditing(false); onDone() } }
   const dismiss = async () => { if (await act.run(() => post(`${base}/inbox/dismiss`, { id: item.id, reason: reason.trim() }))) { setDismissing(false); setReason(''); onDone() } }
   return (
@@ -52,7 +58,17 @@ function ItemCard({ item, base, locked, onDone }: { item: InboxItem; base: strin
       {!showForm && item.status === 'answered' && <p className="whitespace-pre-wrap break-words rounded-md bg-sky-50 p-2 text-sm">{item.answer}</p>}
       {!showForm && item.status === 'applied' && <p className="whitespace-pre-wrap break-words text-xs text-slate-600">Your answer: {item.answer}</p>}
       {!showForm && item.status === 'dismissed' && item.dismiss_reason && <p className="break-words text-xs text-slate-600">Reason: {item.dismiss_reason}</p>}
-      {item.proposal && showForm && (
+      {item.actions?.includes('redo_acts') && (
+        <div className="space-y-2 rounded-md border border-sky-200 bg-sky-50/60 p-2">
+          <label className="block text-xs font-medium text-slate-700">Your decisions for the new plan (optional)
+            <textarea value={text} onChange={(e) => setText(e.target.value)} rows={3} disabled={act.busy || locked}
+              placeholder="For example: e17 belongs to the act where the data is uploaded; the last act turns on the decision and ends with the resolution"
+              className="mt-1 block w-full rounded-md border border-slate-300 p-2 text-sm font-normal" />
+          </label>
+          <Button kind="primary" disabled={act.busy || locked} onClick={redoActs}>Plan the acts again</Button>
+        </div>
+      )}
+      {item.proposal && showForm && !item.actions?.length && (
         <div className="space-y-2 rounded-md border border-violet-200 bg-violet-50/60 p-2">
           <div className="flex flex-wrap items-center gap-1.5 text-xs">
             <span className="rounded-full bg-violet-600 px-2 py-0.5 font-medium text-white">the tool suggests</span>
@@ -71,7 +87,7 @@ function ItemCard({ item, base, locked, onDone }: { item: InboxItem; base: strin
           </div>
         </div>
       )}
-      {showForm && (
+      {showForm && !item.actions?.length && (
         <div className="space-y-2">
           {item.options.length > 0 && (
             <div className="flex flex-col gap-2">
@@ -98,7 +114,7 @@ function ItemCard({ item, base, locked, onDone }: { item: InboxItem; base: strin
           <div className="flex gap-2"><Button kind="danger" disabled={act.busy || locked} onClick={dismiss}>Dismiss</Button><Button onClick={() => setDismissing(false)}>Cancel</Button></div>
         </div>
       )}
-      {!dismissing && (
+      {!dismissing && !item.actions?.length && (
         <div className="flex flex-wrap gap-2">
           {showForm && <Button kind="primary" disabled={act.busy || locked || !text.trim()} onClick={send}>{editing ? 'Save answer' : 'Answer'}</Button>}
           {editing && <Button onClick={() => { setEditing(false); setText(item.answer) }}>Cancel</Button>}
