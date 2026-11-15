@@ -18,6 +18,8 @@ CHECKPOINT_STAGES = {"direction": (), "ledger": ("ledger",), "structure": ("acts
 
 def _question_status(q) -> str:
     if q.status == "answered":
+        if q.decided_by == "tool" and not q.applied:
+            return "resolved"  # answered by the tool itself (auto mode): shown with its decision and an undo
         return "applied" if q.applied else "answered"
     return q.status  # open | dismissed
 

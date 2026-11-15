@@ -180,6 +180,7 @@ class AuthorQuestion(_Record):
     type: str = ""  # which check raised it (audit finding type, "thin", "unpaid_setup"...), for the report on noisy checks
     quotes: list[str] = []  # the words of the synopsis the question is about, verbatim
     dismiss_reason: str = ""  # why the author dismissed it (a false alarm, not worth an answer): counts toward the dismissal rate of its type
+    decided_by: str = ""  # "tool" when the tool answered it (auto mode, a minor fact about the world): marked in the Inbox, with undo
 
 
 class Ledger(_Record):

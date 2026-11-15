@@ -190,7 +190,7 @@ def test_assist_mode_settles_housekeeping_marks_it_resolved_by_the_tool_and_undo
     monkeypatch.setattr(api, "make_llm", lambda project: RuleLLM([("A sentence of a story synopsis has no event", json.dumps(
         {"outcome": "commentary", "change": "", "words": "", "reason": "it only describes the harbor"}))]))
     assert data(client.put(f"{B}/inbox/mode", json={"mode": "assist"}))["mode"] == "assist"
-    error(client.put(f"{B}/inbox/mode", json={"mode": "auto"}), 400)  # auto is not built yet
+    error(client.put(f"{B}/inbox/mode", json={"mode": "magic"}), 400)
     finish(data(client.post(f"{B}/inbox/propose"), 202))
     got = data(client.get(f"{B}/inbox"))
     item = got["items"][0]
@@ -272,3 +272,16 @@ def test_an_answer_with_no_model_at_hand_is_still_recorded(book, monkeypatch):
     seed(book, CONTRADICTION)
     got = data(client.post(f"{B}/inbox/answer", json={"id": "question:q1", "answer": "Keep A"}))
     assert got["items"][0]["status"] == "answered" and got["canon"] == []
+
+
+def test_auto_mode_and_re_enabling_an_outcome_work_from_the_page(book):
+    from bookforge import resolve
+    assert data(client.put(f"{B}/inbox/mode", json={"mode": "auto"}))["mode"] == "auto"
+    path = resolve.path(book).with_name("decisions.jsonl")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(dict(item="x", outcome="waive", label="l", mode="assist", verdict=v, at=f"2026-11-15T10:0{i}:00+00:00")) + "\n"
+                            for i, v in enumerate(["applied", "applied", "applied", "undone", "undone", "undone"])), encoding="utf-8")
+    got = data(client.get(f"{B}/inbox"))
+    assert list(got["demoted"]) == ["waive"] and got["demoted"]["waive"]["rate"] == 1.0
+    back = data(client.post(f"{B}/inbox/reenable", json={"outcome": "waive"}))
+    assert back["demoted"] == {}

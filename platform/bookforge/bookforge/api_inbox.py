@@ -29,6 +29,10 @@ class ModeBody(BaseModel):
     mode: str
 
 
+class ReenableBody(BaseModel):
+    outcome: str
+
+
 class PolicyBody(BaseModel):
     world_facts: str = ""  # research | extrapolate | invent; empty: derive it from the realism statement
 
@@ -41,7 +45,7 @@ class DismissItem(BaseModel):
 def register(router: APIRouter, h) -> None:
     def view(project) -> dict:
         return {"items": inbox.collect(project), "summary": inbox.summary(project), "last_run": inbox.last_run(project), "stats": inbox.dismissal_stats(project),
-                "proposal_stats": resolve.decision_stats(project), "canon": canon.active(project), "mode": answers.load(project)["mode"], "policy": answers.policy_for(project)}
+                "proposal_stats": resolve.decision_stats(project), "canon": canon.active(project), "demoted": resolve.demoted(project), "mode": answers.load(project)["mode"], "policy": answers.policy_for(project)}
 
     @router.get(I)
     def inbox_list(series: str, book: str):
@@ -128,4 +132,12 @@ def register(router: APIRouter, h) -> None:
         project = h.open_project(series, book)
         h.require_idle(series)
         canon.undo(project, body.id)
+        return h.ok(view(project))
+
+    @router.post(I + "/reenable")
+    def inbox_reenable(series: str, book: str, body: ReenableBody):
+        """Switch back on an outcome the tool stopped deciding because you kept overriding it: only decisions from now on count against it."""
+        project = h.open_project(series, book)
+        h.require_idle(series)
+        answers.reenable(project, body.outcome)
         return h.ok(view(project))

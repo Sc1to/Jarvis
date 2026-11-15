@@ -147,9 +147,20 @@ export default function InboxItems({ series, book, status, reload }: { series: s
             className="mt-1 block min-h-11 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-normal">
             <option value="shadow">Only suggest</option>
             <option value="assist">Settle housekeeping (with undo)</option>
+            <option value="auto">Also answer minor facts about the world</option>
           </select>
-          <span className="mt-1 block font-normal text-slate-600">Housekeeping means attaching a sentence to the event it elaborates and waiving description. It never adds an event, a character or a decision.</span>
+          <span className="mt-1 block font-normal text-slate-600">Housekeeping means attaching a sentence to the event it elaborates and waiving description; the last option also records a minor rule about the world the tool proposed. It never adds an event, a character or a decision, and an outcome you keep overriding is switched off by itself.</span>
         </label>
+      )}
+      {view && Object.keys(view.demoted ?? {}).length > 0 && (
+        <div className="mb-3 space-y-2">
+          {Object.entries(view.demoted!).map(([outcome, d]) => (
+            <div key={outcome} className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm">
+              <p>The tool stopped deciding <span className="font-medium">{outcome}</span> by itself: you disagreed with {Math.round(d.rate * 100)}% of its last {d.of} decisions. It only suggests it now.</p>
+              <div className="mt-2"><Button disabled={!!locked || setMode.busy} onClick={async () => { if (await setMode.run(() => post(`${base}/inbox/reenable`, { outcome }))) done() }}>Switch it back on</Button></div>
+            </div>
+          ))}
+        </div>
       )}
       {view?.policy && (
         <label className="mb-3 block text-xs font-medium text-slate-700">How a fact about the world is answered
