@@ -1,0 +1,62 @@
+acts:
+- id: b2.act1
+  title: Arrival and Alliance
+  summary: Eli Vance arrives at Erebus-7 and observes the decaying industrial environment where his debt
+    binds him to the Astra Dominion. He seeks out Mara Kovic, a technician suffering from radiation-induced
+    cognitive decline, who reveals that Eli's grandfather was executed by the corporation for discovering
+    mining destabilization. This revelation prompts Eli to seek the truth about the buried ship.
+  purpose: To establish the setting, the protagonist's motivation, and the central conflict through the
+    discovery of the past truth.
+  turning_point: Mara reveals that Eli's grandfather was executed by the corporation for discovering mining
+    destabilization.
+  chapter_count: 4
+  events:
+  - e1
+  - e2
+  - e3
+  - e4
+  turning_point_event: e4
+  sizing_reason: 'The act contains four events with a combined weight of 8 points, supporting approximately
+    four chapters. [computed: weight 9 over 4 events, about 4.5 chapters at 2 weight per chapter]'
+- id: b2.act2
+  title: The Hunt and the Ship
+  summary: Eli and Mara form an alliance to navigate the mining tunnels while Foreman Halloway begins
+    hunting them as liabilities. They locate the buried *Kestrel* beneath the processing plant but realize
+    that activating it requires bypassing safety protocols that would expose corporate secrets. Halloway
+    intercepts them at the launch bay with drones and a plasma cutter, forcing Eli to decide between fighting
+    or broadcasting data.
+  purpose: To escalate the conflict through the antagonist's pursuit and force the protagonist into a
+    critical strategic choice regarding the ship's activation.
+  turning_point: Eli decides to broadcast contamination data instead of fighting.
+  chapter_count: 6
+  events:
+  - e5
+  - e6
+  - e7
+  - e8
+  - e9
+  - e10
+  turning_point_event: e10
+  sizing_reason: 'The act contains six events with a combined weight of 16 points, supporting approximately
+    eight chapters. [computed: weight 16 over 6 events, about 8.0 chapters at 2 weight per chapter]'
+- id: b2.act3
+  title: Escape and Compromise
+  summary: Mara intervenes to protect the data drive, outmaneuvering Halloway in the process, while Eli
+    uploads the data triggering a lockdown and worsening her condition. Eli accepts he cannot save Mara
+    as she succumbs to her condition, then launches the *Kestrel* to escape as Halloway seals the sector.
+    The corporation allows Eli to escape only on the condition that he signs a non-disclosure agreement
+    and debt contract.
+  purpose: To resolve the immediate physical conflict, deliver the emotional climax of Mara's death, and
+    establish the bittersweet reality of the protagonist's survival.
+  turning_point: Eli launches the *Kestrel* and escapes as Halloway seals the sector.
+  chapter_count: 6
+  events:
+  - e11
+  - e12
+  - e13
+  - e14
+  - e15
+  - e16
+  turning_point_event: e14
+  sizing_reason: 'The act contains six events with a combined weight of 18 points, supporting approximately
+    nine chapters. [computed: weight 18 over 6 events, about 9.0 chapters at 2 weight per chapter]'
