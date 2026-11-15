@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { bookPath, post } from '../lib/api'
+import { api, bookPath, post } from '../lib/api'
 import { useAction, useApi, useJob } from '../lib/hooks'
 import { href } from '../lib/route'
 import type { BookStatus, InboxItem, InboxView } from '../lib/types'
@@ -11,9 +11,10 @@ const STAGE_ORDER = ['ledger', 'acts', 'chapters', 'scenes', 'prose']
 export const CHECKPOINT_STAGES: Record<string, string[]> = { ledger: ['ledger'], structure: ['acts', 'chapters', 'scenes'], voice: ['prose'], final: ['prose'] }
 
 const STATUS_STYLE: Record<string, string> = {
+  resolved: 'bg-violet-100 text-violet-900',
   open: 'bg-amber-100 text-amber-900', answered: 'bg-sky-100 text-sky-800', applied: 'bg-emerald-100 text-emerald-800', dismissed: 'bg-slate-100 text-slate-600',
 }
-const STATUS_LABEL: Record<string, string> = { open: 'open', answered: 'answered, waits for the next run', applied: 'applied', dismissed: 'dismissed' }
+const STATUS_LABEL: Record<string, string> = { resolved: 'decided by the tool', open: 'open', answered: 'answered, waits for the next run', applied: 'applied', dismissed: 'dismissed' }
 
 /** One question or finding: its words, the quoted sentences, one-tap answers, a text box you can edit, Answer / Dismiss / Edit. */
 function ItemCard({ item, base, locked, onDone }: { item: InboxItem; base: string; locked: boolean; onDone: () => void }) {
@@ -23,6 +24,8 @@ function ItemCard({ item, base, locked, onDone }: { item: InboxItem; base: strin
   const [dismissing, setDismissing] = useState(false)
   const [reason, setReason] = useState('')
   const open = item.status === 'open'
+  const resolved = item.status === 'resolved'
+  const undo = async () => { if (await act.run(() => post(`${base}/inbox/undo`, { id: item.id }))) onDone() }
   const canEdit = item.status === 'answered' || (item.status === 'dismissed' && item.kind === 'question')
   const showForm = open || editing
   const send = async () => { if (await act.run(() => post(`${base}/inbox/answer`, { id: item.id, answer: text.trim() }))) { setEditing(false); onDone() } }
@@ -38,6 +41,13 @@ function ItemCard({ item, base, locked, onDone }: { item: InboxItem; base: strin
       {item.why && <p className="text-xs text-slate-600">{item.why}</p>}
       {item.quotes.map((q, i) => <blockquote key={i} className="break-words border-l-4 border-slate-300 pl-3 text-xs italic text-slate-700">“{q}”</blockquote>)}
       {item.items.length > 0 && <p className="break-words text-xs text-slate-500">{item.items.slice(0, 6).join(', ')}</p>}
+      {resolved && item.proposal && (
+        <div className="space-y-2 rounded-md border border-violet-200 bg-violet-50/60 p-2">
+          <p className="break-words text-sm">{item.proposal.answer}</p>
+          {item.proposal.rationale && <p className="break-words text-xs text-slate-600">{item.proposal.rationale}</p>}
+          <Button disabled={act.busy || locked} onClick={undo}>Undo this decision</Button>
+        </div>
+      )}
       {!showForm && item.status === 'answered' && <p className="whitespace-pre-wrap break-words rounded-md bg-sky-50 p-2 text-sm">{item.answer}</p>}
       {!showForm && item.status === 'applied' && <p className="whitespace-pre-wrap break-words text-xs text-slate-600">Your answer: {item.answer}</p>}
       {!showForm && item.status === 'dismissed' && item.dismiss_reason && <p className="break-words text-xs text-slate-600">Reason: {item.dismiss_reason}</p>}
@@ -107,6 +117,9 @@ export default function InboxItems({ series, book, status, reload }: { series: s
   const items = view?.items ?? []
   const active = items.filter((i) => i.status === 'open' || i.status === 'answered')
   const handled = items.filter((i) => i.status === 'applied' || i.status === 'dismissed')
+  const byTool = items.filter((i) => i.status === 'resolved')
+  const setMode = useAction()
+  const changeMode = async (mode: string) => { if (await setMode.run(() => api(`${base}/inbox/mode`, { method: 'PUT', body: { mode } }))) done() }
   const groups = STAGE_ORDER.map((st) => ({ stage: st, items: active.filter((i) => i.stage === st) })).filter((g) => g.items.length)
   const blocking = view?.summary.blocking ?? 0
   const canRun = !!view && blocking === 0 && view.summary.answered_waiting > 0
@@ -125,6 +138,17 @@ export default function InboxItems({ series, book, status, reload }: { series: s
     <Card title={`Questions and findings (${blocking ? blocking + ' blocking, ' : ''}${active.length} open)`}>
       <p className="mb-2 text-xs text-slate-600">What stopped a stage and needs your word. Tap a suggested answer or write your own, then run again.</p>
       {inbox.error && <ErrorBanner message={inbox.error} />}
+      {view && (
+        <label className="mb-3 block text-xs font-medium text-slate-700">How much the tool decides
+          <select value={view.mode ?? 'shadow'} onChange={(e) => changeMode(e.target.value)} disabled={!!locked || setMode.busy}
+            className="mt-1 block min-h-11 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-normal">
+            <option value="shadow">Only suggest</option>
+            <option value="assist">Settle housekeeping (with undo)</option>
+          </select>
+          <span className="mt-1 block font-normal text-slate-600">Housekeeping means attaching a sentence to the event it elaborates and waiving description. It never adds an event, a character or a decision.</span>
+        </label>
+      )}
+      <ErrorBanner message={setMode.error} onClose={setMode.clear} />
       {!view && <Loading />}
       {view && !active.length && <Empty>Nothing is waiting for an answer.</Empty>}
       <div className="space-y-4">
@@ -174,6 +198,12 @@ export default function InboxItems({ series, book, status, reload }: { series: s
           {(lr.new_questions?.length ?? 0) > 0 && <p className="text-xs text-amber-900">{lr.new_questions!.length} new item(s) above: {lr.new_questions!.join(', ')}.</p>}
           <p className="text-xs"><a className="underline" href={href({ series, book, tab: 'documents', id: 'ledger' })}>Open the ledger</a></p>
         </div>
+      )}
+      {byTool.length > 0 && (
+        <details className="mt-3 text-sm" open>
+          <summary className="min-h-11 cursor-pointer py-2 text-slate-700">Resolved by the tool ({byTool.length}) — look these over</summary>
+          <ul className="space-y-3">{byTool.map((it) => <ItemCard key={`${it.id}:${it.status}`} item={it} base={base} locked={!!locked} onDone={done} />)}</ul>
+        </details>
       )}
       {handled.length > 0 && (
         <details className="mt-3 text-sm">

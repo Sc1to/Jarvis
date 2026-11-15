@@ -165,6 +165,7 @@ class StoryEvent(_Record):
     source: Literal["synopsis", "derived", "author"] = "synopsis"
     parent: str = ""  # derived events name the event they complicate
     excerpt: str = ""  # the words of the synopsis this event comes from (verbatim); derived events have none
+    also: list[str] = []  # further synopsis sentences (verbatim) this event also tells: description or elaboration attached to it, so no event is added for them
     carried_in: bool = False  # already true when the book begins (state inherited from an earlier book); never told again
 
 

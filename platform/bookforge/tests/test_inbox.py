@@ -109,7 +109,7 @@ def test_a_checkpoint_with_nothing_open_for_its_stages_approves_without_ceremony
 def test_the_inbox_page_runs_again_with_the_ordinary_run_and_answered_items_wait_for_it(book):
     seed(book, CONTRADICTION)
     data(client.post(f"{B}/inbox/answer", json={"id": "question:q1", "answer": "Keep A"}))
-    assert data(client.get(f"{B}/inbox"))["summary"] == {"open": 0, "blocking": 0, "answered_waiting": 1, "by_stage": {}}
+    assert data(client.get(f"{B}/inbox"))["summary"] == {"open": 0, "blocking": 0, "answered_waiting": 1, "resolved": 0, "by_stage": {}}
     job = data(client.post(f"{B}/run", json={"until": "ledger"}), 202)  # the button posts this: the same call as `run` on the command line
     assert finish(job)["status"] in ("done", "failed")
 
@@ -179,4 +179,42 @@ def test_what_you_do_with_a_suggestion_is_recorded_and_counted(book, monkeypatch
     data(client.post(f"{B}/inbox/answer", json={"id": item["id"], "answer": "No event needed: description."}))  # the suggestion, as it was
     data(client.post(f"{B}/inbox/answer", json={"id": item["id"], "answer": "Actually give it an event"}))  # edited
     got = data(client.post(f"{B}/inbox/dismiss", json={"id": item["id"]}))  # overridden
-    assert got["proposal_stats"]["waive"] == {"proposed": 3, "accepted": 1, "edited": 1, "overridden": 1, "override_rate": 0.67}
+    assert got["proposal_stats"]["waive"] == {"proposed": 3, "accepted": 1, "edited": 1, "overridden": 1, "applied": 0, "undone": 0, "override_rate": 0.67}
+
+
+def test_assist_mode_settles_housekeeping_marks_it_resolved_by_the_tool_and_undo_takes_it_back(book, monkeypatch):
+    from conftest import RuleLLM
+    from bookforge import answers, api
+    sentence = "The harbor is cold and grey in the early morning light over the yard."
+    _uncovered(book, sentence)
+    monkeypatch.setattr(api, "make_llm", lambda project: RuleLLM([("A sentence of a story synopsis has no event", json.dumps(
+        {"outcome": "commentary", "change": "", "words": "", "reason": "it only describes the harbor"}))]))
+    assert data(client.put(f"{B}/inbox/mode", json={"mode": "assist"}))["mode"] == "assist"
+    error(client.put(f"{B}/inbox/mode", json={"mode": "auto"}), 400)  # auto is not built yet
+    finish(data(client.post(f"{B}/inbox/propose"), 202))
+    got = data(client.get(f"{B}/inbox"))
+    item = got["items"][0]
+    assert item["status"] == "resolved" and not item["blocking"] and item["proposal"]["applied"] and item["proposal"]["outcome"] == "waive"
+    assert got["summary"]["open"] == 0 and got["summary"]["resolved"] == 1 and got["summary"]["blocking"] == 0
+    assert answers.load(book)["waived"] == [{"quote": sentence, "reason": "it only describes the harbor", "decided_by": "tool"}]
+    after = data(client.post(f"{B}/inbox/undo", json={"id": item["id"]}))
+    back = after["items"][0]
+    assert back["status"] == "open" and back["blocking"] and not back["proposal"]["applied"] and after["summary"]["resolved"] == 0
+    assert answers.load(book)["waived"] == [] and answers.load(book)["undone"] == [sentence]
+    finish(data(client.post(f"{B}/inbox/propose"), 202))  # the tool does not decide that sentence again
+    assert data(client.get(f"{B}/inbox"))["items"][0]["status"] == "open"
+    error(client.post(f"{B}/inbox/undo", json={"id": item["id"]}), 400)
+    stats = after["proposal_stats"]["waive"]
+    assert stats["applied"] == 1 and stats["undone"] == 1 and stats["override_rate"] == 1.0
+
+
+def test_shadow_mode_applies_nothing(book, monkeypatch):
+    from conftest import RuleLLM
+    from bookforge import answers, api
+    _uncovered(book, "The harbor is cold and grey in the early morning light over the yard.")
+    monkeypatch.setattr(api, "make_llm", lambda project: RuleLLM([("A sentence of a story synopsis has no event", json.dumps(
+        {"outcome": "commentary", "change": "", "words": "", "reason": "description"}))]))
+    assert answers.load(book)["mode"] == "shadow"
+    finish(data(client.post(f"{B}/inbox/propose"), 202))
+    item = data(client.get(f"{B}/inbox"))["items"][0]
+    assert item["status"] == "open" and item["blocking"] and not item["proposal"]["applied"] and answers.load(book)["waived"] == []

@@ -175,14 +175,14 @@ export interface CarryOver { source: string; entities: CarryEntity[]; rules: num
 
 export interface InboxItem {
   id: string; kind: 'question' | 'finding'; series: string; book: string; stage: string; blocking: boolean; type: string
-  title: string; why: string; quotes: string[]; options: string[]; status: 'open' | 'answered' | 'applied' | 'dismissed'
+  title: string; why: string; quotes: string[]; options: string[]; status: 'open' | 'answered' | 'applied' | 'dismissed' | 'resolved'
   answer: string; dismiss_reason: string; items: string[]; fingerprint: string; proposal?: InboxProposal | null
 }
 export interface InboxProposal {
   outcome: string; answer: string; rationale: string; label: string; target: string; sources: { url: string; quote: string }[]
-  size: string; confidence: string; decided_by: string; applied: boolean; mode: string
+  size: string; confidence: string; decided_by: string; applied: boolean; mode: string; quote?: string
 }
-export interface InboxSummary { open: number; blocking: number; answered_waiting: number; by_stage: Record<string, number> }
+export interface InboxSummary { open: number; blocking: number; answered_waiting: number; resolved?: number; by_stage: Record<string, number> }
 export interface InboxLastRun {
   at?: string; kind?: 'audit' | 'extract' | 'revise'; revision?: number; applied?: string[]; events?: number
   added?: { id: string; text: string; source: string }[]; revised?: { id: string; before: string; after: string }[]; new_questions?: string[]
@@ -190,5 +190,6 @@ export interface InboxLastRun {
 export interface InboxView {
   items: InboxItem[]; summary: InboxSummary; last_run: InboxLastRun
   stats: Record<string, { raised: number; answered: number; dismissed: number; reasons: string[]; dismissal_rate: number | null }>
-  proposal_stats?: Record<string, { proposed: number; accepted: number; edited: number; overridden: number; override_rate: number | null }>
+  proposal_stats?: Record<string, { proposed: number; accepted: number; edited: number; overridden: number; applied?: number; undone?: number; override_rate: number | null }>
+  mode?: 'shadow' | 'assist'
 }

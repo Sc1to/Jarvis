@@ -15,6 +15,7 @@ import logging
 import re
 from dataclasses import asdict, dataclass, field
 
+from . import answers as answers_mod
 from .validators.ledger import _norm
 from .validators.text import WORD, content_stems, sentences
 
@@ -38,6 +39,7 @@ class Proposal:
     decided_by: str = "tool"
     applied: bool = False
     mode: str = "shadow"
+    quote: str = ""  # the synopsis sentence it concerns, in full
 
 
 def path(project):
@@ -130,7 +132,20 @@ def check_model_answer(data: dict, sentence: str) -> tuple[str, str, str] | None
     return "commentary", "", reason
 
 
+def _with_quote(p: Proposal | None, sentence: str) -> Proposal | None:
+    if p is not None:
+        p.quote = sentence
+    return p
+
+
 def propose_coverage(project, synopsis: str, sentence_fragment: str, events: list[dict], ask=None) -> Proposal | None:
+    """See `_propose_coverage`; the proposal also carries the full sentence."""
+    p = _propose_coverage(project, synopsis, sentence_fragment, events, ask)
+    index = locate(synopsis, sentence_fragment)
+    return _with_quote(p, _flat(synopsis)[index][1]) if index is not None else p
+
+
+def _propose_coverage(project, synopsis: str, sentence_fragment: str, events: list[dict], ask=None) -> Proposal | None:
     """The proposal for one uncovered sentence. `ask(prompt_slots) -> dict` is the model step (None when no model is at hand: only the first two steps run)."""
     flat = _flat(synopsis)
     index = locate(synopsis, sentence_fragment)
@@ -175,6 +190,8 @@ def propose_all(project, llm=None) -> dict:
     ledger = store.load_ledger(project)
     events = [e.model_dump() for e in ledger.events] if ledger and ledger.events else load_attempt_events(project)
     known = load(project)
+    answered = answers_mod.load(project)
+    mode = answered["mode"]
 
     def ask(**slots) -> dict:
         if llm is None:
@@ -194,8 +211,62 @@ def propose_all(project, llm=None) -> dict:
         proposal = propose_coverage(project, synopsis, fragment, events, ask if llm is not None else None)
         if proposal:
             known[item["id"]] = asdict(proposal)
+    if mode == "assist":
+        apply_housekeeping(project, known, answered)
     save(project, known)
     return known
+
+
+HOUSEKEEPING = ("widen", "attach", "waive")  # outcomes the tool may settle itself in assist mode: they change no event and add none
+
+
+def apply_housekeeping(project, proposals: dict, answered: dict) -> int:
+    """In assist mode: settle the housekeeping proposals (a sentence attached to the event it elaborates, description waived) and mark them applied.
+    A new event, anything else the tool proposes, and every sentence you took back stay yours. Returns how many were applied."""
+    n = 0
+    for item_id, p in proposals.items():
+        if p.get("applied") or p.get("outcome") not in HOUSEKEEPING or not p.get("quote") or answers_mod.is_undone(answered, p["quote"]):
+            continue
+        if p["outcome"] == "waive":
+            answers_mod.waive(project, p["quote"], p.get("rationale", ""))
+        p["applied"], p["mode"] = True, "assist"
+        _log(project, item_id, p, "applied")
+        n += 1
+    return n
+
+
+def repair_coverage(raw_events: list, synopsis: str, answered: dict) -> list[str]:
+    """In assist mode, at the ledger parse: every plot sentence no event quotes that an event already tells by meaning, or that elaborates the event
+    before it, is attached to that event (`also`). Waived sentences and sentences you took back are left alone. Events are changed in place; returns what was done."""
+    from .validators.ledger import _sentence_coverage, paragraphs
+    plain = [e for e in raw_events if isinstance(e, dict) and e.get("id")]
+    flat = _flat(synopsis)
+    notes = []
+    for f in _sentence_coverage(plain, paragraphs(synopsis), "ledger", answered["waived"]):
+        index = locate(synopsis, f.evidence[0]) if f.evidence else None
+        if index is None:
+            continue
+        sentence = flat[index][1]
+        if answers_mod.is_undone(answered, sentence):
+            continue
+        owner = covered_by_meaning(sentence, plain) or elaborates_previous(flat, index, plain)
+        if owner is not None:
+            owner.setdefault("also", []).append(sentence)
+            notes.append(f"{owner['id']} also tells \"{sentence[:70]}...\" (attached by the tool, mode assist)")
+    return notes
+
+
+def undo(project, item_id: str) -> None:
+    """Take back a decision the tool made: the sentence is no longer waived or attached, and the tool leaves it alone from now on."""
+    proposals = load(project)
+    p = proposals.get(item_id)
+    if not p or not p.get("applied"):
+        from .errors import BookforgeError
+        raise BookforgeError("the tool has not decided that item")
+    answers_mod.take_back(project, p.get("quote", ""))
+    p["applied"] = False
+    _log(project, item_id, p, "undone")
+    save(project, proposals)
 
 
 def inbox_values(project) -> dict:
@@ -213,6 +284,10 @@ def record_decision(project, item_id: str, action: str, text: str = "") -> None:
         verdict = "accepted" if " ".join(text.split()) == " ".join(proposal.get("answer", "").split()) else "edited"
     else:
         verdict = "overridden"
+    _log(project, item_id, proposal, verdict)
+
+
+def _log(project, item_id: str, proposal: dict, verdict: str) -> None:
     from datetime import datetime, timezone
     p = path(project).with_name("decisions.jsonl")
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -233,9 +308,12 @@ def decision_stats(project) -> dict[str, dict]:
             rec = json.loads(line)
         except ValueError:
             continue
-        row = out.setdefault(rec.get("outcome", "?"), {"proposed": 0, "accepted": 0, "edited": 0, "overridden": 0})
-        row["proposed"] += 1
-        row[rec.get("verdict", "overridden")] = row.get(rec.get("verdict", "overridden"), 0) + 1
+        row = out.setdefault(rec.get("outcome", "?"), {"proposed": 0, "accepted": 0, "edited": 0, "overridden": 0, "applied": 0, "undone": 0})
+        verdict = rec.get("verdict", "overridden")
+        row[verdict] = row.get(verdict, 0) + 1
+        if verdict not in ("applied",):  # a decision you made about a proposal; an application is the tool acting, an undo is you taking it back
+            row["proposed"] += 1 if verdict != "undone" else 0
     for row in out.values():
-        row["override_rate"] = round((row["edited"] + row["overridden"]) / row["proposed"], 2) if row["proposed"] else None
+        judged = row["accepted"] + row["edited"] + row["overridden"] + row["undone"]
+        row["override_rate"] = round((row["edited"] + row["overridden"] + row["undone"]) / judged, 2) if judged else None
     return out

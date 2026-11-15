@@ -29,7 +29,7 @@ def _question_item(project, q) -> dict:
             "items": [], "fingerprint": ""}
 
 
-def _finding_item(project, stage: str, f: dict, known: dict, status: str) -> dict:
+def _finding_item(project, stage: str, f: dict, known: dict, status: str) -> dict:  # noqa: C901
     fp = accepted.fingerprint(stage, f["code"], f.get("items", []))
     rec = known.get(fp, {})
     return {"id": f"finding:{fp}", "kind": "finding", "series": project.root.name, "book": project.book, "stage": stage, "blocking": status == "open",
@@ -63,6 +63,10 @@ def collect(project, include_done: bool = True) -> list[dict]:
     suggestions = resolve.load(project)
     for it in items:
         it["proposal"] = suggestions.get(it["id"])
+        if it["kind"] == "finding" and it["status"] == "open" and it["proposal"] and it["proposal"].get("applied"):
+            it["status"], it["blocking"] = "resolved", False  # settled by the tool: shown with its decision and an undo, not asked
+    if not include_done:
+        items = [it for it in items if it["status"] != "resolved"]
     order = {s: i for i, s in enumerate(STAGES)}
     items.sort(key=lambda it: (not it["blocking"], it["status"] != "open", order.get(it["stage"], 9), it["id"]))
     return items
@@ -72,7 +76,8 @@ def summary(project) -> dict:
     items = collect(project, include_done=False)
     ledger = store.load_ledger(project)
     answered = [q for q in (ledger.questions if ledger else []) if q.status == "answered" and not q.applied]
-    return {"open": len(items), "blocking": sum(it["blocking"] for it in items), "answered_waiting": len(answered),
+    resolved = sum(1 for it in collect(project) if it["status"] == "resolved")
+    return {"open": len(items), "blocking": sum(it["blocking"] for it in items), "answered_waiting": len(answered), "resolved": resolved,
             "by_stage": {s: sum(it["stage"] == s for it in items) for s in STAGES if any(it["stage"] == s for it in items)}}
 
 
