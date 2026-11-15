@@ -176,7 +176,7 @@ export interface CarryOver { source: string; entities: CarryEntity[]; rules: num
 export interface InboxItem {
   id: string; kind: 'question' | 'finding'; series: string; book: string; stage: string; blocking: boolean; type: string
   title: string; why: string; quotes: string[]; options: string[]; status: 'open' | 'answered' | 'applied' | 'dismissed' | 'resolved'
-  answer: string; dismiss_reason: string; items: string[]; fingerprint: string; proposal?: InboxProposal | null
+  answer: string; dismiss_reason: string; items: string[]; fingerprint: string; proposal?: InboxProposal | null; actions?: string[]
 }
 export interface InboxProposal {
   outcome: string; answer: string; rationale: string; label: string; target: string; sources: { url: string; quote: string }[]

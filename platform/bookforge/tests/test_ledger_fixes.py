@@ -140,3 +140,17 @@ def test_a_condition_that_fits_several_earlier_events_equally_is_a_guess_not_a_v
     found = L.causal_order([early1, early2, grant])
     assert len(found) == 1 and found[0].severity == "soft" and "2 earlier events fit" in found[0].message
     assert L.causal_order([early1, grant])[0].severity == "hard"  # one clear match is a verdict
+
+
+def test_a_wrong_sum_in_an_acts_reasoning_is_put_right_not_asked_about_and_a_chapters_slip_is_only_a_note():
+    events = [ev(f"e{i}", f"event {i}", weight=w) for i, w in enumerate([3, 2, 3, 1, 2, 3], 1)]  # act 1 weighs 9, act 2 weighs 6
+    acts = [act(1, ["e1", "e2", "e3"], 5, "The act has three events with a combined weight of 11 points. [computed: weight 8 over 3 events, about 4 chapters]"),
+            act(2, ["e4", "e5", "e6"], 3, "override: shorter on purpose, weight 99")]
+    notes = L.repair_sizing(acts, events)
+    assert len(notes) == 1 and "weight 11" in notes[0] and "add up to 8" in notes[0]
+    assert "weight of 8 points" in acts[0]["sizing_reason"] and "[computed: weight 8 over 3 events" in acts[0]["sizing_reason"]  # the system's own note is untouched
+    assert acts[1]["sizing_reason"].startswith("override:")  # a stated departure is left alone
+    assert L.repair_sizing(acts, events) == []
+    talks = act(1, ["e1", "e2", "e3"], 6, "weight 8, so about 12 chapters")
+    found = [f for f in L.sizing_consistency([talks], events) if f.code == "sizing_reason_mismatch"]
+    assert len(found) == 1 and found[0].severity == "soft"

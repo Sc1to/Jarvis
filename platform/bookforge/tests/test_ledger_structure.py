@@ -344,3 +344,15 @@ def test_a_last_chapter_that_only_repeats_the_acts_events_is_dropped(project):
     summary = run(p, llm, HANDLERS, until="chapters")
     assert summary.ran == ["acts", "chapters"], summary.detail
     assert len(store.load_chapters(p)) == 4 and [a.chapter_count for a in store.load_acts(p)] == [2, 2]
+
+
+def test_a_wrong_weight_in_an_acts_reasoning_is_corrected_without_a_correction_round(project):
+    p = project_ready(project)
+    plan = copy.deepcopy(acts())
+    for a in plan["acts"]:
+        a["sizing_reason"] = "two events with a combined weight of 7 fill two chapters"  # the real weight is 4
+    llm = RuleLLM([("Divide the book into ACTS by assigning", dump(plan))] + rules())
+    summary = run(p, llm, HANDLERS, until="acts")
+    assert summary.ran == ["acts"], summary.detail
+    assert len([c for c in llm.calls if "Divide the book into ACTS" in c["messages"][-1]["content"]]) == 1  # accepted at once
+    assert all("weight of 4" in a.sizing_reason and "weight of 7" not in a.sizing_reason for a in store.load_acts(p))

@@ -40,6 +40,42 @@ def _finding_item(project, stage: str, f: dict, known: dict, status: str) -> dic
             "code": f["code"]}
 
 
+# findings of the acts stage that one cause produces together: acts planned for a ledger that has since changed
+STALE_ACTS_CODES = ("event_in_no_act", "resolution_not_in_last_act", "acts_differ_from_capacity", "final_turning_point_is_transition", "sizing_reason_mismatch",
+                    "unknown_event", "turning_point_not_in_act", "event_in_two_acts", "acts_out_of_order", "turning_point_without_event")
+
+
+def stale_acts(project) -> dict | None:
+    """When the acts were planned for an earlier ledger: {"missing": events in no act, "unknown": act events the ledger no longer has}. None when they match
+    (or there is no ledger with events, or no acts)."""
+    if project.state.layers["acts"].status == "pending":
+        return None  # already being planned again
+    ledger = store.load_ledger(project)
+    try:
+        acts = store.load_acts(project) if store.acts_path(project).exists() else []
+    except Exception:
+        return None
+    if ledger is None or not ledger.events or not acts:
+        return None
+    ids = [e.id for e in ledger.events if not e.carried_in and e.source != "derived"]
+    in_acts = {x for a in acts for x in a.events}
+    missing, unknown = [i for i in ids if i not in in_acts], sorted(x for x in in_acts if x not in {e.id for e in ledger.events})
+    return {"missing": missing, "unknown": unknown} if missing or unknown else None
+
+
+def _stale_acts_item(project, stale: dict, hidden: list[dict]) -> dict:
+    parts = []
+    if stale["missing"]:
+        parts.append(f"{len(stale['missing'])} event(s) are in no act ({', '.join(stale['missing'][:6])}{'...' if len(stale['missing']) > 6 else ''})")
+    if stale["unknown"]:
+        parts.append(f"{len(stale['unknown'])} event(s) the acts use are not in the ledger any more ({', '.join(stale['unknown'][:6])})")
+    return {"id": "finding:acts:acts_stale", "kind": "finding", "series": project.root.name, "book": project.book, "stage": "acts", "blocking": True, "type": "acts_stale",
+            "title": "These acts were planned for an earlier version of the ledger: " + "; ".join(parts) + ".",
+            "why": f"Planning the acts again from the current ledger settles all {len(hidden)} checks that failed because of this at once. Add your decisions below (which act an event belongs to, what the last act turns on): they steer the new plan.",
+            "quotes": [h["title"][:160] for h in hidden[:5]], "options": [], "status": "open", "answer": "", "dismiss_reason": "", "items": stale["missing"][:8] + stale["unknown"][:8],
+            "fingerprint": "", "code": "acts_stale", "actions": ["redo_acts"], "proposal": None}
+
+
 def collect(project, include_done: bool = True) -> list[dict]:
     """Every item, blocking first, then by stage order, then by id. `include_done` keeps answered, applied and dismissed ones (their status says so)."""
     items: list[dict] = []
@@ -49,7 +85,11 @@ def collect(project, include_done: bool = True) -> list[dict]:
         if item["status"] == "open" or include_done:
             items.append(item)
     known = accepted.load(project)
+    from .constants import REDO_NOTE
     for stage in STAGES:
+        layer = project.state.layers[stage]
+        if layer.status == "pending" and layer.note == REDO_NOTE:
+            continue  # reset to be planned again: its saved findings describe the file that is being replaced
         seen: set[str] = set()
         for f in findings_store.load(project, stage).get("findings", []):
             if f.get("severity") != "hard" and not f.get("accepted"):
@@ -73,6 +113,11 @@ def collect(project, include_done: bool = True) -> list[dict]:
                 it["status"], it["blocking"] = "resolved", False  # settled by the tool: shown with its decision and an undo, not asked
         elif it["kind"] == "finding" and it["status"] == "open" and it["id"] in told:
             it["status"], it["blocking"], it["answer"] = "answered", False, told[it["id"]]["text"]  # your instruction waits for the next run
+    stale = stale_acts(project)
+    if stale:  # five checks with one cause are one item: plan the acts again
+        group = [it for it in items if it["stage"] == "acts" and it["kind"] == "finding" and it["status"] == "open" and it.get("code") in STALE_ACTS_CODES]
+        items = [it for it in items if it not in group]
+        items.insert(0, _stale_acts_item(project, stale, group))
     if not include_done:
         items = [it for it in items if it["status"] == "open"]
     order = {s: i for i, s in enumerate(STAGES)}
@@ -116,7 +161,9 @@ def summary(project) -> dict:
     blocking = sum(it["blocking"] for it in items)
     flagged = [n for n in ("ledger", "acts", "chapters", "scenes") if project.state.layers[n].status in ("flagged", "failed")]
     empty_ledger = bool(ledger is not None and not ledger.events and project.state.layers["ledger"].status != "accepted")
-    needs_run = blocking == 0 and bool(waiting or flagged or empty_ledger)  # a stage that failed, or an audit that is now answered, has to run again
+    from .constants import REDO_NOTE
+    redoing = any(project.state.layers[n].status == "pending" and project.state.layers[n].note == REDO_NOTE for n in ("acts", "chapters", "scenes"))  # reset, waiting to be planned again
+    needs_run = blocking == 0 and bool(waiting or flagged or empty_ledger or redoing)  # a stage that failed, or an audit that is now answered, has to run again
     return {"open": len(items), "blocking": blocking, "answered_waiting": waiting, "resolved": resolved, "needs_run": needs_run,
             "by_stage": {s: sum(it["stage"] == s for it in items) for s in STAGES if any(it["stage"] == s for it in items)}}
 

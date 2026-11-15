@@ -222,6 +222,11 @@ class RewriteBody(BaseModel):
     reset_voice: bool = False  # ask for the voice checkpoint again (when chapter 1 is rewritten)
 
 
+class RestoreBody(BaseModel):
+    name: str
+    only: str | None = None  # one file of the version, as listed; omitted: all of them
+
+
 class ApproveBody(BaseModel):
     skip_open: bool = False  # go on although the Inbox still holds open items for this checkpoint's stages
 
@@ -425,6 +430,20 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
         project = open_project(series, book)
         require_idle(series)
         return ok({"title": book_mgmt.set_title(project, body.title)})
+
+    @router.get("/series/{series}/books/{book}/versions")
+    def versions_list(series: str, book: str):
+        """Earlier versions of the plan files a redo, a failed check or a new ledger replaced (newest first)."""
+        from . import versions
+        return ok(versions.list_versions(open_project(series, book)))
+
+    @router.post("/series/{series}/books/{book}/versions/restore")
+    def versions_restore(series: str, book: str, body: RestoreBody):
+        """Put an earlier version (or one file of it) back; what is there now is kept first as its own version."""
+        from . import versions
+        project = open_project(series, book)
+        require_idle(series)
+        return ok({"restored": versions.restore(project, body.name, body.only)})
 
     @router.get("/series/{series}/books/{book}/redo/{layer}")
     def redo_plan(series: str, book: str, layer: str):

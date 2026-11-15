@@ -354,6 +354,8 @@ def redo_layer(project: Project, layer: str, note: str = "", cascade: bool = Fal
     if downstream and not cascade:
         raise BookforgeError(f"redoing '{layer}' also resets {', '.join(downstream)}, which were built on it. Confirm that (--cascade) or redo a later layer instead")
     reset = [layer] + downstream
+    from . import versions
+    versions.keep(project, [f for l in reset for f in versions.layer_files(project, l)], f"before-redo-{layer}")  # a copy you can restore from the dashboard
     if project.config.git.commit_each_step:
         vcs.commit(project.root, f"{project.book}: before redoing {layer} (everything as it was)")
     for l in reset:

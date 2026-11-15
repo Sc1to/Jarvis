@@ -193,6 +193,11 @@ def parse_acts(text: str, project: Project, ledger=None) -> tuple[list[Act] | No
         problems.append(f"the chapter_count values add up to {total}; they must add up to between {clo} and {chi}")
     if ledger is not None and acts and len(acts) == len(raw):
         from ..validators import HARD, ledger as ledger_checks
+        plain_events = [e.model_dump() for e in ledger.events]
+        plain_acts = [a.model_dump() for a in acts]
+        if ledger_checks.repair_sizing(plain_acts, plain_events):  # a wrong sum in the model's reasoning is put right, not asked about
+            for a, fixed in zip(acts, plain_acts):
+                a.sizing_reason = fixed["sizing_reason"]
         findings = ledger_checks.check_acts([a.model_dump() for a in acts], [e.model_dump() for e in ledger.events], weight_per_chapter=project.config.ledger.weight_per_chapter,
                                              capacity_estimate=(ledger.capacity or {}).get("estimated_chapters"), tolerance=project.config.ledger.count_tolerance)
         problems += accepted.hard_lines(project, findings, "acts")

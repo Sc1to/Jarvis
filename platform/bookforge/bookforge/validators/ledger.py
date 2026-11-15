@@ -550,6 +550,24 @@ _WEIGHT_SAID = re.compile(r"weigh(?:s|ts|t)?\s*(?:of|is|at|about|:)?\s*(\d+)(?!\
 OVERRIDE = "override:"
 
 
+def repair_sizing(acts: list[dict], events: list[dict]) -> list[str]:
+    """The weight an act's sizing_reason quotes is a sum the system computes from the ledger, so a model's slip in adding it up is put right here, not
+    asked about: the number after "weight" is replaced by the real one. (Acts are changed in place; returns what was done.) The number of chapters it
+    names is the model's own reasoning, so that is left for the check, and is only a warning.)"""
+    notes = []
+    for a in acts:
+        reason = str(a.get("sizing_reason") or "")
+        head, sep, tail = reason.partition("[computed:")
+        if head.lower().lstrip().startswith(OVERRIDE):
+            continue
+        weight, _ = act_weight(a, events)
+        m = _WEIGHT_SAID.search(head)
+        if m and weight and int(m.group(1)) != weight:
+            a["sizing_reason"] = head[:m.start(1)] + str(weight) + head[m.end(1):] + sep + tail
+            notes.append(f"{a.get('id')}: its reason said weight {m.group(1)}; the ledger's weights for its events add up to {weight}, so the reason now says {weight}")
+    return notes
+
+
 def sizing_consistency(acts: list[dict], events: list[dict], stage: str = "acts") -> list[Finding]:
     """What an act says about its own size must agree with its numbers: the weight it quotes is the ledger's weight, the chapters it names are its
     chapter_count (one chapter of slack). The computed note the system appends is not the model's reasoning and is left out. An act that means to
@@ -570,8 +588,8 @@ def sizing_consistency(acts: list[dict], events: list[dict], stage: str = "acts"
         said_c = _CHAPTERS_SAID.search(reason)
         n = a.get("chapter_count")
         if said_c and n and abs(_said_number(said_c.group(1)) - int(n)) > 1:
-            out.append(hard(stage, "sizing_reason_mismatch", f"{a['id']}: its sizing_reason talks of {said_c.group(1)} chapters but chapter_count is {n}. "
-                            f"Make them agree, or start the reason with '{OVERRIDE}' and say why the count differs", [a["id"]], [reason[:140]]))
+            out.append(soft(stage, "sizing_reason_mismatch", f"{a['id']}: its sizing_reason talks of {said_c.group(1)} chapters but chapter_count is {n}. "
+                            f"The count is an estimate (the chapters stage decides the real number), so this is only a note: make them agree, or start the reason with '{OVERRIDE}'", [a["id"]], [reason[:140]]))
     return out
 
 
