@@ -41,6 +41,20 @@ function ItemCard({ item, base, locked, onDone }: { item: InboxItem; base: strin
       {!showForm && item.status === 'answered' && <p className="whitespace-pre-wrap break-words rounded-md bg-sky-50 p-2 text-sm">{item.answer}</p>}
       {!showForm && item.status === 'applied' && <p className="whitespace-pre-wrap break-words text-xs text-slate-600">Your answer: {item.answer}</p>}
       {!showForm && item.status === 'dismissed' && item.dismiss_reason && <p className="break-words text-xs text-slate-600">Reason: {item.dismiss_reason}</p>}
+      {item.proposal && showForm && (
+        <div className="space-y-2 rounded-md border border-violet-200 bg-violet-50/60 p-2">
+          <div className="flex flex-wrap items-center gap-1.5 text-xs">
+            <span className="rounded-full bg-violet-600 px-2 py-0.5 font-medium text-white">the tool suggests</span>
+            <span className="rounded-full bg-white px-2 py-0.5 text-violet-900">{item.proposal.label}</span>
+            <span className="text-slate-500">{item.proposal.mode === 'shadow' ? 'suggestion only: nothing is applied' : item.proposal.applied ? 'applied by the tool' : item.proposal.mode}</span>
+          </div>
+          <p className="break-words text-sm">{item.proposal.answer}</p>
+          {item.proposal.rationale && <p className="break-words text-xs text-slate-600">{item.proposal.rationale}</p>}
+          {item.proposal.sources.map((src, i) => <blockquote key={i} className="break-words border-l-4 border-violet-300 pl-3 text-xs italic text-slate-700">“{src.quote}” <a className="not-italic underline" href={src.url}>source</a></blockquote>)}
+          <button type="button" disabled={act.busy || locked} onClick={() => setText(item.proposal!.answer)}
+            className="min-h-11 rounded-md border border-violet-300 bg-white px-3 py-2 text-left text-sm font-medium active:bg-violet-100 disabled:opacity-50">Use suggestion</button>
+        </div>
+      )}
       {showForm && (
         <div className="space-y-2">
           {item.options.length > 0 && (
@@ -86,6 +100,7 @@ export default function InboxItems({ series, book, status, reload }: { series: s
   const inbox = useApi<InboxView>(`${base}/inbox`, status.job ? 5000 : undefined)
   const run = useJob(base)
   const skip = useAction()
+  const propose = useJob(base)
   const locked = status.job?.status === 'running' || run.busy
   const done = () => { inbox.reload(); reload() }
   const view = inbox.data
@@ -97,6 +112,8 @@ export default function InboxItems({ series, book, status, reload }: { series: s
   const canRun = !!view && blocking === 0 && view.summary.answered_waiting > 0
   const lr = view?.last_run
   const runAgain = async () => { await run.run('/run', {}); done() }
+  const getSuggestions = async () => { await propose.run('/inbox/propose', {}); done() }
+  const withoutProposal = active.filter((i) => i.status === 'open' && !i.proposal).length
   const waitingCheckpoints = Object.entries(CHECKPOINT_STAGES).filter(([cp, stages]) => status.checkpoints[cp] === 'waiting' && active.some((i) => stages.includes(i.stage) && i.status === 'open'))
   const approveAnyway = async (cp: string) => {
     const skipped = active.filter((i) => i.status === 'open' && CHECKPOINT_STAGES[cp].includes(i.stage))
@@ -121,6 +138,13 @@ export default function InboxItems({ series, book, status, reload }: { series: s
           </section>
         ))}
       </div>
+      {view && withoutProposal > 0 && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <Button disabled={!!locked || propose.busy} onClick={getSuggestions}>{propose.busy ? 'Working out suggestions…' : 'Get suggestions from the tool'}</Button>
+          <span className="text-xs text-slate-600">It suggests an answer for {withoutProposal} item(s); nothing is applied.</span>
+        </div>
+      )}
+      <ErrorBanner message={propose.error} onClose={propose.reset} />
       <ErrorBanner message={run.error} onClose={run.reset} />
       <ErrorBanner message={skip.error} onClose={skip.clear} />
       {canRun && (

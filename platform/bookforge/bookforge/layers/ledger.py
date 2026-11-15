@@ -57,6 +57,29 @@ def soft_finding(code: str, message: str) -> Finding:
     return _soft("ledger", code, message)
 
 
+def attempt_path(project):
+    return project.book_dir / "validation" / "ledger_attempt.json"
+
+
+def load_attempt_events(project) -> list[dict]:
+    """The events of the last ledger attempt that failed its checks (nothing is saved to ledger.yaml then), for the Inbox's suggestions."""
+    import json
+    try:
+        return json.loads(attempt_path(project).read_text(encoding="utf-8")).get("events", [])
+    except (OSError, ValueError):
+        return []
+
+
+def _remember_attempt(project, plain: list[dict] | None) -> None:
+    import json
+    path = attempt_path(project)
+    if plain is None:
+        path.unlink(missing_ok=True)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"events": plain}, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+
+
 def parse_ledger(text: str, synopsis: str, project, prior: Ledger | None = None) -> tuple[Ledger | None, list[str], list[Finding]]:
     """(ledger, hard problems, all findings). With `prior`, this is a revision: its synopsis events must come back unchanged."""
     data, error = load_reply_yaml(text)
@@ -118,6 +141,7 @@ def parse_ledger(text: str, synopsis: str, project, prior: Ledger | None = None)
     if cap["thin"] and not open_q:
         problems.append(f"the synopsis carries about {cap['estimated_chapters']} chapters of story ({cap['formula']}; minimum {cap['minimum_chapters']}). "
                         "Do not pad: add `questions` saying what is missing, each with proposed complications for the author to choose from")
+    _remember_attempt(project, plain if problems else None)
     if problems:
         return None, problems, findings
     ledger = Ledger(events=events, questions=questions, thin=cap["thin"], capacity=cap, revision=prior.revision if prior else 1, no_event_needed=waived or (prior.no_event_needed if prior else []))

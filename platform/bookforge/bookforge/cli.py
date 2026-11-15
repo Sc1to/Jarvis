@@ -169,6 +169,20 @@ def ledger_answer(path: Path = PathArg, question: str = typer.Argument(..., help
     typer.echo(f"Recorded your answer to {question}. Run again to revise the ledger.")
 
 
+@app.command("propose")
+def propose_cmd(path: Path = PathArg, book: str = BookOpt) -> None:
+    """Work out what the tool would answer for the open Inbox items (suggestions only; nothing is applied)."""
+    from . import resolve
+    try:
+        project = Project.open(path, book)
+        made = resolve.propose_all(project, build_client(project))
+    except BookforgeError as e:
+        _fail(e)
+    for item_id, p_ in made.items():
+        typer.echo(f"{item_id}: [{p_['outcome']}] {p_['answer']}")
+    typer.echo(f"{len(made)} proposal(s) in books/{project.book}/validation/proposals.json (shadow mode: nothing applied).")
+
+
 @app.command("ledger-dismiss")
 def ledger_dismiss(path: Path = PathArg, question: str = typer.Argument(..., help="Question id, like q1"),
                    reason: str = typer.Option("", "--reason", help="Why (optional); it counts toward the dismissal rate of that kind of question"),

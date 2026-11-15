@@ -50,3 +50,6 @@ Input: entity id, kind (character/place/object/group/concept), name, facts (at l
 - Items: ledger questions (`ledger.yaml`) and hard findings (`validation/<stage>.json`, minus the accepted ones). Blocking = an audit-type question that is open, or any open hard finding. `Ledger.last_run` is written by the ledger stage when it audits, extracts or revises.
 - Writes go through `ops.py` only; an answer is refused once `applied`; approving a checkpoint with open items for its stages needs `skip_open`.
 
+## Proposals (stage 1)
+- `resolve.propose_all` writes `validation/proposals.json` keyed by Inbox item id; a proposal never changes a ledger, cast or plan file in `shadow` mode. A model answer is used only if it names a change in the exact words of the sentence (or names none and is commentary).
+

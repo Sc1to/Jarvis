@@ -144,3 +144,39 @@ def test_a_run_that_stops_for_your_answers_sends_a_notification_that_counts_them
     p = json.loads(sent[0]["data"])
     assert p["title"] == "Bookforge: waiting for your answers" and "3 blocking item(s) in the Inbox" in p["body"] and "2 in ledger" in p["body"] and "1 in chapters" in p["body"]
     assert p["url"] == "/bookforge/#/series/series/b1/inbox"
+
+
+SENT_A = "Mara forces her way into the ferry and finds a data drive that names Corso as a smuggler."
+
+
+def _uncovered(book, sentence):
+    (book.book_dir / "synopsis.md").write_text("# Synopsis\n\nMara is a salvage pilot who finds a derelict ferry in the harbor yard.\n\n" + sentence + "\n", encoding="utf-8")
+    put_findings(book, "ledger", [finding("ledger", "sentence_not_covered", [sentence[:60]], message=f'this sentence of the synopsis is quoted by no event: "{sentence}".', evidence=(sentence[:140],))])
+    (book.book_dir / "validation" / "ledger_attempt.json").write_text(json.dumps({"events": [
+        dict(id="e2", text="Mara forces her way into the ferry", excerpt="Mara is a salvage pilot who finds a derelict ferry in the harbor yard", once_only=True, source="synopsis")]}), encoding="utf-8")
+
+
+def test_a_failed_ledger_attempt_leaves_its_events_for_the_suggestions(book, monkeypatch):
+    from conftest import RuleLLM
+    from bookforge import api
+    _uncovered(book, SENT_A)
+    monkeypatch.setattr(api, "make_llm", lambda project: RuleLLM([("A sentence of a story synopsis has no event", json.dumps(
+        {"outcome": "change", "change": "Mara finds a drive naming Corso as a smuggler", "words": "finds a data drive that names Corso", "reason": "a discovery"}))]))
+    job = finish(data(client.post(f"{B}/inbox/propose"), 202))
+    assert job["status"] == "done" and job["result"] == {"proposals": 1}
+    item = next(i for i in data(client.get(f"{B}/inbox"))["items"] if i["kind"] == "finding")
+    p = item["proposal"]
+    assert p["outcome"] == "widen" or p["outcome"] == "new_event"  # e2 tells "Mara forces her way into the ferry": which step answers depends on the words; either way a suggestion, not an action
+    assert p["applied"] is False and p["mode"] == "shadow" and p["answer"]
+
+
+def test_what_you_do_with_a_suggestion_is_recorded_and_counted(book, monkeypatch):
+    from bookforge import resolve
+    _uncovered(book, SENT_A)
+    resolve.save(book, {"finding:ledger:sentence_not_covered:" + SENT_A[:60]: {"outcome": "waive", "answer": "No event needed: description.", "rationale": "r", "label": "tool housekeeping"}})
+    item = data(client.get(f"{B}/inbox"))["items"][0]
+    assert item["proposal"]["outcome"] == "waive"
+    data(client.post(f"{B}/inbox/answer", json={"id": item["id"], "answer": "No event needed: description."}))  # the suggestion, as it was
+    data(client.post(f"{B}/inbox/answer", json={"id": item["id"], "answer": "Actually give it an event"}))  # edited
+    got = data(client.post(f"{B}/inbox/dismiss", json={"id": item["id"]}))  # overridden
+    assert got["proposal_stats"]["waive"] == {"proposed": 3, "accepted": 1, "edited": 1, "overridden": 1, "override_rate": 0.67}
