@@ -27,7 +27,7 @@ def load(project) -> dict:
     mode = data.get("mode") if data.get("mode") in MODES else "shadow"
     chosen = data.get("world_facts") if data.get("world_facts") in POLICIES else ""
     return {"mode": mode, "waived": [w for w in data.get("waived") or [] if isinstance(w, dict) and w.get("quote")], "undone": [str(u) for u in data.get("undone") or []],
-            "world_facts": chosen, "invention": "minor", "reenabled": {str(k): str(v) for k, v in (data.get("reenabled") or {}).items()}}
+            "accepted": [str(a) for a in data.get("accepted") or []], "world_facts": chosen, "invention": "minor", "reenabled": {str(k): str(v) for k, v in (data.get("reenabled") or {}).items()}}
 
 
 def save(project, data: dict) -> None:
@@ -36,6 +36,8 @@ def save(project, data: dict) -> None:
     out = {"mode": data["mode"], "waived": data["waived"], "undone": data["undone"]}
     if data.get("reenabled"):
         out["reenabled"] = data["reenabled"]
+    if data.get("accepted"):
+        out["accepted"] = data["accepted"]
     if data.get("world_facts"):
         out["world_facts"] = data["world_facts"]
     p.write_text(yaml.safe_dump(out, sort_keys=False, allow_unicode=True), encoding="utf-8")
@@ -51,10 +53,10 @@ def set_mode(project, mode: str) -> dict:
     return data
 
 
-def waive(project, quote: str, reason: str) -> None:
+def waive(project, quote: str, reason: str, decided_by: str = "tool") -> None:
     data = load(project)
     if not any(w["quote"] == quote for w in data["waived"]):
-        data["waived"].append({"quote": quote, "reason": reason, "decided_by": "tool"})
+        data["waived"].append({"quote": quote, "reason": reason, "decided_by": decided_by})
     save(project, data)
 
 
@@ -62,9 +64,25 @@ def take_back(project, quote: str) -> None:
     """Undo: the sentence is no longer waived, and the tool leaves it alone from now on."""
     data = load(project)
     data["waived"] = [w for w in data["waived"] if w["quote"] != quote]
+    data["accepted"] = [a for a in data["accepted"] if a != quote]
     if quote not in data["undone"]:
         data["undone"].append(quote)
     save(project, data)
+
+
+def accept_sentence(project, quote: str) -> None:
+    """You accepted the tool's suggestion to attach this sentence to an event (or to widen one): done at the next ledger parse, in any mode."""
+    data = load(project)
+    if quote not in data["accepted"]:
+        data["accepted"].append(quote)
+    data["undone"] = [u for u in data["undone"] if u != quote]
+    save(project, data)
+
+
+def is_accepted(data: dict, sentence: str) -> bool:
+    from .validators.ledger import _norm
+    n = _norm(sentence)
+    return any(_norm(a)[:60] and _norm(a)[:60] in n for a in data["accepted"])
 
 
 def is_undone(data: dict, sentence: str) -> bool:

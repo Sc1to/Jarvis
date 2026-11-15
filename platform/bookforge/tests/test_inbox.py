@@ -82,7 +82,7 @@ def test_a_hard_finding_of_any_stage_is_answered_with_an_instruction_or_dismisse
     note = (book.book_dir / "notes" / "acts.md").read_text()
     assert "sizing_reason_mismatch [b2.act1]: the count is right; fix the text" in note  # the next run of the stage reads it
     got = data(client.post(f"{B}/inbox/dismiss", json={"id": items[1]["id"], "reason": "she is the viewpoint, named by pronoun"}))
-    assert [(i["stage"], i["status"]) for i in got["items"]] == [("acts", "open"), ("scenes", "dismissed")] and got["summary"]["blocking"] == 1
+    assert [(i["stage"], i["status"]) for i in got["items"]] == [("acts", "answered"), ("scenes", "dismissed")] and got["summary"]["blocking"] == 0 and got["summary"]["needs_run"]  # your instruction waits for the next run: not blocking, and a run is due
     assert got["stats"]["pov_not_in_text"]["reasons"] == ["she is the viewpoint, named by pronoun"] and got["items"][1]["dismiss_reason"]
     error(client.post(f"{B}/inbox/answer", json={"id": "finding:nope", "answer": "x"}), 404)
     error(client.post(f"{B}/inbox/answer", json={"id": "nonsense", "answer": "x"}), 422)
@@ -109,7 +109,7 @@ def test_a_checkpoint_with_nothing_open_for_its_stages_approves_without_ceremony
 def test_the_inbox_page_runs_again_with_the_ordinary_run_and_answered_items_wait_for_it(book):
     seed(book, CONTRADICTION)
     data(client.post(f"{B}/inbox/answer", json={"id": "question:q1", "answer": "Keep A"}))
-    assert data(client.get(f"{B}/inbox"))["summary"] == {"open": 0, "blocking": 0, "answered_waiting": 1, "resolved": 0, "by_stage": {}}
+    assert data(client.get(f"{B}/inbox"))["summary"] == {"open": 0, "blocking": 0, "answered_waiting": 1, "resolved": 0, "needs_run": True, "by_stage": {}}
     job = data(client.post(f"{B}/run", json={"until": "ledger"}), 202)  # the button posts this: the same call as `run` on the command line
     assert finish(job)["status"] in ("done", "failed")
 
@@ -285,3 +285,39 @@ def test_auto_mode_and_re_enabling_an_outcome_work_from_the_page(book):
     assert list(got["demoted"]) == ["waive"] and got["demoted"]["waive"]["rate"] == 1.0
     back = data(client.post(f"{B}/inbox/reenable", json={"outcome": "waive"}))
     assert back["demoted"] == {}
+
+
+def test_answering_a_finding_shows_it_answered_not_blocking_and_a_run_is_due_until_the_run_reads_it(book):
+    from bookforge import inbox
+    put_findings(book, "ledger", [finding("ledger", "sentence_not_covered", ["A sentence that has no event of its own here"])])
+    first = data(client.get(f"{B}/inbox"))
+    assert first["summary"]["blocking"] == 1 and not first["summary"]["needs_run"]
+    got = data(client.post(f"{B}/inbox/answer", json={"id": first["items"][0]["id"], "answer": "Add an event for it"}))
+    item = got["items"][0]
+    assert (item["status"], item["answer"], item["blocking"]) == ("answered", "Add an event for it", False)
+    assert got["summary"]["blocking"] == 0 and got["summary"]["answered_waiting"] == 1 and got["summary"]["open"] == 0 and got["summary"]["needs_run"]
+    inbox.clear_answered(book)  # what a run does when it starts: it has read the instruction
+    assert data(client.get(f"{B}/inbox"))["items"][0]["status"] == "open"  # the finding still holds, so it is open again
+
+
+def test_a_stage_that_failed_needs_a_run_even_when_everything_was_dismissed(book):
+    from bookforge.state import Item
+    put_findings(book, "ledger", [finding("ledger", "sentence_not_covered", ["Another sentence with no event at all here"])])
+    item = data(client.get(f"{B}/inbox"))["items"][0]
+    book.state.set_layer_status("ledger", "flagged", note="still has problems")
+    book.save_state()
+    got = data(client.post(f"{B}/inbox/dismiss", json={"id": item["id"], "reason": "description"}))
+    assert got["summary"]["blocking"] == 0 and got["summary"]["needs_run"]  # nothing left to answer, but the stage has to run again
+
+
+def test_accepting_the_tools_suggestion_waives_the_sentence_without_writing_an_instruction(book):
+    from bookforge import answers, resolve
+    sentence = "The harbor is cold and grey in the early morning light over the yard."
+    _uncovered(book, sentence)
+    iid = "finding:ledger:sentence_not_covered:" + sentence[:60]
+    resolve.save(book, {iid: {"outcome": "waive", "answer": "No event needed: description.", "rationale": "it only describes", "label": "tool housekeeping", "quote": sentence, "applied": False, "mode": "shadow", "decided_by": "tool"}})
+    got = data(client.post(f"{B}/inbox/accept", json={"id": iid}))
+    item = got["items"][0]
+    assert item["status"] == "answered" and got["summary"]["blocking"] == 0 and got["summary"]["needs_run"] and got["proposal_stats"]["waive"]["accepted"] == 1
+    assert answers.load(book)["waived"] == [{"quote": sentence, "reason": "it only describes", "decided_by": "you"}]
+    error(client.post(f"{B}/inbox/accept", json={"id": "finding:nope"}), 400)

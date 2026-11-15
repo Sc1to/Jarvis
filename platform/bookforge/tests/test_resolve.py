@@ -85,3 +85,21 @@ def test_in_assist_mode_the_ledger_parse_attaches_elaborating_and_already_told_s
     answers.take_back(p, "Her cognitive decline has made her unpredictable, allowing her to outmaneuver Halloway's precise movements.")  # undo
     again, _ = uncovered(p)
     assert len(again) == 1  # the tool leaves what you took back alone
+
+
+def test_a_suggestion_you_accepted_attaches_the_sentence_even_in_shadow_mode(project_with_ledger):
+    from bookforge import answers
+    from bookforge.layers.ledger import parse_ledger
+    p = project_with_ledger
+    p.config.ledger.min_chapters = 1
+    sentence = "Her cognitive decline has made her unpredictable, allowing her to outmaneuver Halloway's precise movements."
+    syn = "Halloway attempts to destroy the drive, but Mara intervenes. " + sentence + "\n\nMara sails free with her debt cleared and the harbor behind her."
+    text = ("events:\n"
+            "  - {id: e2, text: Mara stops Halloway destroying the drive, excerpt: 'Halloway attempts to destroy the drive, but Mara intervenes.', once_only: true, after: [], kind: event, weight: 2, source: synopsis}\n"
+            "  - {id: e3, text: Mara sails free, excerpt: 'Mara sails free with her debt cleared and the harbor behind her.', once_only: true, after: [e2], kind: event, weight: 2, ending: true, source: synopsis}\n")
+    assert answers.load(p)["mode"] == "shadow"
+    led, _, findings = parse_ledger(text, syn, p)
+    assert any(f.code == "sentence_not_covered" for f in findings)  # shadow: nothing is attached on its own
+    answers.accept_sentence(p, sentence)
+    led, problems, findings = parse_ledger(text, syn, p)
+    assert not any(f.code == "sentence_not_covered" for f in findings) and led.events[0].also == [sentence]

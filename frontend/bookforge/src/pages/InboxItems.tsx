@@ -28,6 +28,7 @@ function ItemCard({ item, base, locked, onDone }: { item: InboxItem; base: strin
   const undo = async () => { if (await act.run(() => post(`${base}/inbox/undo`, { id: item.id }))) onDone() }
   const canEdit = item.status === 'answered' || (item.status === 'dismissed' && item.kind === 'question')
   const showForm = open || editing
+  const accept = async () => { if (await act.run(() => post(`${base}/inbox/accept`, { id: item.id }))) onDone() }
   const send = async () => { if (await act.run(() => post(`${base}/inbox/answer`, { id: item.id, answer: text.trim() }))) { setEditing(false); onDone() } }
   const dismiss = async () => { if (await act.run(() => post(`${base}/inbox/dismiss`, { id: item.id, reason: reason.trim() }))) { setDismissing(false); setReason(''); onDone() } }
   return (
@@ -61,8 +62,13 @@ function ItemCard({ item, base, locked, onDone }: { item: InboxItem; base: strin
           <p className="break-words text-sm">{item.proposal.answer}</p>
           {item.proposal.rationale && <p className="break-words text-xs text-slate-600">{item.proposal.rationale}</p>}
           {item.proposal.sources.map((src, i) => <blockquote key={i} className="break-words border-l-4 border-violet-300 pl-3 text-xs italic text-slate-700">“{src.quote}” <a className="not-italic underline" href={src.url}>source</a></blockquote>)}
-          <button type="button" disabled={act.busy || locked} onClick={() => setText(item.proposal!.answer)}
-            className="min-h-11 rounded-md border border-violet-300 bg-white px-3 py-2 text-left text-sm font-medium active:bg-violet-100 disabled:opacity-50">Use suggestion</button>
+          <div className="flex flex-wrap gap-2">
+            {['waive', 'attach', 'widen'].includes(item.proposal.outcome) && (
+              <Button kind="primary" disabled={act.busy || locked} onClick={accept}>Accept this suggestion</Button>
+            )}
+            <button type="button" disabled={act.busy || locked} onClick={() => setText(item.proposal!.answer)}
+              className="min-h-11 rounded-md border border-violet-300 bg-white px-3 py-2 text-left text-sm font-medium active:bg-violet-100 disabled:opacity-50">Write it as my answer</button>
+          </div>
         </div>
       )}
       {showForm && (
@@ -125,7 +131,7 @@ export default function InboxItems({ series, book, status, reload }: { series: s
   const changePolicy = async (world_facts: string) => { if (await setMode.run(() => api(`${base}/inbox/policy`, { method: 'PUT', body: { world_facts } }))) done() }
   const groups = STAGE_ORDER.map((st) => ({ stage: st, items: active.filter((i) => i.stage === st) })).filter((g) => g.items.length)
   const blocking = view?.summary.blocking ?? 0
-  const canRun = !!view && blocking === 0 && view.summary.answered_waiting > 0
+  const canRun = !!view && blocking === 0 && !!view.summary.needs_run
   const lr = view?.last_run
   const runAgain = async () => { await run.run('/run', {}); done() }
   const getSuggestions = async () => { await propose.run('/inbox/propose', {}); done() }
@@ -199,7 +205,7 @@ export default function InboxItems({ series, book, status, reload }: { series: s
       <ErrorBanner message={skip.error} onClose={skip.clear} />
       {canRun && (
         <div className="mt-3 rounded-md border border-sky-300 bg-sky-50 p-3">
-          <p className="mb-2 text-sm">{view!.summary.answered_waiting} answer(s) wait for a run. Running again works them into the ledger and checks it once more.</p>
+          <p className="mb-2 text-sm">{view!.summary.answered_waiting > 0 ? `${view!.summary.answered_waiting} answer(s) wait for a run. ` : 'Nothing is left to answer. '}Running again works your decisions in and checks the stage once more.</p>
           <Button kind="primary" disabled={!!locked} onClick={runAgain}>{run.busy ? 'Running…' : 'Run again'}</Button>
         </div>
       )}

@@ -182,7 +182,7 @@ export interface InboxProposal {
   outcome: string; answer: string; rationale: string; label: string; target: string; sources: { url: string; quote: string }[]
   size: string; confidence: string; decided_by: string; applied: boolean; mode: string; quote?: string
 }
-export interface InboxSummary { open: number; blocking: number; answered_waiting: number; resolved?: number; by_stage: Record<string, number> }
+export interface InboxSummary { open: number; blocking: number; answered_waiting: number; resolved?: number; needs_run?: boolean; by_stage: Record<string, number> }
 export interface InboxLastRun {
   at?: string; kind?: 'audit' | 'extract' | 'revise'; revision?: number; applied?: string[]; events?: number
   added?: { id: string; text: string; source: string }[]; revised?: { id: string; before: string; after: string }[]; new_questions?: string[]

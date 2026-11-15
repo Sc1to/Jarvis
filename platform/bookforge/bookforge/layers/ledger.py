@@ -93,8 +93,8 @@ def parse_ledger(text: str, synopsis: str, project, prior: Ledger | None = None)
     repairs += ledger_checks.repair_excerpts(data["events"], synopsis)  # an excerpt that is not a quotation points at the sentence it came from
     from .. import answers as answers_mod, resolve
     decided = answers_mod.load(project)
-    if decided["mode"] in ("assist", "auto"):  # housekeeping the tool may settle: a sentence an event already tells, or elaborates, is attached to it
-        repairs += resolve.repair_coverage(data["events"], synopsis, decided, set(resolve.demoted(project)))
+    if decided["mode"] in ("assist", "auto") or decided["accepted"]:  # housekeeping: a sentence an event already tells, or elaborates, is attached to it (in shadow mode only what you accepted)
+        repairs += resolve.repair_coverage(data["events"], synopsis, decided, set(resolve.demoted(project)) if decided["mode"] != "shadow" else set())
     events: list[StoryEvent] = []
     for i, raw in enumerate(data["events"]):
         try:
