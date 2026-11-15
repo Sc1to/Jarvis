@@ -29,6 +29,10 @@ class ModeBody(BaseModel):
     mode: str
 
 
+class PolicyBody(BaseModel):
+    world_facts: str = ""  # research | extrapolate | invent; empty: derive it from the realism statement
+
+
 class DismissItem(BaseModel):
     id: str
     reason: str = Field("", max_length=300)
@@ -37,7 +41,7 @@ class DismissItem(BaseModel):
 def register(router: APIRouter, h) -> None:
     def view(project) -> dict:
         return {"items": inbox.collect(project), "summary": inbox.summary(project), "last_run": inbox.last_run(project), "stats": inbox.dismissal_stats(project),
-                "proposal_stats": resolve.decision_stats(project), "mode": answers.load(project)["mode"]}
+                "proposal_stats": resolve.decision_stats(project), "mode": answers.load(project)["mode"], "policy": answers.policy_for(project)}
 
     @router.get(I)
     def inbox_list(series: str, book: str):
@@ -85,7 +89,7 @@ def register(router: APIRouter, h) -> None:
 
         def job() -> dict:
             project = Project.open(root, book)
-            made = resolve.propose_all(project, h.make_llm()(project))
+            made = resolve.propose_all(project, h.make_llm()(project), h.make_web(project) if h.make_web else None)
             return {"proposals": len(made)}
 
         return h.start_job(series, book, "propose", {}, job)
@@ -104,4 +108,12 @@ def register(router: APIRouter, h) -> None:
         project = h.open_project(series, book)
         h.require_idle(series)
         answers.set_mode(project, body.mode)
+        return h.ok(view(project))
+
+    @router.put(I + "/policy")
+    def inbox_policy(series: str, book: str, body: PolicyBody):
+        """How a fact about the world is answered: research (look it up), extrapolate (ground it and extend it) or invent. Empty: read it from the realism statement."""
+        project = h.open_project(series, book)
+        h.require_idle(series)
+        answers.set_policy(project, body.world_facts)
         return h.ok(view(project))

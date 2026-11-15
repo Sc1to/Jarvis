@@ -811,7 +811,7 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
         return ok(found)
 
     from . import api_inbox, api_workbench
-    api_inbox.register(router, api_workbench.Helpers(open_project, series_root, require_idle, start_job, lambda: make_llm, ok))
+    api_inbox.register(router, api_workbench.Helpers(open_project, series_root, require_idle, start_job, lambda: make_llm, ok, make_web=lambda p: make_web(p)))
     api_workbench.register(router, api_workbench.Helpers(open_project, series_root, require_idle, start_job, lambda: make_llm, ok, make_web=lambda p: make_web(p)))
 
     return router

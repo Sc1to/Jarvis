@@ -218,3 +218,29 @@ def test_shadow_mode_applies_nothing(book, monkeypatch):
     finish(data(client.post(f"{B}/inbox/propose"), 202))
     item = data(client.get(f"{B}/inbox"))["items"][0]
     assert item["status"] == "open" and item["blocking"] and not item["proposal"]["applied"] and answers.load(book)["waived"] == []
+
+
+def test_a_question_about_the_world_gets_a_proposal_by_the_books_policy_and_a_story_question_gets_none(book, monkeypatch):
+    from conftest import RuleLLM
+    from bookforge import api
+    world = dict(id="q1", question="The plasma cutter is used but never explained", why="no one says how it works", options=[], type="unestablished_object", quotes=["armed with a plasma cutter"])
+    story = dict(id="q2", question="Why does Mara yield to Corso?", why="nothing forces her", options=["She is in debt"], type="motive_gap", quotes=["Mara yields"])
+    seed(book, world, story)
+
+    def classify(messages):
+        return json.dumps({"kind": "world_fact", "fact": "How does a plasma cutter work?", "reason": "a technology"} if "plasma cutter" in messages[-1]["content"]
+                          else {"kind": "story_decision", "fact": "", "reason": "a choice"})
+    monkeypatch.setattr(api, "make_llm", lambda project: RuleLLM([("Decide whether answering it needs a fact about the WORLD", classify),
+                                                                  ("A story needs a fact about its world", json.dumps({"rule": "It cuts by a confined arc of ionised gas.", "basis": "real plasma cutters work this way",
+                                                                                                                        "changes_what_happens": False, "reason": "a routine"}))]))
+    got = data(client.put(f"{B}/inbox/policy", json={"world_facts": "extrapolate"}))
+    assert got["policy"] == {"world_facts": "extrapolate", "invention": "minor", "source": "you"}
+    error(client.put(f"{B}/inbox/policy", json={"world_facts": "dream"}), 400)
+    finish(data(client.post(f"{B}/inbox/propose"), 202))
+    items = {i["id"]: i for i in data(client.get(f"{B}/inbox"))["items"]}
+    p = items["question:q1"]["proposal"]
+    assert p["outcome"] == "world_fact" and p["label"] == "extrapolated" and "ionised gas" in p["answer"] and p["applied"] is False and p["size"] == "minor"
+    assert items["question:q2"]["proposal"] is None  # a story decision is yours: its suggested options are all there is
+    data(client.put(f"{B}/inbox/mode", json={"mode": "assist"}))
+    finish(data(client.post(f"{B}/inbox/propose"), 202))
+    assert not {i["id"]: i for i in data(client.get(f"{B}/inbox"))["items"]}["question:q1"]["proposal"]["applied"]  # even in assist mode a world fact is never applied by the tool
