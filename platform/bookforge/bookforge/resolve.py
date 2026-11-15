@@ -299,8 +299,8 @@ def repair_coverage(raw_events: list, synopsis: str, answered: dict, off: set | 
         if index is None:
             continue
         sentence = flat[index][1]
-        if answers_mod.is_undone(answered, sentence):
-            continue
+        if answers_mod.is_undone(answered, sentence) or (answered["mode"] == "shadow" and not answers_mod.is_accepted(answered, sentence)):
+            continue  # in shadow mode only what you accepted
         owner = None if "widen" in (off or ()) else covered_by_meaning(sentence, plain)
         if owner is None and "attach" not in (off or ()):
             owner = elaborates_previous(flat, index, plain)
@@ -308,6 +308,24 @@ def repair_coverage(raw_events: list, synopsis: str, answered: dict, off: set | 
             owner.setdefault("also", []).append(sentence)
             notes.append(f"{owner['id']} also tells \"{sentence[:70]}...\" (attached by the tool, mode assist)")
     return notes
+
+
+def accept(project, item_id: str) -> dict:
+    """You accept the tool's housekeeping suggestion for an item (waive the sentence, or attach it to the event): it is done now (a waiver) or at the next
+    ledger run (an attachment), in any mode. Counted as a suggestion you accepted. Anything else (a new event, a fact about the world) is answered in your words."""
+    from .errors import BookforgeError
+    proposals = load(project)
+    p = proposals.get(item_id)
+    if not p or p.get("outcome") not in HOUSEKEEPING or not p.get("quote"):
+        raise BookforgeError("that suggestion cannot be accepted as it is: answer it in your own words")
+    if p.get("outcome") == "waive":
+        answers_mod.waive(project, p["quote"], p.get("rationale", ""), decided_by="you")
+    else:
+        answers_mod.accept_sentence(project, p["quote"])
+    p["applied"], p["decided_by"], p["mode"] = True, "you", "accepted"
+    _log(project, item_id, p, "accepted")
+    save(project, proposals)
+    return p
 
 
 def undo(project, item_id: str) -> None:

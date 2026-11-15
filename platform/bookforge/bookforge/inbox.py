@@ -63,23 +63,61 @@ def collect(project, include_done: bool = True) -> list[dict]:
                 items.append(_finding_item(project, stage, f, known, status))
     from . import resolve
     suggestions = resolve.load(project)
+    told = load_answered(project)
     for it in items:
         it["proposal"] = suggestions.get(it["id"])
         if it["kind"] == "finding" and it["status"] == "open" and it["proposal"] and it["proposal"].get("applied"):
-            it["status"], it["blocking"] = "resolved", False  # settled by the tool: shown with its decision and an undo, not asked
+            if it["proposal"].get("decided_by") == "you":
+                it["status"], it["blocking"], it["answer"] = "answered", False, it["proposal"].get("answer", "")  # you accepted the suggestion: it waits for the next run
+            else:
+                it["status"], it["blocking"] = "resolved", False  # settled by the tool: shown with its decision and an undo, not asked
+        elif it["kind"] == "finding" and it["status"] == "open" and it["id"] in told:
+            it["status"], it["blocking"], it["answer"] = "answered", False, told[it["id"]]["text"]  # your instruction waits for the next run
     if not include_done:
-        items = [it for it in items if it["status"] != "resolved"]
+        items = [it for it in items if it["status"] == "open"]
     order = {s: i for i, s in enumerate(STAGES)}
     items.sort(key=lambda it: (not it["blocking"], it["status"] != "open", order.get(it["stage"], 9), it["id"]))
     return items
 
 
+def answered_path(project):
+    return project.book_dir / "validation" / "answered.json"
+
+
+def load_answered(project) -> dict:
+    import json
+    try:
+        data = json.loads(answered_path(project).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def mark_answered(project, item_id: str, text: str) -> None:
+    """Your instruction for a finding: kept until the next run reads it (then it is consumed, and the finding is open again if it still holds)."""
+    import json
+    from datetime import datetime, timezone
+    data = load_answered(project)
+    data[item_id] = {"text": text, "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    answered_path(project).parent.mkdir(parents=True, exist_ok=True)
+    answered_path(project).write_text(json.dumps(data, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def clear_answered(project) -> None:
+    answered_path(project).unlink(missing_ok=True)
+
+
 def summary(project) -> dict:
     items = collect(project, include_done=False)
     ledger = store.load_ledger(project)
-    answered = [q for q in (ledger.questions if ledger else []) if q.status == "answered" and not q.applied]
-    resolved = sum(1 for it in collect(project) if it["status"] == "resolved")
-    return {"open": len(items), "blocking": sum(it["blocking"] for it in items), "answered_waiting": len(answered), "resolved": resolved,
+    everything = collect(project)
+    waiting = sum(1 for it in everything if it["status"] == "answered")  # questions and findings you answered that the next run has not read yet
+    resolved = sum(1 for it in everything if it["status"] == "resolved")
+    blocking = sum(it["blocking"] for it in items)
+    flagged = [n for n in ("ledger", "acts", "chapters", "scenes") if project.state.layers[n].status in ("flagged", "failed")]
+    empty_ledger = bool(ledger is not None and not ledger.events and project.state.layers["ledger"].status != "accepted")
+    needs_run = blocking == 0 and bool(waiting or flagged or empty_ledger)  # a stage that failed, or an audit that is now answered, has to run again
+    return {"open": len(items), "blocking": blocking, "answered_waiting": waiting, "resolved": resolved, "needs_run": needs_run,
             "by_stage": {s: sum(it["stage"] == s for it in items) for s in STAGES if any(it["stage"] == s for it in items)}}
 
 

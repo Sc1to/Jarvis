@@ -29,6 +29,10 @@ class ModeBody(BaseModel):
     mode: str
 
 
+class AcceptItem(BaseModel):
+    id: str
+
+
 class ReenableBody(BaseModel):
     outcome: str
 
@@ -140,4 +144,12 @@ def register(router: APIRouter, h) -> None:
         project = h.open_project(series, book)
         h.require_idle(series)
         answers.reenable(project, body.outcome)
+        return h.ok(view(project))
+
+    @router.post(I + "/accept")
+    def inbox_accept(series: str, book: str, body: AcceptItem):
+        """Accept the tool's housekeeping suggestion as it is (waive the sentence, or attach it to the event it elaborates)."""
+        project = h.open_project(series, book)
+        h.require_idle(series)
+        resolve.accept(project, body.id)
         return h.ok(view(project))

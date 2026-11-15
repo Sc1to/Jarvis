@@ -75,6 +75,8 @@ def run_pipeline(project: Project, llm: LLMClient | None, web: WebClient | None,
                  handlers: dict | None = None) -> PipelineOutcome:
     """Run the layers; if every one is accepted assemble the book; always write the morning report."""
     started = now_stamp()
+    from . import inbox
+    inbox.clear_answered(project)  # the run reads your instructions: a finding that still holds afterwards is open again
     summary = run_layers(project, llm=llm, handlers=HANDLERS if handlers is None else handlers, until=until, web=web)
     out = PipelineOutcome(summary)
     if summary.stopped == "complete":
@@ -503,6 +505,9 @@ def answer_finding(project: Project, stage: str, code: str, items: list[str], te
     own, _, rest = note.partition(steering.CHECKS_MARKER)
     line = f"- About {code} [{', '.join(items[:4])}]: {text}"
     steering.write(project, layer, (own.strip() + "\n" if own.strip() else "") + line + (("\n\n" + steering.CHECKS_MARKER + rest) if rest else ""))
+    from . import inbox
+    from .validators import accepted
+    inbox.mark_answered(project, f"finding:{accepted.fingerprint(stage, code, items)}", text)
     return line
 
 
