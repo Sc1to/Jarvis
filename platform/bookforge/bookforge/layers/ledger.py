@@ -89,7 +89,10 @@ def parse_ledger(text: str, synopsis: str, project, prior: Ledger | None = None)
     if not isinstance(data, dict) or not isinstance(data.get("events"), list):
         return None, ["the top level must be a mapping with an 'events:' list"], []
     ledger_checks.resolve_references(data["events"])  # an event's text written where its id belongs is mapped back to the id
-    repairs = ledger_checks.repair_setups(data["events"])  # reversed or unmarked setup/payoff pairs are put right
+    from ..bible import repair as plan_repair
+    repairs = plan_repair.repair_unknown_after(data["events"])  # a dependency on an event that does not exist is dropped
+    repairs += plan_repair.repair_event_order(data["events"])  # an event listed before one it must follow is moved after it
+    repairs += ledger_checks.repair_setups(data["events"])  # reversed or unmarked setup/payoff pairs are put right
     repairs += ledger_checks.repair_excerpts(data["events"], synopsis)  # an excerpt that is not a quotation points at the sentence it came from
     from .. import answers as answers_mod, resolve
     decided = answers_mod.load(project)

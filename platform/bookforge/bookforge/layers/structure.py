@@ -362,6 +362,7 @@ def _build_chapters(ctx: StepContext, files: list[str]) -> str:
     ledger = store.active_ledger(project)
     done: list[Chapter] = []
     adopted: list[str] = []
+    slips: list[str] = []  # mechanical slips of the planner that were put right (bible/repair.py)
     first = 1
     for act in act_list:
         limit = act.chapter_count
@@ -401,6 +402,7 @@ def _build_chapters(ctx: StepContext, files: list[str]) -> str:
             if bundle.derived:  # minor complications join the ledger, so later acts and the validators see them
                 ledger = ledger.model_copy(update={"events": merge_derived(ledger.events, bundle.derived)})
         done += bundle.chapters
+        slips += bundle.repairs
         if ledger is not None:  # the act is as long as its events made it, not as the estimate or the ceiling said
             if len(bundle.chapters) != act.chapter_count:
                 log.info("chapters: %s took %d chapters (estimated %d)", act.id, len(bundle.chapters), act.chapter_count)
@@ -430,7 +432,8 @@ def _build_chapters(ctx: StepContext, files: list[str]) -> str:
     if adopted:
         log.info("chapters: %d place(s) added to the cast: %s", len(adopted), ", ".join(adopted))
     return (f"{len(done)} chapters, {len(constants.entities)} entities, {len(tracks)} tracks"
-            + (f"; added to the cast because chapters used them: {', '.join(adopted)}" if adopted else ""))
+            + (f"; added to the cast because chapters used them: {', '.join(adopted)}" if adopted else "")
+            + (f"; {len(slips)} mechanical slip(s) of the planner corrected ({'; '.join(slips[:3])}{'...' if len(slips) > 3 else ''})" if slips else ""))
 
 
 def _redo_pieces(project, layer: str, hard_findings, pieces_of_item, all_pieces: list[str]) -> list[str]:

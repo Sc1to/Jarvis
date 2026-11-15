@@ -46,14 +46,15 @@ def test_the_chapter_planner_is_told_what_is_done_and_what_is_reserved(project):
     assert "Reference only" in act1 and "must never become a beat" in act1
 
 
-def test_an_act_that_leaves_out_the_resolution_is_corrected_then_blocks(project):
+def test_acts_whose_events_interleave_are_corrected_then_block(project):
     p = project_ready(project)
     bad = copy.deepcopy(acts())
-    bad["acts"][1]["events"] = ["e3"]
+    bad["acts"][0]["events"] = ["e1", "e3"]  # the two acts take turns: judgement, not a slip
+    bad["acts"][1]["events"] = ["e2", "e4"]
     llm = RuleLLM([("Divide the book into ACTS by assigning", dump(bad))])
     summary = run(p, llm, HANDLERS, until="acts")
-    assert summary.stopped == "failed" and "resolution" in summary.detail and p.state.layers["acts"].status == "flagged"
-    assert any("event_in_no_act" in c["messages"][-1]["content"] for c in llm.calls[1:])  # the error was fed back
+    assert summary.stopped == "failed" and "acts_out_of_order" in summary.detail and p.state.layers["acts"].status == "flagged"
+    assert any("acts_out_of_order" in c["messages"][-1]["content"] for c in llm.calls[1:])  # the error was fed back
 
 
 def test_chapters_that_retell_an_event_or_use_a_reserved_one_are_refused(project):
@@ -108,7 +109,7 @@ def test_scenes_must_show_every_chapter_event_once_with_an_end_state(project):
     summary = run(p, llm, HANDLERS, until="scenes")
     assert summary.stopped in ("failed", "checkpoint") and (p.state.layers["scenes"].status == "flagged" or "chapter_event_not_in_scenes" in summary.detail)
     fed = " ".join(c["messages"][-1]["content"] for c in llm.calls)
-    assert "chapter_event_not_in_scenes" in fed and "scene_without_end_state" in fed
+    assert "scene_without_end_state" in fed and "chapter_event_not_in_scenes" not in fed  # the event left out of the scenes was put right; an empty end_state is for the model
 
 
 def test_flat_tension_across_the_book_blocks_the_chapters_layer(project):
