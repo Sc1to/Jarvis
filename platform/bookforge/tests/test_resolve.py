@@ -57,3 +57,31 @@ def test_every_sentence_of_the_real_inbox_can_be_located_from_its_shortened_quot
               "The corporation buried the ship and the evidence to protect its structural stability, prioritizing the asset over the lives of the workers."):
         i = resolve.locate(SYN, s[:140])
         assert i is not None and resolve._flat(SYN)[i][1].startswith(s[:40].replace("*", "*"))
+
+
+def test_in_assist_mode_the_ledger_parse_attaches_elaborating_and_already_told_sentences_but_not_what_you_took_back(project_with_ledger):
+    from bookforge import answers
+    from bookforge.layers.ledger import parse_ledger
+    import copy
+    p = project_with_ledger
+    p.config.ledger.min_chapters = 1
+    syn = ("Mara pries the hatch open and finds a data drive in the crust.\n\n"
+           "Halloway attempts to destroy the drive, but Mara intervenes. Her cognitive decline has made her unpredictable, allowing her to outmaneuver Halloway's precise movements.\n\n"
+           "Mara sails free with her debt cleared and the harbor behind her.")
+    text = ("events:\n"
+            "  - {id: e1, text: Mara finds a data drive, excerpt: 'Mara pries the hatch open and finds a data drive in the crust.', once_only: true, after: [], kind: event, weight: 2, source: synopsis}\n"
+            "  - {id: e2, text: Mara stops Halloway destroying the drive, excerpt: 'Halloway attempts to destroy the drive, but Mara intervenes.', once_only: true, after: [e1], kind: event, weight: 2, source: synopsis}\n"
+            "  - {id: e3, text: Mara sails free, excerpt: 'Mara sails free with her debt cleared and the harbor behind her.', once_only: true, after: [e2], kind: event, weight: 2, ending: true, source: synopsis}\n")
+
+    def uncovered(project):
+        led, problems, findings = parse_ledger(text, syn, project)
+        return [f for f in findings if f.code == "sentence_not_covered"], led
+    shadow, _ = uncovered(p)
+    assert len(shadow) == 1 and "cognitive decline" in shadow[0].message  # shadow mode: the tool changes nothing
+    answers.set_mode(p, "assist")
+    assisted, led = uncovered(p)
+    assert assisted == [] and led is not None
+    assert led.events[1].also == ["Her cognitive decline has made her unpredictable, allowing her to outmaneuver Halloway's precise movements."]
+    answers.take_back(p, "Her cognitive decline has made her unpredictable, allowing her to outmaneuver Halloway's precise movements.")  # undo
+    again, _ = uncovered(p)
+    assert len(again) == 1  # the tool leaves what you took back alone

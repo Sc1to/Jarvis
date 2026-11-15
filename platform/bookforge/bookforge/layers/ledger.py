@@ -91,6 +91,10 @@ def parse_ledger(text: str, synopsis: str, project, prior: Ledger | None = None)
     ledger_checks.resolve_references(data["events"])  # an event's text written where its id belongs is mapped back to the id
     repairs = ledger_checks.repair_setups(data["events"])  # reversed or unmarked setup/payoff pairs are put right
     repairs += ledger_checks.repair_excerpts(data["events"], synopsis)  # an excerpt that is not a quotation points at the sentence it came from
+    from .. import answers as answers_mod, resolve
+    decided = answers_mod.load(project)
+    if decided["mode"] == "assist":  # housekeeping the tool may settle: a sentence an event already tells, or elaborates, is attached to it
+        repairs += resolve.repair_coverage(data["events"], synopsis, decided)
     events: list[StoryEvent] = []
     for i, raw in enumerate(data["events"]):
         try:
@@ -122,6 +126,7 @@ def parse_ledger(text: str, synopsis: str, project, prior: Ledger | None = None)
         if any(q.id in {p.id for p in prior.questions} for q in questions):
             problems.append("new questions need new ids (continue the numbering); do not repeat existing questions")
     waived = [{"quote": str(q.get("quote", "")).strip(), "reason": str(q.get("reason", "")).strip()} for q in (data.get("no_event_needed") or []) if isinstance(q, dict) and str(q.get("quote", "")).strip()]
+    waived += [w for w in decided["waived"] if not any(w["quote"] == x["quote"] for x in waived)]  # what the tool waived and you did not take back
     findings = ledger_checks.check_ledger(plain, synopsis, no_event_needed=waived)
     problems += accepted.hard_lines(project, findings, "ledger")
     findings += [soft_finding("auto_repaired", note) for note in repairs + links]

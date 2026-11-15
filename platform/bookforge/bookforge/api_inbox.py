@@ -10,7 +10,7 @@ All writes call the same functions as the command line (bookforge/ops.py) and wa
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from . import inbox, ops, resolve
+from . import answers, inbox, ops, resolve
 from .project import Project
 
 I = "/series/{series}/books/{book}/inbox"
@@ -21,6 +21,14 @@ class AnswerItem(BaseModel):
     answer: str = Field(min_length=1, max_length=4000)
 
 
+class UndoItem(BaseModel):
+    id: str
+
+
+class ModeBody(BaseModel):
+    mode: str
+
+
 class DismissItem(BaseModel):
     id: str
     reason: str = Field("", max_length=300)
@@ -29,7 +37,7 @@ class DismissItem(BaseModel):
 def register(router: APIRouter, h) -> None:
     def view(project) -> dict:
         return {"items": inbox.collect(project), "summary": inbox.summary(project), "last_run": inbox.last_run(project), "stats": inbox.dismissal_stats(project),
-                "proposal_stats": resolve.decision_stats(project)}
+                "proposal_stats": resolve.decision_stats(project), "mode": answers.load(project)["mode"]}
 
     @router.get(I)
     def inbox_list(series: str, book: str):
@@ -81,3 +89,19 @@ def register(router: APIRouter, h) -> None:
             return {"proposals": len(made)}
 
         return h.start_job(series, book, "propose", {}, job)
+
+    @router.post(I + "/undo")
+    def inbox_undo(series: str, book: str, body: UndoItem):
+        """Take back something the tool decided: it is no longer applied and the tool leaves that sentence alone from now on."""
+        project = h.open_project(series, book)
+        h.require_idle(series)
+        resolve.undo(project, body.id)
+        return h.ok(view(project))
+
+    @router.put(I + "/mode")
+    def inbox_mode(series: str, book: str, body: ModeBody):
+        """shadow: the tool only suggests. assist: it also settles housekeeping (each decision marked, with undo)."""
+        project = h.open_project(series, book)
+        h.require_idle(series)
+        answers.set_mode(project, body.mode)
+        return h.ok(view(project))

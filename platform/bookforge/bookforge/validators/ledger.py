@@ -415,7 +415,8 @@ def _sentence_coverage(events: list[dict], paras: list[str], stage: str, no_even
     """Every sentence that carries plot is quoted by an event. A paragraph with one event would hide a dropped sentence; this does not.
     Pure description is accepted per finding (validation/accepted.json) rather than guessed at."""
     from .text import sentences
-    quotes = [(_norm(e["excerpt"]), set(content_stems(e["excerpt"]))) for e in events if e.get("source", "synopsis") == "synopsis" and (e.get("excerpt") or "").strip()]
+    quotes = [(_norm(x), set(content_stems(x))) for e in events if e.get("source", "synopsis") == "synopsis"
+              for x in [e.get("excerpt") or "", *(e.get("also") or [])] if str(x).strip()]
     out = []
     waived = [_norm(str(q.get("quote", "") if isinstance(q, dict) else q)) for q in no_event_needed]  # description and commentary the author or the model said needs no event
     for para in paras:
