@@ -35,6 +35,12 @@ def _projects(project: Project) -> list[Project]:
     return [project]
 
 
+def name_tokens(constants) -> set[str]:
+    """Lowercase name parts (longer than two letters) of every cast entry: what a name in someone's words is matched against."""
+    from .validators.ledger import _norm
+    return {t for e in constants.entities for t in _norm(e.name).split() if len(t) > 2}
+
+
 def usage(project: Project, entity_id: str) -> list[dict]:
     """Every place that refers to the entity: [{where, as}]."""
     out: list[dict] = []

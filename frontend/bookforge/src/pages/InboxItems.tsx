@@ -118,6 +118,8 @@ export default function InboxItems({ series, book, status, reload }: { series: s
   const active = items.filter((i) => i.status === 'open' || i.status === 'answered')
   const handled = items.filter((i) => i.status === 'applied' || i.status === 'dismissed')
   const byTool = items.filter((i) => i.status === 'resolved')
+  const canon = view?.canon ?? []
+  const undoCanon = useAction()
   const setMode = useAction()
   const changeMode = async (mode: string) => { if (await setMode.run(() => api(`${base}/inbox/mode`, { method: 'PUT', body: { mode } }))) done() }
   const changePolicy = async (world_facts: string) => { if (await setMode.run(() => api(`${base}/inbox/policy`, { method: 'PUT', body: { world_facts } }))) done() }
@@ -211,6 +213,22 @@ export default function InboxItems({ series, book, status, reload }: { series: s
           {(lr.new_questions?.length ?? 0) > 0 && <p className="text-xs text-amber-900">{lr.new_questions!.length} new item(s) above: {lr.new_questions!.join(', ')}.</p>}
           <p className="text-xs"><a className="underline" href={href({ series, book, tab: 'documents', id: 'ledger' })}>Open the ledger</a></p>
         </div>
+      )}
+      {canon.length > 0 && (
+        <details className="mt-3 text-sm" open>
+          <summary className="min-h-11 cursor-pointer py-2 text-slate-700">What you invented ({canon.length}) — kept as canon</summary>
+          <p className="mb-2 text-xs text-slate-600">Recorded in your own words: a cast entry for a person or thing, a rule for how the world works. A scene that contradicts one is revised, like a contradicted fact.</p>
+          <ul className="space-y-2">
+            {canon.map((c) => (
+              <li key={c.id} className="space-y-1 rounded-md border border-emerald-200 bg-emerald-50/50 p-2 text-sm">
+                <p className="break-words">{c.entities.length > 0 && <span className="font-medium">Cast: {c.entities.join(', ')}. </span>}{c.needs.length > 0 && <span>{c.needs.length} rule{c.needs.length === 1 ? '' : 's'} about the world.</span>}</p>
+                <blockquote className="break-words border-l-4 border-emerald-300 pl-3 text-xs italic text-slate-700">“{c.answer}”</blockquote>
+                <Button disabled={undoCanon.busy || !!locked} onClick={async () => { if (await undoCanon.run(() => post(`${base}/inbox/canon/undo`, { id: c.id }))) done() }}>Undo</Button>
+              </li>
+            ))}
+          </ul>
+          <ErrorBanner message={undoCanon.error} onClose={undoCanon.clear} />
+        </details>
       )}
       {byTool.length > 0 && (
         <details className="mt-3 text-sm" open>

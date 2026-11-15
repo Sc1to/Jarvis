@@ -244,3 +244,31 @@ def test_a_question_about_the_world_gets_a_proposal_by_the_books_policy_and_a_st
     data(client.put(f"{B}/inbox/mode", json={"mode": "assist"}))
     finish(data(client.post(f"{B}/inbox/propose"), 202))
     assert not {i["id"]: i for i in data(client.get(f"{B}/inbox"))["items"]}["question:q1"]["proposal"]["applied"]  # even in assist mode a world fact is never applied by the tool
+
+
+def test_an_answer_that_invents_something_is_recorded_as_canon_and_can_be_undone_from_the_page(book, monkeypatch):
+    from conftest import RuleLLM
+    from bookforge import api
+    from bookforge.research.notes import approved_decisions
+    seed(book, CONTRADICTION)
+    reply = json.dumps({"entities": [{"name": "Ash Token", "kind": "object", "facts": ["a steel token Eli copies the data onto"]}], "rules": ["Dockers use the Ash Token to open the lock-ups."]})
+    monkeypatch.setattr(api, "make_llm", lambda project: RuleLLM([("An author answered a question about their story", reply)]))
+    answer = "Eli copies the data onto a steel token called the Ash Token. Dockers use the Ash Token to open the lock-ups."
+    got = data(client.post(f"{B}/inbox/answer", json={"id": "question:q1", "answer": answer}))
+    [entry] = got["canon"]
+    assert entry["entities"] == ["ash-token"] and entry["item"] == "question:q1" and len(approved_decisions(book)) == 1
+    assert "ash-token" in {e.id for e in store.load_constants(book).entities}
+    gone = data(client.post(f"{B}/inbox/canon/undo", json={"id": entry["id"]}))
+    assert gone["canon"] == [] and "ash-token" not in {e.id for e in store.load_constants(book).entities} and approved_decisions(book) == []
+    error(client.post(f"{B}/inbox/canon/undo", json={"id": entry["id"]}), 400)  # already undone
+
+
+def test_an_answer_with_no_model_at_hand_is_still_recorded(book, monkeypatch):
+    from bookforge import api
+
+    def no_model(project):
+        raise RuntimeError("the model server is gone")
+    monkeypatch.setattr(api, "make_llm", no_model)
+    seed(book, CONTRADICTION)
+    got = data(client.post(f"{B}/inbox/answer", json={"id": "question:q1", "answer": "Keep A"}))
+    assert got["items"][0]["status"] == "answered" and got["canon"] == []
