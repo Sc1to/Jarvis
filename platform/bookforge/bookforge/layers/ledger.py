@@ -93,8 +93,8 @@ def parse_ledger(text: str, synopsis: str, project, prior: Ledger | None = None)
     repairs += ledger_checks.repair_excerpts(data["events"], synopsis)  # an excerpt that is not a quotation points at the sentence it came from
     from .. import answers as answers_mod, resolve
     decided = answers_mod.load(project)
-    if decided["mode"] == "assist":  # housekeeping the tool may settle: a sentence an event already tells, or elaborates, is attached to it
-        repairs += resolve.repair_coverage(data["events"], synopsis, decided)
+    if decided["mode"] in ("assist", "auto"):  # housekeeping the tool may settle: a sentence an event already tells, or elaborates, is attached to it
+        repairs += resolve.repair_coverage(data["events"], synopsis, decided, set(resolve.demoted(project)))
     events: list[StoryEvent] = []
     for i, raw in enumerate(data["events"]):
         try:
@@ -253,7 +253,7 @@ def answer_question(project, question_id: str, answer: str) -> Ledger:
         raise BookforgeError("the answer is empty")
     if q.applied:
         raise BookforgeError(f"{question_id} was already worked into the ledger by a run; it can no longer be changed here (edit ledger.yaml, or answer a new question)")
-    q.answer, q.status, q.applied, q.dismiss_reason = answer.strip(), "answered", False, ""
+    q.answer, q.status, q.applied, q.dismiss_reason, q.decided_by = answer.strip(), "answered", False, "", ""
     store.save_ledger(project, ledger)
     return ledger
 

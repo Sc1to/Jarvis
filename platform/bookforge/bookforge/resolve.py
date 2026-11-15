@@ -40,7 +40,8 @@ class Proposal:
     decided_by: str = "tool"
     applied: bool = False
     mode: str = "shadow"
-    quote: str = ""  # the synopsis sentence it concerns, in full
+    quote: str = ""  # the synopsis sentence it concerns, in full (a world fact: the fact to establish)
+    need: str = ""  # the need recorded when the tool answered a fact about the world itself
 
 
 def path(project):
@@ -228,8 +229,11 @@ def propose_all(project, llm=None, web=None, research_fn=None) -> dict:
         proposal = propose_coverage(project, synopsis, fragment, events, ask if llm is not None else None)
         if proposal:
             known[item["id"]] = asdict(proposal)
-    if mode == "assist":
-        apply_housekeeping(project, known, answered)
+    if mode in ("assist", "auto"):
+        off = set(demoted(project))
+        apply_housekeeping(project, known, answered, off)
+        if mode == "auto":
+            apply_world_facts(project, known, answered, off)
     save(project, known)
     return known
 
@@ -237,12 +241,12 @@ def propose_all(project, llm=None, web=None, research_fn=None) -> dict:
 HOUSEKEEPING = ("widen", "attach", "waive")  # outcomes the tool may settle itself in assist mode: they change no event and add none
 
 
-def apply_housekeeping(project, proposals: dict, answered: dict) -> int:
+def apply_housekeeping(project, proposals: dict, answered: dict, off: set | None = None) -> int:
     """In assist mode: settle the housekeeping proposals (a sentence attached to the event it elaborates, description waived) and mark them applied.
     A new event, anything else the tool proposes, and every sentence you took back stay yours. Returns how many were applied."""
     n = 0
     for item_id, p in proposals.items():
-        if p.get("applied") or p.get("outcome") not in HOUSEKEEPING or not p.get("quote") or answers_mod.is_undone(answered, p["quote"]):
+        if p.get("applied") or p.get("outcome") not in HOUSEKEEPING or not p.get("quote") or answers_mod.is_undone(answered, p["quote"]) or p["outcome"] in (off or ()):
             continue
         if p["outcome"] == "waive":
             answers_mod.waive(project, p["quote"], p.get("rationale", ""))
@@ -252,7 +256,38 @@ def apply_housekeeping(project, proposals: dict, answered: dict) -> int:
     return n
 
 
-def repair_coverage(raw_events: list, synopsis: str, answered: dict) -> list[str]:
+RULE_LABELS = ("extrapolated", "invented", "invented: no source found")  # a rule of this world the tool may record; a source-backed answer stays a suggestion
+
+
+def apply_world_facts(project, proposals: dict, answered: dict, off: set | None = None) -> int:
+    """In auto mode: a minor fact about the world the tool proposed as a rule is recorded as a decision of the tool's (an approved need, not canon: it only warns)
+    and the question is answered with it, marked as the tool's and undoable. A major answer, a story decision, a consistency problem and a source-backed answer are
+    never applied here. Returns how many were applied."""
+    from .bible import store
+    from .research.notes import MAX_RULE_CHARS_STORED, stores_for
+    ledger = store.load_ledger(project)
+    if ledger is None:
+        return 0
+    n = 0
+    for item_id, p in proposals.items():
+        if p.get("applied") or p.get("outcome") != "world_fact" or p.get("size") != "minor" or p.get("label") not in RULE_LABELS or "world_fact" in (off or ()) \
+                or answers_mod.is_undone(answered, p.get("quote", "")) or not item_id.startswith("question:"):
+            continue
+        q = next((x for x in ledger.questions if x.id == item_id.split(":", 1)[1] and x.status == "open"), None)
+        if q is None:
+            continue
+        need = stores_for(project)["book"].add_need(layer="ledger", question=(p.get("quote") or q.question)[:200], stance="extrapolate" if p["label"] == "extrapolated" else "invent",
+                                                    reason=f"decided by the tool ({p['label']})", rule=p["answer"][:MAX_RULE_CHARS_STORED], status="approved", decided_by="tool", canon=False, applies_to=[])
+        q.status, q.answer, q.decided_by, q.applied = "answered", p["answer"], "tool", False
+        p["applied"], p["mode"], p["need"] = True, "auto", need.id
+        _log(project, item_id, p, "applied")
+        n += 1
+    if n:
+        store.save_ledger(project, ledger)
+    return n
+
+
+def repair_coverage(raw_events: list, synopsis: str, answered: dict, off: set | None = None) -> list[str]:
     """In assist mode, at the ledger parse: every plot sentence no event quotes that an event already tells by meaning, or that elaborates the event
     before it, is attached to that event (`also`). Waived sentences and sentences you took back are left alone. Events are changed in place; returns what was done."""
     from .validators.ledger import _sentence_coverage, paragraphs
@@ -266,7 +301,9 @@ def repair_coverage(raw_events: list, synopsis: str, answered: dict) -> list[str
         sentence = flat[index][1]
         if answers_mod.is_undone(answered, sentence):
             continue
-        owner = covered_by_meaning(sentence, plain) or elaborates_previous(flat, index, plain)
+        owner = None if "widen" in (off or ()) else covered_by_meaning(sentence, plain)
+        if owner is None and "attach" not in (off or ()):
+            owner = elaborates_previous(flat, index, plain)
         if owner is not None:
             owner.setdefault("also", []).append(sentence)
             notes.append(f"{owner['id']} also tells \"{sentence[:70]}...\" (attached by the tool, mode assist)")
@@ -281,6 +318,20 @@ def undo(project, item_id: str) -> None:
         from .errors import BookforgeError
         raise BookforgeError("the tool has not decided that item")
     answers_mod.take_back(project, p.get("quote", ""))
+    if p.get("outcome") == "world_fact" and item_id.startswith("question:"):  # the rule is rejected and the question is yours again
+        from .bible import store
+        from .research.notes import stores_for
+        book_store = stores_for(project)["book"]
+        for need in book_store.needs():
+            if need.id == p.get("need"):
+                need.status, need.decided_by = "rejected", "author"
+                book_store.save_need(need)
+        ledger = store.load_ledger(project)
+        q = next((x for x in (ledger.questions if ledger else []) if x.id == item_id.split(":", 1)[1] and x.decided_by == "tool"), None)
+        if q is not None:
+            q.status, q.answer, q.decided_by = "open", "", ""
+            store.save_ledger(project, ledger)
+        p["need"] = ""
     p["applied"] = False
     _log(project, item_id, p, "undone")
     save(project, proposals)
@@ -396,13 +447,64 @@ def _log(project, item_id: str, proposal: dict, verdict: str) -> None:
                             "mode": proposal.get("mode", "shadow"), "verdict": verdict}, ensure_ascii=False) + "\n")
 
 
-def decision_stats(project) -> dict[str, dict]:
-    """Per outcome: how often the tool's proposal was accepted, edited or overridden."""
-    out: dict[str, dict] = {}
+def _decisions(project) -> list[dict]:
     try:
         lines = path(project).with_name("decisions.jsonl").read_text(encoding="utf-8").splitlines()
     except OSError:
-        return out
+        return []
+    out = []
+    for line in lines:
+        try:
+            out.append(json.loads(line))
+        except ValueError:
+            continue
+    return out
+
+
+def _rate(row: dict) -> float | None:
+    """Of the decisions made about an outcome (you accepted, edited or overrode a suggestion, or the tool applied it), the share you did not agree with
+    (edited, overrode, or undid). An application you never undid counts as agreement."""
+    total = row["accepted"] + row["edited"] + row["overridden"] + row["applied"]
+    return round(min(1.0, (row["edited"] + row["overridden"] + row["undone"]) / total), 2) if total else None
+
+
+def decision_stats(project) -> dict[str, dict]:
+    """Per outcome: how often the tool's proposal was accepted, edited, overridden, applied by the tool and undone by you."""
+    out: dict[str, dict] = {}
+    for rec in _decisions(project):
+        row = out.setdefault(rec.get("outcome", "?"), {"proposed": 0, "accepted": 0, "edited": 0, "overridden": 0, "applied": 0, "undone": 0})
+        verdict = rec.get("verdict", "overridden")
+        row[verdict] = row.get(verdict, 0) + 1
+        if verdict in ("accepted", "edited", "overridden"):
+            row["proposed"] += 1
+    for row in out.values():
+        row["override_rate"] = _rate(row)
+    return out
+
+
+DEMOTE_WINDOW = 10  # the last decisions about an outcome that count
+DEMOTE_MIN = 5  # fewer than this and there is nothing to judge yet
+DEMOTE_RATE = 0.4  # more of them than this disagreed with: the tool stops deciding that outcome
+
+
+def demoted(project) -> dict[str, dict]:
+    """Outcomes the tool has stopped deciding on its own because you keep overriding it: {outcome: {rate, of, since}}. Judged over the last DEMOTE_WINDOW
+    decisions since you last re-enabled the outcome. They are suggestions again until you switch them back on."""
+    since = answers_mod.load(project)["reenabled"]
+    by: dict[str, list[dict]] = {}
+    for rec in _decisions(project):
+        if rec.get("outcome") and rec.get("at", "") > since.get(rec["outcome"], ""):
+            by.setdefault(rec["outcome"], []).append(rec)
+    out = {}
+    for outcome, recs in by.items():
+        recent = [r for r in recs if r.get("verdict") in ("accepted", "edited", "overridden", "applied", "undone")][-DEMOTE_WINDOW:]
+        row = {"accepted": 0, "edited": 0, "overridden": 0, "applied": 0, "undone": 0}
+        for r in recent:
+            row[r["verdict"]] += 1
+        rate = _rate(row)
+        if rate is not None and len(recent) >= DEMOTE_MIN and rate > DEMOTE_RATE:
+            out[outcome] = {"rate": rate, "of": len(recent), "since": since.get(outcome, "")}
+    return out
     for line in lines:
         try:
             rec = json.loads(line)

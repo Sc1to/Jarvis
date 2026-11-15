@@ -144,6 +144,19 @@ def build_report(project: Project, since: str | None = None, today: str | None =
                + (f", {t['web_calls']} web calls" if t["web_calls"] else ""))
     out.append("")
 
+    # ── what the tool decided
+    from . import answers as answers_mod, resolve
+    stats = resolve.decision_stats(project)
+    if stats:
+        off = resolve.demoted(project)
+        out += ["## The tool's decisions", "", f"Mode: {answers_mod.load(project)['mode']}. The tool stops deciding an outcome when you disagree with more than "
+                f"{int(resolve.DEMOTE_RATE * 100)}% of its last {resolve.DEMOTE_WINDOW} decisions about it."]
+        for outcome, r in sorted(stats.items()):
+            out.append(f"- {outcome}: {r['applied']} applied, {r['accepted']} suggestions accepted, {r['edited']} edited, {r['overridden']} overridden, {r['undone']} undone"
+                       + (f" (disagreement {int((r['override_rate'] or 0) * 100)}%)" if r["override_rate"] is not None else "")
+                       + (f". **Switched off: you disagreed with {int(off[outcome]['rate'] * 100)}% of the last {off[outcome]['of']}; it only suggests until you re-enable it in the Inbox.**" if outcome in off else ""))
+        out.append("")
+
     # ── needs you
     needs: list[str] = []
     for cp in CHECKPOINTS:

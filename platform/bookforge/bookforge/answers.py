@@ -1,7 +1,8 @@
 """How much the tool may decide for you, per book: books/<book>/answers.yaml.
 
 mode: `shadow` (the default: the tool only suggests), `assist` (it also settles housekeeping: a sentence that only elaborates an event is attached to
-that event, description is waived; each decision is marked as the tool's and can be undone). Nothing the tool decides changes what happens in the story:
+that event, description is waived; each decision is marked as the tool's and can be undone), `auto` (it also answers a minor fact about the world by the book's
+policy, recorded as a decision of the tool's: a rule you can undo). An outcome you keep overriding is switched off by itself (see `demoted` in resolve.py). Nothing the tool decides changes what happens in the story:
 a new event, a cast entry, a contradiction or a cast conflict is always yours.
 
 waived: synopsis sentences the tool decided need no event (quote, reason, decided_by).
@@ -10,7 +11,7 @@ undone: sentences you took back from the tool; it never decides those again.
 
 import yaml
 
-MODES = ("shadow", "assist")
+MODES = ("shadow", "assist", "auto")
 POLICIES = ("research", "extrapolate", "invent")  # how a fact about the world is answered: look it up, ground it and extend it, or invent it
 
 
@@ -26,13 +27,15 @@ def load(project) -> dict:
     mode = data.get("mode") if data.get("mode") in MODES else "shadow"
     chosen = data.get("world_facts") if data.get("world_facts") in POLICIES else ""
     return {"mode": mode, "waived": [w for w in data.get("waived") or [] if isinstance(w, dict) and w.get("quote")], "undone": [str(u) for u in data.get("undone") or []],
-            "world_facts": chosen, "invention": "minor"}
+            "world_facts": chosen, "invention": "minor", "reenabled": {str(k): str(v) for k, v in (data.get("reenabled") or {}).items()}}
 
 
 def save(project, data: dict) -> None:
     p = path(project)
     p.parent.mkdir(parents=True, exist_ok=True)
     out = {"mode": data["mode"], "waived": data["waived"], "undone": data["undone"]}
+    if data.get("reenabled"):
+        out["reenabled"] = data["reenabled"]
     if data.get("world_facts"):
         out["world_facts"] = data["world_facts"]
     p.write_text(yaml.safe_dump(out, sort_keys=False, allow_unicode=True), encoding="utf-8")
@@ -104,3 +107,11 @@ def policy_for(project) -> dict:
         return {"world_facts": data["world_facts"], "invention": "minor", "source": "you"}
     policy, why = derive_policy(realism_setting(project))
     return {"world_facts": policy, "invention": "minor", "source": why}
+
+
+def reenable(project, outcome: str) -> None:
+    """Switch an outcome the tool had stopped deciding back on: only decisions from now on count against it."""
+    from datetime import datetime, timezone
+    data = load(project)
+    data["reenabled"][outcome] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    save(project, data)

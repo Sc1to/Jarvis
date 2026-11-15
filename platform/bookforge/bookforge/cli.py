@@ -180,6 +180,24 @@ def ledger_answer(path: Path = PathArg, question: str = typer.Argument(..., help
         typer.echo(f"  canon {e['id']}: added {', '.join(e['entities']) or 'no cast entry'}" + (f" and {len(e['needs'])} rule(s)" if e["needs"] else "") + " (undo in the Inbox)")
 
 
+@app.command("decisions")
+def decisions_cmd(path: Path = PathArg, book: str = BookOpt) -> None:
+    """How the tool's suggestions and decisions went: per outcome, what you accepted, edited, overrode or undid, and what it stopped deciding."""
+    from . import answers as answers_mod, resolve
+    try:
+        project = Project.open(path, book)
+    except BookforgeError as e:
+        _fail(e)
+    stats, off = resolve.decision_stats(project), resolve.demoted(project)
+    typer.echo(f"mode: {answers_mod.load(project)['mode']}")
+    if not stats:
+        typer.echo("no decisions recorded yet")
+    for outcome, r in sorted(stats.items()):
+        rate = "n/a" if r["override_rate"] is None else f"{int(r['override_rate'] * 100)}%"
+        typer.echo(f"{outcome:<10} applied {r['applied']:>3}  accepted {r['accepted']:>3}  edited {r['edited']:>3}  overridden {r['overridden']:>3}  undone {r['undone']:>3}  disagreement {rate}"
+                   + ("  SWITCHED OFF" if outcome in off else ""))
+
+
 @app.command("propose")
 def propose_cmd(path: Path = PathArg, book: str = BookOpt) -> None:
     """Work out what the tool would answer for the open Inbox items (suggestions only; nothing is applied)."""
