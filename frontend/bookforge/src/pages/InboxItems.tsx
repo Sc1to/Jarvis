@@ -120,6 +120,7 @@ export default function InboxItems({ series, book, status, reload }: { series: s
   const byTool = items.filter((i) => i.status === 'resolved')
   const setMode = useAction()
   const changeMode = async (mode: string) => { if (await setMode.run(() => api(`${base}/inbox/mode`, { method: 'PUT', body: { mode } }))) done() }
+  const changePolicy = async (world_facts: string) => { if (await setMode.run(() => api(`${base}/inbox/policy`, { method: 'PUT', body: { world_facts } }))) done() }
   const groups = STAGE_ORDER.map((st) => ({ stage: st, items: active.filter((i) => i.stage === st) })).filter((g) => g.items.length)
   const blocking = view?.summary.blocking ?? 0
   const canRun = !!view && blocking === 0 && view.summary.answered_waiting > 0
@@ -146,6 +147,18 @@ export default function InboxItems({ series, book, status, reload }: { series: s
             <option value="assist">Settle housekeeping (with undo)</option>
           </select>
           <span className="mt-1 block font-normal text-slate-600">Housekeeping means attaching a sentence to the event it elaborates and waiving description. It never adds an event, a character or a decision.</span>
+        </label>
+      )}
+      {view?.policy && (
+        <label className="mb-3 block text-xs font-medium text-slate-700">How a fact about the world is answered
+          <select value={view.policy.source === 'you' ? view.policy.world_facts : ''} onChange={(e) => changePolicy(e.target.value)} disabled={!!locked || setMode.busy}
+            className="mt-1 block min-h-11 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-normal">
+            <option value="">From the realism statement: {view.policy.world_facts}</option>
+            <option value="research">Look it up (historical)</option>
+            <option value="extrapolate">Ground it, then extend it (hard sci-fi)</option>
+            <option value="invent">Invent it (soft sci-fi, fantasy)</option>
+          </select>
+          <span className="mt-1 block font-normal text-slate-600">{view.policy.source === 'you' ? 'Set by you.' : `Now ${view.policy.world_facts}: ${view.policy.source}.`} The tool proposes minor details only; what happens in the story stays yours.</span>
         </label>
       )}
       <ErrorBanner message={setMode.error} onClose={setMode.clear} />

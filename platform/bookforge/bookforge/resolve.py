@@ -14,6 +14,7 @@ import json
 import logging
 import re
 from dataclasses import asdict, dataclass, field
+from urllib.parse import urlparse
 
 from . import answers as answers_mod
 from .validators.ledger import _norm
@@ -174,7 +175,7 @@ def _propose_coverage(project, synopsis: str, sentence_fragment: str, events: li
     return Proposal("new_event", f"Add an event: {change}", f"It changes the story: {change}" + (f" ({reason})" if reason else ""), "proposal", confidence="medium")
 
 
-def propose_all(project, llm=None) -> dict:
+def propose_all(project, llm=None, web=None, research_fn=None) -> dict:
     """Proposals for every open coverage finding of the ledger stage that has none yet. Returns {item id: proposal} (also saved).
     Never raises: a missing synopsis, a failed model call or an odd finding only means no proposal for that item."""
     from . import inbox
@@ -193,19 +194,35 @@ def propose_all(project, llm=None) -> dict:
     answered = answers_mod.load(project)
     mode = answered["mode"]
 
-    def ask(**slots) -> dict:
+    def ask_template(template: str, **slots) -> dict:
         if llm is None:
             return {}
         try:
             text = llm.complete(project.config.layers["ledger"].model, [{"role": "system", "content": render("system", project.root, **inbox_values(project))},
-                                                                         {"role": "user", "content": render("coverage_resolve", project.root, **slots)}], max_tokens=500)
+                                                                         {"role": "user", "content": render(template, project.root, **slots)}], max_tokens=600)
         except Exception as e:  # a failed call is no proposal
-            log.info("coverage proposal: model call failed (%s)", e)
+            log.info("proposal: model call failed (%s)", e)
             return {}
         return parse_json_object(text) or {}
 
+    def ask(**slots) -> dict:
+        return ask_template("coverage_resolve", **slots)
+
+    from .realism import realism_setting
+    realism = realism_setting(project)
+    policy = answers_mod.policy_for(project)
+    if research_fn is None and web is not None:
+        from .research.step import answer_question as research_fn
+
     for item in inbox.collect(project, include_done=False):
-        if item["kind"] != "finding" or item.get("code") != "sentence_not_covered" or item["id"] in known:
+        if item["id"] in known:
+            continue
+        if item["kind"] == "question":
+            made = propose_question(project, item, realism, policy, ask_template if llm is not None else None, web, research_fn, llm)
+            if made:
+                known[item["id"]] = asdict(made)
+            continue
+        if item["kind"] != "finding" or item.get("code") != "sentence_not_covered":
             continue
         fragment = (item["quotes"] or [""])[0]
         proposal = propose_coverage(project, synopsis, fragment, events, ask if llm is not None else None)
@@ -267,6 +284,89 @@ def undo(project, item_id: str) -> None:
     p["applied"] = False
     _log(project, item_id, p, "undone")
     save(project, proposals)
+
+
+# ── questions: story decisions stay yours, facts about the world are answered by the book's policy ──
+
+CONSISTENCY_TYPES = ("contradiction", "condition_order", "cast_conflict", "unknown_name")  # which version is true is the author's call
+STORY_TYPES = ("thin", "unpaid_setup")
+_MAJOR_MARKERS = re.compile(r"\b(1[0-9]{3}|20[0-9]{2})\b|\b(dies|died|killed|executed|murder\w*|assassinat\w*|betray\w*|turning point|decides to|will decide|a new character|named [A-Z]|called [A-Z]|founded|invaded|war breaks)\b")
+
+
+def size_of(text: str, changes_what_happens: bool) -> str:
+    """minor or major. An invented answer is major when it decides what happens: a death, a date, a betrayal, a new character or a turning point,
+    or when the model itself says it changes what happens. Anything uncertain is treated as major."""
+    return "major" if changes_what_happens or _MAJOR_MARKERS.search(text) else "minor"
+
+
+def classify_gap(item: dict, realism: str, ask) -> dict:
+    """{"kind": consistency | story_decision | world_fact, "fact": ...}. Known kinds of finding are classified without a model; the rest by a model that
+    must state the fact to establish, else it is a story decision."""
+    if item["type"] in CONSISTENCY_TYPES:
+        return {"kind": "consistency", "fact": ""}
+    if item["type"] in STORY_TYPES or ask is None:
+        return {"kind": "story_decision", "fact": ""}
+    data = ask("gap_classify", question=item["title"], why=item.get("why", ""), type=item["type"], realism=realism or "(none stated)")
+    fact = str(data.get("fact", "")).strip() if isinstance(data, dict) else ""
+    if isinstance(data, dict) and data.get("kind") == "world_fact" and fact:
+        return {"kind": "world_fact", "fact": fact}
+    return {"kind": "story_decision", "fact": ""}
+
+
+def approved_rules(project) -> str:
+    """The rules of this world you or the tool already approved (needs with a rule), so a new one never contradicts them."""
+    from .research.notes import stores_for
+    rules = []
+    try:
+        for store in stores_for(project).values():
+            rules += [f"- {n.rule}" for n in store.needs() if n.status == "approved" and n.rule]
+    except Exception:  # no research folder yet
+        pass
+    return "\n".join(rules) or "(none yet)"
+
+
+def propose_world_fact(project, fact: str, realism: str, policy: dict, ask, web, research_fn, document: str = "", llm=None) -> Proposal:
+    """The proposal for a fact about the world, by the book's policy: research first for `research` (a source quote or nothing), else a minor rule or
+    assumption of this world. A major invention is never proposed as an answer: it decides what happens, which is yours."""
+    from .layers.runner import StepContext
+    attempt_reason = ""
+    if policy["world_facts"] == "research" and web is not None and research_fn is not None:
+        from .research.step import Question
+        try:
+            attempt = research_fn(StepContext(project=project, layer="ledger", llm=llm), web, Question(question=fact, query=fact, sensitive=True, context=realism), document, set())
+        except Exception as e:  # research never takes the Inbox down
+            attempt, attempt_reason = None, f"the search failed ({e})"
+        if attempt is not None and attempt.facts:
+            sources = [{"url": h.url, "quote": f.get("quote", "")} for h, f in attempt.facts[:3]]
+            best = attempt.facts[0][1]
+            return Proposal("world_fact", f"From sources: {best.get('claim', '')}", "Found in " + ", ".join(sorted({urlparse(h.url).hostname or h.url for h, _ in attempt.facts[:3]})) + ". Every claim keeps the exact words of its page.",
+                            "from source", sources=sources, size="n/a", confidence="high" if len({s['url'] for s in sources}) > 1 else "medium")
+        attempt_reason = attempt_reason or (attempt.reason if attempt is not None else "")
+    if ask is None:
+        return Proposal("options", "", f"No source found ({attempt_reason or 'no research was possible'}) and no model to propose a rule: this is yours to decide.", "no source found", size="n/a", confidence="low")
+    data = ask("world_fact_invent", fact=fact, realism=realism or "(none stated)", rules=approved_rules(project),
+               policy={"research": "look it up first; this is the fallback because no source was found: invent only a minor detail", "extrapolate": "ground what is real and extend it with an invented but plausible rule",
+                       "invent": "invent a consistent rule"}[policy["world_facts"]])
+    rule = str(data.get("rule", "")).strip() if isinstance(data, dict) else ""
+    if not rule:
+        return Proposal("options", "", "No usable answer was found for this fact: it is yours to decide.", "no source found" if policy["world_facts"] == "research" else "proposal", confidence="low")
+    size = size_of(rule, bool(data.get("changes_what_happens")))
+    if size == "major":
+        return Proposal("options", "", f"Answering this decides what happens in the story, so it stays yours. A possible answer: {rule}", "proposal", size="major", confidence="low")
+    basis = str(data.get("basis", "")).strip()
+    label = "invented: no source found" if policy["world_facts"] == "research" else ("extrapolated" if policy["world_facts"] == "extrapolate" and basis else "invented")
+    return Proposal("world_fact", rule, (f"Basis: {basis}. " if basis else "") + str(data.get("reason", "")).strip(), label, size="minor", confidence="medium")
+
+
+def propose_question(project, item: dict, realism: str, policy: dict, ask, web, research_fn, llm=None) -> Proposal | None:
+    """The proposal for a question item: a fact about the world gets one by the policy; a story decision or a consistency problem gets none (its suggested
+    options are the proposal, and it is never settled by the tool)."""
+    kind = classify_gap(item, realism, ask)
+    if kind["kind"] != "world_fact":
+        return None
+    p = propose_world_fact(project, kind["fact"], realism, policy, ask, web, research_fn, llm=llm)
+    p.quote = kind["fact"]
+    return p
 
 
 def inbox_values(project) -> dict:

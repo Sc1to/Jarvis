@@ -11,6 +11,7 @@ undone: sentences you took back from the tool; it never decides those again.
 import yaml
 
 MODES = ("shadow", "assist")
+POLICIES = ("research", "extrapolate", "invent")  # how a fact about the world is answered: look it up, ground it and extend it, or invent it
 
 
 def path(project):
@@ -23,13 +24,18 @@ def load(project) -> dict:
     except (OSError, yaml.YAMLError):
         data = {}
     mode = data.get("mode") if data.get("mode") in MODES else "shadow"
-    return {"mode": mode, "waived": [w for w in data.get("waived") or [] if isinstance(w, dict) and w.get("quote")], "undone": [str(u) for u in data.get("undone") or []]}
+    chosen = data.get("world_facts") if data.get("world_facts") in POLICIES else ""
+    return {"mode": mode, "waived": [w for w in data.get("waived") or [] if isinstance(w, dict) and w.get("quote")], "undone": [str(u) for u in data.get("undone") or []],
+            "world_facts": chosen, "invention": "minor"}
 
 
 def save(project, data: dict) -> None:
     p = path(project)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(yaml.safe_dump({"mode": data["mode"], "waived": data["waived"], "undone": data["undone"]}, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    out = {"mode": data["mode"], "waived": data["waived"], "undone": data["undone"]}
+    if data.get("world_facts"):
+        out["world_facts"] = data["world_facts"]
+    p.write_text(yaml.safe_dump(out, sort_keys=False, allow_unicode=True), encoding="utf-8")
 
 
 def set_mode(project, mode: str) -> dict:
@@ -62,3 +68,39 @@ def is_undone(data: dict, sentence: str) -> bool:
     from .validators.ledger import _norm
     n = _norm(sentence)
     return any(_norm(u)[:60] and _norm(u)[:60] in n for u in data["undone"])
+
+
+def set_policy(project, world_facts: str) -> dict:
+    from .errors import BookforgeError
+    if world_facts not in POLICIES and world_facts != "":
+        raise BookforgeError(f"unknown policy '{world_facts}' (expected one of: {', '.join(POLICIES)}, or empty to derive it from the realism statement)")
+    data = load(project)
+    data["world_facts"] = world_facts
+    save(project, data)
+    return data
+
+
+_RESEARCH_WORDS = ("historical", "history", "real events", "period-accurate", "accurate to", "documented", "real places", "real people", "true to the period", "real world")
+_EXTRAPOLATE_WORDS = ("hard science", "scientifically", "plausible", "physics", "grounded", "realistic science", "near future", "near-future")
+_INVENT_WORDS = ("space opera", "fantasy", "myth", "magic", "invented", "alternate", "speculative", "soft science", "secondary world")
+
+
+def derive_policy(realism: str) -> tuple[str, str]:
+    """(policy, why) from the book's realism statement: a plain keyword reading, shown to you and yours to change. Hard words win in the order research,
+    extrapolate, invent; a statement that says nothing of the kind gets `extrapolate` (ground the science, invent the institutions)."""
+    low = realism.lower()
+    for policy, words in (("research", _RESEARCH_WORDS), ("extrapolate", _EXTRAPOLATE_WORDS), ("invent", _INVENT_WORDS)):
+        hit = next((w for w in words if w in low), "")
+        if hit:
+            return policy, f"the realism statement says \"{hit}\""
+    return "extrapolate", "the realism statement says nothing decisive: ground what is real, invent the rest" if realism.strip() else "the book has no realism statement yet: ground what is real, invent the rest"
+
+
+def policy_for(project) -> dict:
+    """{"world_facts", "invention", "source"}: what you set, else what the realism statement says."""
+    from .realism import realism_setting
+    data = load(project)
+    if data["world_facts"]:
+        return {"world_facts": data["world_facts"], "invention": "minor", "source": "you"}
+    policy, why = derive_policy(realism_setting(project))
+    return {"world_facts": policy, "invention": "minor", "source": why}

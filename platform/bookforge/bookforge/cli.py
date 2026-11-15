@@ -175,7 +175,7 @@ def propose_cmd(path: Path = PathArg, book: str = BookOpt) -> None:
     from . import resolve
     try:
         project = Project.open(path, book)
-        made = resolve.propose_all(project, build_client(project))
+        made = resolve.propose_all(project, build_client(project), build_web_client(project) if project.config.research.enabled else None)
     except BookforgeError as e:
         _fail(e)
     for item_id, p_ in made.items():

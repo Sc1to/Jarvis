@@ -87,7 +87,7 @@ def run_pipeline(project: Project, llm: LLMClient | None, web: WebClient | None,
     if llm is not None:  # what the tool would answer for what stopped a stage, as suggestions only (it never throws)
         try:
             from . import resolve
-            resolve.propose_all(project, llm)
+            resolve.propose_all(project, llm, web)
         except Exception as e:  # a suggestion must never fail a run
             log.info("proposals skipped: %s", e)
     try:
