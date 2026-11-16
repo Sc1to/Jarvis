@@ -156,3 +156,20 @@ def test_an_event_told_as_new_in_two_chapters_of_one_act_is_carried_on_or_kept_i
     only = [chapter(4, ["e5"], title="Eli decides to broadcast"), chapter(5, ["e5"], title="Eli decides to broadcast")]
     repair.repair_chapters(only, None, small, ["e5"], "b2", 4)
     assert [c["events_covered"] for c in only] == [["e5"], ["e5"]]  # each would be left empty: the checks decide
+
+
+def test_chapters_at_the_end_of_an_act_that_tell_only_other_acts_events_are_left_out_and_the_tracks_follow():
+    raw = [chapter(4, ["e4"]), chapter(5, ["e5"]), chapter(6, ["e7"]), chapter(7, ["e8"])]  # act events e4, e5: ch06 and ch07 tell act 3's events
+    tracks = [dict(id="mara-health", plan=[dict(**{"from": "b2.ch07", "value": "injured"})])]
+    notes = repair.repair_chapters(raw, tracks, LEDGER, ["e4", "e5"], "b2", 4)
+    assert [c["id"] for c in raw] == ["b2.ch04", "b2.ch05"] and [c["events_covered"] for c in raw] == [["e4"], ["e5"]]
+    assert tracks[0]["plan"][0]["from"] == "b2.ch05" and sum("belong to other acts" in n for n in notes) == 2
+    lone = [chapter(4, ["e7"])]
+    repair.repair_chapters(lone, None, LEDGER, ["e4"], "b2", 4)
+    assert len(lone) == 1  # the only chapter of the act is left for the checks
+    middle = [chapter(4, ["e4"]), chapter(5, ["e7"]), chapter(6, ["e5"])]
+    repair.repair_chapters(middle, None, LEDGER, ["e4", "e5"], "b2", 4)
+    assert [c["events_covered"] for c in middle] == [["e4"], ["e5"]]  # swapped into story order first, then it is the tail
+    carrying = [chapter(4, ["e4"]), dict(chapter(5, ["e7"]), events_continued=["e4"])]
+    repair.repair_chapters(carrying, None, LEDGER, ["e4"], "b2", 4)
+    assert len(carrying) == 2  # one that carries an event on is not filler
