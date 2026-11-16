@@ -10,7 +10,7 @@ All writes call the same functions as the command line (bookforge/ops.py) and wa
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from . import answers, canon, inbox, ops, resolve
+from . import diagnostics, answers, canon, inbox, ops, resolve
 from .project import Project
 
 I = "/series/{series}/books/{book}/inbox"
@@ -54,7 +54,8 @@ class DismissItem(BaseModel):
 def register(router: APIRouter, h) -> None:
     def view(project) -> dict:
         return {"items": inbox.collect(project), "summary": inbox.summary(project), "last_run": inbox.last_run(project), "stats": inbox.dismissal_stats(project),
-                "proposal_stats": resolve.decision_stats(project), "canon": canon.active(project), "demoted": resolve.demoted(project), "mode": answers.load(project)["mode"], "policy": answers.policy_for(project)}
+                "proposal_stats": resolve.decision_stats(project), "canon": canon.active(project), "demoted": resolve.demoted(project), "mode": answers.load(project)["mode"], "policy": answers.policy_for(project),
+                "diagnostics": diagnostics.listing(project)}
 
     @router.get(I)
     def inbox_list(series: str, book: str):

@@ -184,6 +184,12 @@ export default function InboxItems({ series, book, status, reload }: { series: s
     <Card title={`Questions and findings (${blocking ? blocking + ' blocking, ' : ''}${needs.length} open)`}>
       <p className="mb-2 text-xs text-slate-600">What stopped a stage and needs your word. Tap a suggested answer or write your own, then run again.</p>
       {inbox.error && <ErrorBanner message={inbox.error} />}
+      {(view?.diagnostics?.count ?? 0) > 0 && (
+        <p className="mb-3 rounded-md border border-slate-300 bg-slate-50 p-2 text-xs text-slate-700">
+          The tool found {view!.diagnostics!.count} problem(s) in its own work and saved the details in <span className="break-all font-mono">{view!.diagnostics!.folder}</span>
+          {' '}(latest: {view!.diagnostics!.latest[0]?.layer} {view!.diagnostics!.latest[0]?.codes.join(', ')}). Nothing for you to answer; send that file if something looks wrong.
+        </p>
+      )}
       {view && (
         <label className="mb-3 block text-xs font-medium text-slate-700">How much the tool decides
           <select value={view.mode ?? 'shadow'} onChange={(e) => changeMode(e.target.value)} disabled={!!locked || setMode.busy}
