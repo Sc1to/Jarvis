@@ -26,6 +26,7 @@ class FindingSpec:
     stage: str  # where it is raised first: ledger | acts | chapters | scenes | prose | state
     planned: str = ""  # structural: how it becomes impossible ("done", or the plan row "A1#3")
     note: str = ""
+    also_done: tuple = ()  # further stages where it is already impossible (planned "done" holds for `stage` and these)
 
 
 def _specs() -> dict[str, FindingSpec]:
@@ -56,7 +57,7 @@ def _specs() -> dict[str, FindingSpec]:
         # chapters
         ("chapter_without_events", STRUCTURAL, "chapters", "done"), ("continued_event_not_begun", STRUCTURAL, "chapters", "A1#5"),
         ("only_major_events_continue", STRUCTURAL, "chapters", "A1#5"), ("event_spans_too_many_chapters", STRUCTURAL, "chapters", "A1#5"),
-        ("event_from_other_act", STRUCTURAL, "chapters", "done"), ("once_only_repeated", STRUCTURAL, "chapters", "done", "scenes: A1#1"),
+        ("event_from_other_act", STRUCTURAL, "chapters", "done"), ("once_only_repeated", STRUCTURAL, "chapters", "done", "chapters by starts_with, scenes by starts_with", ("scenes",)),
         ("event_before_cause", STRUCTURAL, "chapters", "done"), ("chapters_out_of_order", STRUCTURAL, "chapters", "done"),
         ("chapter_nothing_new", STRUCTURAL, "chapters", "done"), ("event_not_covered", STRUCTURAL, "chapters", "done"),
         ("chapter_retells_event", WORDING, "chapters"), ("chapter_text_misses_event", WORDING, "chapters"), ("chapter_text_thin_on_event", WORDING, "chapters"),
@@ -65,7 +66,7 @@ def _specs() -> dict[str, FindingSpec]:
         ("flat_tension", RATING, "chapters"), ("pov_not_in_text", DECISION, "chapters"), ("pov_not_main", DECISION, "chapters"),
         ("unknown_name", DECISION, "chapters"),
         # scenes
-        ("scene_event_not_in_chapter", STRUCTURAL, "scenes", "A1#1"), ("chapter_event_not_in_scenes", STRUCTURAL, "scenes", "A1#1"),
+        ("scene_event_not_in_chapter", STRUCTURAL, "scenes", "done"), ("chapter_event_not_in_scenes", STRUCTURAL, "scenes", "done"),
         ("scene_without_end_state", WORDING, "scenes"), ("scene_retells_event", WORDING, "scenes"), ("scene_text_misses_event", WORDING, "scenes"),
         ("scene_text_thin_on_event", WORDING, "scenes"), ("scene_repeats_scene", WORDING, "scenes"), ("action_pattern_repeated", WORDING, "scenes"),
         ("research_in_beats", WORDING, "scenes"), ("implausible_scene_count", RATING, "scenes"), ("chapter_overloaded", RATING, "scenes"),
@@ -99,4 +100,4 @@ def structural(code: str) -> bool:
 def guaranteed(code: str, stage: str) -> bool:
     """A structural code the tool already makes impossible at this stage (planned "done"): if one is raised, it is a bug of the tool."""
     s = SPECS.get(code)
-    return bool(s and s.klass == STRUCTURAL and s.planned == "done" and s.stage == stage)
+    return bool(s and s.klass == STRUCTURAL and s.planned == "done" and (s.stage == stage or stage in s.also_done))

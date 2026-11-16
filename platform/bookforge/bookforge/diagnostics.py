@@ -18,8 +18,10 @@ def folder(project):
     return project.book_dir / "diagnostics"
 
 
-def record(project, layer: str, key: str, findings: list, context: dict) -> str | None:
+def record(project, layer: str, key: str, findings: list, context: dict, enabled: bool = True) -> str | None:
     """Save a bundle for the findings among `findings` that the tool already makes impossible (registry.guaranteed). Returns the file name, or None."""
+    if not enabled:  # the reply was in the old shape (the model listed the events itself), so a slip in it is the model's, not the tool's
+        return None
     bad = [f for f in findings if registry.guaranteed(getattr(f, "code", ""), getattr(f, "stage", ""))]
     if not bad:
         return None

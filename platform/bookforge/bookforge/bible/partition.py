@@ -83,3 +83,48 @@ def assign(raw: list, order: list[str]) -> list[str]:
         end = later[0] if later else len(order)
         c["events_covered"] = order[starts[k]:end]
     return []
+
+
+def assign_scenes(raw: list, covered: list[str], continued: list[str]) -> list[str]:
+    """The same cut for the scenes of one chapter: each scene names the event it STARTS with (`starts_with`, one of the chapter's own events); the
+    tool fills in `events` (the chapter's events from that one up to the next scene's). A scene with no `starts_with` carries on what the scene before it
+    tells and lists none; the first scene starts with the chapter's first event; an event the chapter only continues is the first scene's. Returns the
+    problems to hand back to the model (a start the chapter does not own, or one that goes backwards). A reply with no `starts_with` at all is left as it is."""
+    scenes = [s for s in raw if isinstance(s, dict)]
+    if len(scenes) != len(raw) or not any("starts_with" in s for s in scenes):
+        return []
+    index = {x: i for i, x in enumerate(covered)}
+    problems: list[str] = []
+    starts: list[int | None] = []
+    last_at = -1
+    for k, sc in enumerate(scenes):
+        label = f"scenes[{k}]"
+        sw = sc.pop("starts_with", None)
+        sc.pop("events", None)  # the tool's to fill in, whatever the model wrote
+        if sw in (None, "", []):
+            starts.append(None)
+            continue
+        sw = str(sw).strip()
+        if sw not in index:
+            problems.append(f"{label}.starts_with is '{sw}', which is not an event of this chapter. The chapter's events are, in order: {', '.join(covered) or 'none'}")
+            starts.append(None)
+            continue
+        if index[sw] <= last_at:
+            problems.append(f"{label}.starts_with is {sw}, but an earlier scene already starts at {covered[last_at]} or later: scenes start at later and later events, in order")
+            starts.append(None)
+            continue
+        last_at = index[sw]
+        starts.append(index[sw])
+    if problems:
+        return problems
+    if covered and (starts[0] is None or starts[0] > 0):
+        starts[0] = 0  # the chapter's first event is the first scene's
+    for k, sc in enumerate(scenes):
+        events: list[str] = []
+        if starts[k] is not None:
+            later = [x for x in starts[k + 1:] if x is not None]
+            events = covered[starts[k]:later[0] if later else len(covered)]
+        if k == 0:
+            events = [x for x in continued if x not in events] + events
+        sc["events"] = events
+    return []

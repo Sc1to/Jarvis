@@ -12,7 +12,7 @@ LOAD_BEARING = {
     "ledger_revise": ["{answers}", "source: author", "exactly as it is"],
     "acts_ledger": ["what the events can supply", "{carried}", "{ledger_events}", "EVERY event of the ledger belongs to exactly one act", "turning_point_event", "sizing_reason"],
     "chapters_ledger": ["events_continued", "{carried}", "{ledger_status}", "{story_so_far}", "{research_notes}", "starts_with", "end_state", "RESERVED FOR LATER", "derived_events", "never retell"],
-    "scenes_ledger": ["{carried}", "{ledger_status}", "{story_so_far}", "{research_notes}", "`events`", "`end_state`", "from 1 to 4", "never turn one into a beat"],
+    "scenes_ledger": ["{carried}", "{ledger_status}", "{story_so_far}", "{research_notes}", "`starts_with`", "`end_state`", "from 1 to 4", "never turn one into a beat"],
     "prose_system": ["Never end on a summary", "Never restate", "never become events"],
     "prose": ["do not restate or summarize it"],
 }

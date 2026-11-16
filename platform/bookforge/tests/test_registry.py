@@ -41,15 +41,17 @@ def test_a_structural_code_says_how_it_becomes_impossible_and_the_classes_are_kn
         if s.klass == R.STRUCTURAL:
             assert s.planned == "done" or s.planned.startswith("A1#") or s.note, f"{s.code}: structural without a plan row"
     assert R.klass("event_not_covered") == R.STRUCTURAL and R.klass("end_state_overreach") == R.WORDING and R.klass("nope") is None
-    assert R.guaranteed("event_not_covered", "chapters") and not R.guaranteed("event_not_covered", "scenes") and not R.guaranteed("scene_event_not_in_chapter", "scenes")
+    assert R.guaranteed("event_not_covered", "chapters") and not R.guaranteed("event_not_covered", "scenes") and R.guaranteed("scene_event_not_in_chapter", "scenes")
+    assert R.guaranteed("once_only_repeated", "chapters") and R.guaranteed("once_only_repeated", "scenes") and not R.guaranteed("story_day_backwards", "scenes")
 
 
 def test_a_guaranteed_structural_finding_is_saved_as_a_diagnostics_bundle_and_nothing_else_is(project):
     p = project
     bug = F.hard("chapters", "event_not_covered", "e10 is covered by no chapter", ["e10"])
     other = F.hard("chapters", "end_state_overreach", "over", ["b2.ch10", "e12"])
-    later = F.hard("scenes", "scene_event_not_in_chapter", "not yet by construction", ["b2.ch10.s1"])  # model-caused until the scenes are converted
+    later = F.hard("scenes", "story_day_backwards", "not yet by construction", ["b2.ch10.s1"])  # model-caused until the days are converted
     assert diagnostics.record(p, "chapters", "b2.act2", [other, later], {"x": 1}) is None
+    assert diagnostics.record(p, "chapters", "b2.act2", [bug], {}, enabled=False) is None  # the reply was in the old shape: the model's slip, not the tool's
     name = diagnostics.record(p, "chapters", "b2.act2", [bug, other], {"reply": {"chapters": []}})
     body = json.loads((diagnostics.folder(p) / name).read_text())
     assert body["codes"] == ["event_not_covered"] and body["layer"] == "chapters" and body["context"] == {"reply": {"chapters": []}}

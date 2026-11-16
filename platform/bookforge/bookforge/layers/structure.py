@@ -632,6 +632,7 @@ def _build_scenes(ctx: StepContext, files: list[str]) -> str:
                     cast=cast_digest(constants), tracks_in_chapter=tracks_in_chapter_digest(tracks, project.book, ch_num),
                     other_tracks="\n".join(f"- {t.id} (owner {t.entity})" for t in others) or "none",
                     previous_time=prev_when, research_notes=notes_text(project, dump_yaml(to_plain(chapter))),
+                    starting_events=", ".join(chapter.events_covered) or "none (this chapter only carries on an event from the chapter before)",
                     first_scene=f"{chapter.id}.s1", **{k: v for k, v in stars.items() if k != "synopsis"})
             return _messages(
                 project, "scenes", chapter=dump_yaml(to_plain(chapter)),
