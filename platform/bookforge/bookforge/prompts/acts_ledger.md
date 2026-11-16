@@ -29,15 +29,11 @@ Divide the book into ACTS by assigning the story events of its ledger to them. T
 Cut the ledger into acts. The number of acts follows from the shape of the story (usually three or four; fewer for a short book). {constraints}
 
 Each act:
-- takes a continuous run of events, in ledger order, and ends on a turning point that changes what the characters want or can do. Name that event in `turning_point_event`; it must be one of the act's own events. The LAST act's turning point is the book's central decision (the event marked `decision: true` in the ledger) or the resolution, never a transition such as a departure or an arrival;
-- lists its events in `events`. EVERY event of the ledger belongs to exactly one act. The last act contains the resolution (the events marked ENDING);
-- gives `chapter_count`, your ESTIMATE (the chapter planner makes the real number from the events, so a wrong guess costs nothing, but give your best): it follows from the weight of its events: add up the weights shown in the ledger above and plan about one chapter per {weight_per_chapter} points of weight (never fewer than a chapter per two or three events of weight 3). It does NOT follow from a word target. Never stretch an act with too little material to fill chapters, and never cram it. Your count is checked against the real weights AND against what the events can supply: every chapter needs a new event of its own, so an act has at most one chapter per event, one more for each weight 3 event (a climax or a confrontation may take two chapters), and a few minor complications;
-- gives `sizing_reason`: one line saying why that many chapters (the weights it quotes must be the ledger's);
-- `turning_point` describes the `turning_point_event` and nothing else.
+- takes a continuous run of events, in ledger order, and ends on a turning point that changes what the characters want or can do (the last event of the act; the last act ends on the book's central decision or its resolution);
+- `starts_with`: the id of the FIRST event of the act. Use ONLY these ids, in this order (the events of the book): {starting_events}. The acts are consecutive stretches of the ledger: an act tells everything from its `starts_with` event up to, but not including, the event the next act starts with, and the last act runs to the end of the ledger and holds the resolution. The first act starts with the first event, and every act starts with a LATER event than the act before. So every event belongs to exactly one act. You do not list the other events, and you do not give counts, ids or sizing: the tool works those out from the ledger;
+- `turning_point` describes in words the event that ends the act, and nothing else.
 
 Respect "What it is not" in both north stars. Do not plan chapters or scenes here and do not add events, sensory detail or plot.
-
-- Your counts and your reasoning must agree with the numbers: the ledger estimates about {capacity_estimate} chapters of story in all, and your `chapter_count` values must add up to within {tolerance} of that. The weight you quote in `sizing_reason` is the sum of the ledger's weights for the act's events, and the chapters you name there are the `chapter_count` you give. If you mean to depart from the estimate, start that act's `sizing_reason` with `override:` and say why.
 
 ## Format
 
@@ -45,15 +41,11 @@ Return YAML only, exactly in this shape (quote any text that contains a colon):
 
 ```yaml
 acts:
-  - id: {book_id}.act1
-    title: short title
+  - title: short title
     summary: what happens in this act, 2 to 5 sentences, using only its events
     purpose: its job in the shape of the book, one or two sentences
     turning_point: the event that ends the act, in words
-    turning_point_event: e4
-    events: [e1, e2, e3, e4]
-    chapter_count: 4
-    sizing_reason: one line
+    starts_with: <an id from the list above>
 ```
 
-Use the ids {book_id}.act1, {book_id}.act2 and so on, in order.
+The tool numbers the acts ({book_id}.act1, {book_id}.act2 and so on): do not write ids.

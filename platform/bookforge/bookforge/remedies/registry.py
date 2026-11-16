@@ -46,12 +46,12 @@ def _specs() -> dict[str, FindingSpec]:
         ("derived_without_parent", STRUCTURAL, "chapters", "A1#6"), ("derived_not_minor", STRUCTURAL, "chapters", "A1#6"),
         ("derived_not_after_parent", STRUCTURAL, "chapters", "A1#6"), ("too_many_derived", STRUCTURAL, "chapters", "A1#6"),
         # acts
-        ("event_in_two_acts", STRUCTURAL, "acts", "A1#2"), ("event_in_no_act", STRUCTURAL, "acts", "A1#2"), ("acts_out_of_order", STRUCTURAL, "acts", "A1#2"),
-        ("turning_point_without_event", STRUCTURAL, "acts", "A1#3"), ("turning_point_not_in_act", STRUCTURAL, "acts", "A1#3"),
-        ("turning_point_not_at_end", STRUCTURAL, "acts", "A1#3"), ("resolution_not_in_last_act", STRUCTURAL, "acts", "A1#2"),
-        ("final_turning_point_is_transition", STRUCTURAL, "acts", "A1#3"), ("acts_differ_from_capacity", STRUCTURAL, "acts", "A1#3"),
-        ("sizing_reason_mismatch", STRUCTURAL, "acts", "A1#3"), ("no_sizing_reason", STRUCTURAL, "acts", "A1#3"),
-        ("implausible_chapter_count", STRUCTURAL, "acts", "A1#3"), ("chapter_count_exceeds_capacity", STRUCTURAL, "acts", "A1#3"),
+        ("event_in_two_acts", STRUCTURAL, "acts", "done"), ("event_in_no_act", STRUCTURAL, "acts", "done"), ("acts_out_of_order", STRUCTURAL, "acts", "done"),
+        ("turning_point_without_event", STRUCTURAL, "acts", "done"), ("turning_point_not_in_act", STRUCTURAL, "acts", "done"),
+        ("turning_point_not_at_end", STRUCTURAL, "acts", "done"), ("resolution_not_in_last_act", STRUCTURAL, "acts", "done"),
+        ("final_turning_point_is_transition", STRUCTURAL, "acts", "done"), ("acts_differ_from_capacity", STRUCTURAL, "acts", "done"),
+        ("sizing_reason_mismatch", STRUCTURAL, "acts", "done"), ("no_sizing_reason", STRUCTURAL, "acts", "done"),
+        ("implausible_chapter_count", STRUCTURAL, "acts", "done"), ("chapter_count_exceeds_capacity", STRUCTURAL, "acts", "done"),
         ("lopsided_acts", RATING, "acts"), ("turning_point_text_differs", WORDING, "acts"), ("act_summary_omits_resolution", WORDING, "acts"),
         ("act_retells_event", WORDING, "acts"),
         # chapters

@@ -174,7 +174,10 @@ def parse_acts(text: str, project: Project, ledger=None) -> tuple[list[Act] | No
         return None, [error]
     problems: list[str] = []
     raw = _items(data, "acts", problems)
-    normalize.normalize_acts(project, raw, ledger)  # mechanical slips (events in no act, in two acts, out of order) are put right, not asked about
+    acts_new_shape = ledger is not None and any(isinstance(a, dict) and "starts_with" in a for a in raw)  # the tool cut the events and derived the numbers
+    _, bad_starts = normalize.normalize_acts(project, raw, ledger)  # events cut at each starts_with, or (an older reply) mechanical slips put right, not asked about
+    if bad_starts:  # nothing else is checked: acts without events would only add a wall of follow-on errors
+        return None, problems + bad_starts
     cfg = project.config.layers
     forced = cfg["acts"].count
     lo, hi = forced or (3, 4)
@@ -190,7 +193,7 @@ def parse_acts(text: str, project: Project, ledger=None) -> tuple[list[Act] | No
             ok = parse_act_id(act.id) == (project.book, i + 1)
         except ValueError:
             ok = False
-        if not ok:
+        if not ok and ledger is None:  # with a ledger the id is the tool's (by position), never a problem
             problems.append(f"acts[{i}].id is '{act.id}', expected '{expected}'")
         act.id = expected
         acts.append(act)
@@ -207,7 +210,7 @@ def parse_acts(text: str, project: Project, ledger=None) -> tuple[list[Act] | No
                 a.sizing_reason = fixed["sizing_reason"]
         findings = ledger_checks.check_acts([a.model_dump() for a in acts], [e.model_dump() for e in ledger.events], weight_per_chapter=project.config.ledger.weight_per_chapter,
                                              capacity_estimate=(ledger.capacity or {}).get("estimated_chapters"), tolerance=project.config.ledger.count_tolerance)
-        diagnostics.record(project, "acts", "acts", findings, {"acts": [a.model_dump() for a in acts]})
+        diagnostics.record(project, "acts", "acts", findings, {"acts": [a.model_dump() for a in acts]}, enabled=acts_new_shape)
         problems += accepted.hard_lines(project, findings, "acts")
     return (None, problems) if problems else (acts, [])
 

@@ -15,6 +15,8 @@ A chapter that only carries on a heavy event from the chapter before (`events_co
 
 import re
 
+from .positions import act_id
+
 
 def act_order(ledger_events, act_events, declared: list | None = None) -> list[str]:
     """The ids a chapter of this act may start with, in ledger order: the act's events, their derived complications already in the ledger, and the
@@ -128,3 +130,54 @@ def assign_scenes(raw: list, covered: list[str], continued: list[str]) -> list[s
             events = [x for x in continued if x not in events] + events
         sc["events"] = events
     return []
+
+
+def assign_acts(raw: list, event_ids: list[str], ending_ids: list[str], book: str) -> tuple[list[str], list[str]]:
+    """The same cut for the acts of the book: each act names the event it STARTS with (`starts_with`), the tool fills in `events` (the book's own events,
+    in ledger order, from that one up to the next act's) and the act's id. The first act starts with the first event whatever was written, and an act that
+    would start after the ending is pulled back so the resolution is always in the last act (an act left with no event of its own is merged into the one
+    before). Returns (problems, notes): a problem is a start that is not an event or that goes backwards, and goes back to the model alone. What is
+    derived from the events (turning point, chapter count, sizing) is `normalize.derive_act_numbers`. A reply with no `starts_with` is left as it is."""
+    acts = [a for a in raw if isinstance(a, dict)]
+    if len(acts) != len(raw) or not any("starts_with" in a for a in acts):
+        return [], []
+    index = {x: i for i, x in enumerate(event_ids)}
+    problems: list[str] = []
+    notes: list[str] = []
+    starts: list[int] = []
+    last_at = -1
+    for k, a in enumerate(acts):
+        label = f"acts[{k}]"
+        sw = a.pop("starts_with", None)
+        for key in ("events", "turning_point_event", "chapter_count", "sizing_reason"):
+            a.pop(key, None)  # the tool's to fill in, whatever the model wrote
+        a["id"] = act_id(book, k + 1)
+        if sw in (None, "", []):
+            problems.append(f"{label} needs `starts_with`: the id of the first event of the act")
+            continue
+        sw = str(sw).strip()
+        if sw not in index:
+            problems.append(f"{label}.starts_with is '{sw}', which is not an event of the book. The events are, in order: {', '.join(event_ids)}")
+        elif index[sw] <= last_at:
+            problems.append(f"{label}.starts_with is {sw}, but an earlier act already starts at {event_ids[last_at]} or later: acts start at later and later events, in order")
+        else:
+            last_at = index[sw]
+            starts.append(index[sw])
+    if problems:
+        return problems, notes
+    if starts[0] != 0:
+        notes.append(f"the first act starts with {event_ids[0]}, the first event of the book (it named {event_ids[starts[0]]})")
+        starts[0] = 0
+    ends = [index[e] for e in ending_ids if e in index]
+    while ends and len(starts) > 1 and starts[-1] > min(ends):
+        if min(ends) > starts[-2]:
+            notes.append(f"the last act starts with {event_ids[min(ends)]} so that it holds the resolution (it named {event_ids[starts[-1]]})")
+            starts[-1] = min(ends)
+            break
+        notes.append(f"{act_id(book, len(starts))} would start after the resolution and is merged into the act before it")
+        acts.pop()
+        starts.pop()
+    raw[:] = acts
+    for k, a in enumerate(acts):
+        a["events"] = event_ids[starts[k]:starts[k + 1] if k + 1 < len(starts) else len(event_ids)]
+    return [], notes

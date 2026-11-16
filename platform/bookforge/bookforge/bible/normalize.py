@@ -40,13 +40,57 @@ def _note(project, layer: str, key: str, notes: list[str]) -> None:
     healing.note(project, layer, key, notes)
 
 
-def normalize_acts(project, raw: list, ledger) -> list[str]:
-    """Each act's events in ledger order, an event in two acts kept in the first, an event in no act given to its neighbours' act."""
+def derive_act_numbers(raw: list, ledger, weight_per_chapter: float) -> None:
+    """What follows from an act's events, written by the tool (the model never states it, so it cannot disagree with the ledger):
+    `chapter_count` from the ledger's weights (about one chapter per `weight_per_chapter`, the total as the ledger's own estimate, shared out by largest
+    remainder and never above what the act's events can supply), `sizing_reason` as the computed note, and `turning_point_event`: the act's last event;
+    for the last act the central decision when it sits in the second half of the act, else the resolution."""
+    from ..validators import ledger as ledger_checks
+
+    plain = [e.model_dump() for e in ledger.events]
+    acts = [a for a in raw if isinstance(a, dict)]
+    if not acts:
+        return
+    weights = [ledger_checks.act_weight(a, plain)[0] for a in acts]
+    exact = [w / weight_per_chapter for w in weights]
+    target = max(len(acts), round(sum(exact)))
+    counts = [max(1, int(x)) for x in exact]
+    left = target - sum(counts)
+    for i in sorted(range(len(counts)), key=lambda i: -(exact[i] - int(exact[i]))):
+        if left <= 0:
+            break
+        counts[i] += 1
+        left -= 1
+    decisions = [e.id for e in ledger.events if getattr(e, "decision", False)]
+    endings = [e.id for e in ledger.events if getattr(e, "ending", False)]
+    for k, a in enumerate(acts):
+        a["chapter_count"] = max(1, min(counts[k], ledger_checks.act_capacity(a, plain)[0]))
+        a["sizing_reason"] = ledger_checks.sizing_note(a, plain, weight_per_chapter)
+        mine = a.get("events") or []
+        tp = mine[-1] if mine else ""
+        if k == len(acts) - 1 and mine:
+            late = [x for x in mine if x in decisions and mine.index(x) >= (len(mine) - 1) / 2]
+            tp = late[-1] if late else next((x for x in reversed(mine) if x in endings), mine[-1])
+        a["turning_point_event"] = tp
+
+
+def normalize_acts(project, raw: list, ledger) -> tuple[list[str], list[str]]:
+    """(notes, problems). With `starts_with` the tool cuts the book's events into acts and derives the rest (ids, events, turning point, chapter count,
+    sizing: `bible/partition.py::assign_acts`, `derive_act_numbers`); a bad start is the only problem and goes back to the model alone. Without it (an
+    older file) each act's events in ledger order, an event in two acts kept in the first, an event in no act given to its neighbours' act."""
     if ledger is None or not raw:
-        return []
-    notes = repair.repair_acts(raw, [e.model_dump() for e in ledger.events])
+        return [], []
+    own = [e for e in ledger.events if not e.carried_in and e.source != "derived"]
+    new_shape = any(isinstance(a, dict) and "starts_with" in a for a in raw)
+    problems, notes = partition.assign_acts(raw, [e.id for e in own], [e.id for e in own if e.ending], project.book)
+    if problems:
+        return [], problems
+    if new_shape:
+        derive_act_numbers(raw, ledger, project.config.ledger.weight_per_chapter)
+    else:
+        notes += repair.repair_acts(raw, [e.model_dump() for e in ledger.events])
     _note(project, "acts", "acts", notes)
-    return notes
+    return notes, []
 
 
 def normalize_chapters(project, data, raw: list, act, ledger, first_number: int) -> tuple[list, list[str], list[str]]:

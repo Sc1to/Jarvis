@@ -68,7 +68,7 @@ def test_old_bundles_are_cleared_beyond_the_newest_thirty(project):
 
 def test_the_normalisation_entry_points_leave_a_reply_without_a_ledger_alone(project):
     raw = [{"id": "x", "events": ["e1"]}]
-    assert normalize.normalize_acts(project, raw, None) == [] and raw == [{"id": "x", "events": ["e1"]}]
+    assert normalize.normalize_acts(project, raw, None) == ([], []) and raw == [{"id": "x", "events": ["e1"]}]
     chapters, notes, problems = normalize.normalize_chapters(project, {}, [{"id": "c"}], None, None, 1)
     assert chapters == [{"id": "c"}] and notes == [] and problems == []
     assert normalize.drop_empty_tail([{"events_covered": ["e1"]}, {"events_covered": ["e1"]}]) == [{"events_covered": ["e1"]}]

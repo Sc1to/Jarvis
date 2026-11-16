@@ -238,6 +238,7 @@ def _ledger_acts(ctx: StepContext, ledger) -> StepResult:
         layer="acts", prompt="acts_ledger", out_path="books/{book}/acts.yaml",
         validate=lambda text: parse_acts(text, project, ledger)[1], max_tokens=3500, strip_preamble=False,
         slots=lambda c: {**stars, "ledger_events": events_text(ledger.events), "constraints": _forced_counts(project), "carried": carried_for_prompt(project),
+                         "starting_events": ", ".join(e.id for e in ledger.events if not e.carried_in and e.source != "derived"),
                          "weight_per_chapter": f"{project.config.ledger.weight_per_chapter:g}",
                          "capacity_estimate": f"{(ledger.capacity or {}).get('estimated_chapters', '?')}", "tolerance": f"{project.config.ledger.count_tolerance:.0%}"},
         normalize=normalize, research_scope="book",

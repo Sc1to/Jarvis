@@ -32,7 +32,7 @@ def test_the_whole_structure_is_planned_from_the_ledger(project):
     for stage in ("acts", "chapters", "scenes"):
         assert json.loads((p.book_dir / "validation" / f"{stage}.json").read_text())["summary"]["hard"] == 0
     first_acts_prompt = llm.calls[0]["messages"][-1]["content"]
-    assert "every event of the ledger belongs to exactly one act" in first_acts_prompt.lower() or "EVERY event of the ledger" in first_acts_prompt
+    assert "every event belongs to exactly one act" in first_acts_prompt.lower() and "e1, e2, e3, e4" in first_acts_prompt
 
 
 def test_the_chapter_planner_is_told_what_is_done_and_nothing_of_what_comes_later(project):
