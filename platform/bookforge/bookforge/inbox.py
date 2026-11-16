@@ -113,6 +113,8 @@ def collect(project, include_done: bool = True) -> list[dict]:
                 it["status"], it["blocking"] = "resolved", False  # settled by the tool: shown with its decision and an undo, not asked
         elif it["kind"] == "finding" and it["status"] == "open" and it["id"] in told:
             it["status"], it["blocking"], it["answer"] = "answered", False, told[it["id"]]["text"]  # your instruction waits for the next run
+    from . import healing
+    items += healing.items(project)  # what the tool put right by itself: grey, never blocking (a slip that came back is open, still not blocking)
     stale = stale_acts(project)
     if stale:  # five checks with one cause are one item: plan the acts again
         group = [it for it in items if it["stage"] == "acts" and it["kind"] == "finding" and it["status"] == "open" and it.get("code") in STALE_ACTS_CODES]
@@ -158,20 +160,21 @@ def summary(project) -> dict:
     everything = collect(project)
     waiting = sum(1 for it in everything if it["status"] == "answered")  # questions and findings you answered that the next run has not read yet
     resolved = sum(1 for it in everything if it["status"] == "resolved")
+    healed = sum(1 for it in everything if it["kind"] == "healed" and it["status"] == "healed")
     blocking = sum(it["blocking"] for it in items)
     flagged = [n for n in ("ledger", "acts", "chapters", "scenes") if project.state.layers[n].status in ("flagged", "failed")]
     empty_ledger = bool(ledger is not None and not ledger.events and project.state.layers["ledger"].status != "accepted")
     from .constants import REDO_NOTE
     redoing = any(project.state.layers[n].status == "pending" and project.state.layers[n].note == REDO_NOTE for n in ("acts", "chapters", "scenes"))  # reset, waiting to be planned again
     needs_run = blocking == 0 and bool(waiting or flagged or empty_ledger or redoing)  # a stage that failed, or an audit that is now answered, has to run again
-    return {"open": len(items), "blocking": blocking, "answered_waiting": waiting, "resolved": resolved, "needs_run": needs_run,
+    return {"open": len(items), "blocking": blocking, "answered_waiting": waiting, "resolved": resolved, "healed": healed, "needs_run": needs_run,
             "by_stage": {s: sum(it["stage"] == s for it in items) for s in STAGES if any(it["stage"] == s for it in items)}}
 
 
 def blocking_for_checkpoint(project, checkpoint: str) -> list[dict]:
     """The open items that approving this checkpoint as it is would skip."""
     stages = CHECKPOINT_STAGES.get(checkpoint, ())
-    return [it for it in collect(project, include_done=False) if it["stage"] in stages]
+    return [it for it in collect(project, include_done=False) if it["stage"] in stages and it["kind"] != "healed"]
 
 
 def dismissal_stats(project) -> dict[str, dict]:

@@ -17,7 +17,7 @@ from ..bible import store
 from ..bible.models import Act, Chapter, Constants, Track
 from ..bible.positions import parse_position
 from ..bible.store import dump_yaml, to_plain
-from .. import review_notes, steering
+from .. import healing, review_notes, steering
 from ..bible.validate import (
     add_entities, count_range, merge_constants, merge_derived, parse_acts, parse_cast, parse_chapters, parse_scenes, validate_bible,
 )
@@ -261,7 +261,10 @@ def acts(ctx: StepContext) -> StepResult:
     project = ctx.project
     ledger = store.active_ledger(project)
     if ledger is not None:
-        return _ledger_acts(ctx, ledger)
+        healing.begin(project, "acts")
+        result = _ledger_acts(ctx, ledger)
+        healing.commit(project, "acts")
+        return result
     lo, hi = project.config.layers["acts"].count or (3, 4)
     clo, chi = project.config.layers["chapters"].count or (25, 35)
 
@@ -305,7 +308,9 @@ def chapters(ctx: StepContext) -> StepResult:
                              + " (fix the file, or delete it to have it regenerated)")
         note = "adopted existing file"
     else:
+        healing.begin(project, "chapters")
         note = _build_chapters(ctx, files)
+        healing.commit(project, "chapters")
 
     note = _note_reviews(project, "chapters", note, files)
     focus = "Settings and events of the chapters: real-world facts about the places, periods, trades and events they use."
@@ -558,7 +563,9 @@ def scenes(ctx: StepContext) -> StepResult:
             raise LayerError("existing scenes.yaml is not acceptable: " + "; ".join(problems[:6])
                              + " (fix the file, or delete it to have it regenerated)")
         return StepResult(files=files, note="adopted existing file")
+    healing.begin(project, "scenes")
     note = _build_scenes(ctx, files)
+    healing.commit(project, "scenes")
     note = _note_reviews(project, "scenes", note, files)
     return StepResult(files=files, note=note)
 

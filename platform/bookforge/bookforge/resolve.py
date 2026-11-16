@@ -216,7 +216,7 @@ def propose_all(project, llm=None, web=None, research_fn=None) -> dict:
         from .research.step import answer_question as research_fn
 
     for item in inbox.collect(project, include_done=False):
-        if item["id"] in known:
+        if item["id"] in known or item["kind"] == "healed":
             continue
         if item["kind"] == "question":
             made = propose_question(project, item, realism, policy, ask_template if llm is not None else None, web, research_fn, llm)

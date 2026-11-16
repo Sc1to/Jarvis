@@ -66,7 +66,8 @@ def test_chapters_that_retell_an_event_or_use_a_reserved_one_are_refused(project
     assert summary.stopped == "failed"
     assert "once_only_repeated" in summary.detail or "chapter_nothing_new" in summary.detail or "event_not_covered" in summary.detail
     reserved = chapters(1)
-    reserved["chapters"][1]["events_covered"] = ["e2", "e3"]  # e3 belongs to act 2
+    reserved["chapters"][0]["events_covered"] = ["e1", "e2"]
+    reserved["chapters"][1]["events_covered"] = ["e3"]  # e3 belongs to act 2, and nothing of this chapter's own is left to keep it by
     llm = RuleLLM([("Plan the chapters this act's events need, b1.ch01 onward", dump(reserved))] + rules()[:2])
     summary = run(p, llm, HANDLERS, until="chapters")
     assert summary.stopped == "failed" and "event_from_other_act" in " ".join(c["messages"][-1]["content"] for c in llm.calls)

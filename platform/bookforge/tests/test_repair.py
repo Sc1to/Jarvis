@@ -129,3 +129,16 @@ def test_a_scene_plan_that_shows_a_chapter_event_in_no_scene_is_accepted_in_one_
     assert summary.ran == ["scenes"], summary.detail
     assert len([c for c in llm.calls if "Scene ids are consecutive: b1.ch01.s1" in c["messages"][-1]["content"]]) == 1
     assert "e1" in [e for s in store.load_scenes(p) if s.chapter == "b1.ch01" for e in s.events]
+
+
+def test_an_event_of_another_act_is_taken_out_of_a_chapter_that_retells_it_and_a_chapter_left_empty_is_not_touched():
+    raw = [chapter(13, ["e4", "e3"], title="Aftermath"), chapter(14, ["e5"])]  # act 2 (e4, e5) lists e3, which act 1 told
+    notes = repair.repair_chapters(raw, None, LEDGER, ["e4", "e5"], "b2", 13)
+    assert [c["events_covered"] for c in raw] == [["e4"], ["e5"]] and any("e3, which belongs to another act" in n for n in notes)
+    only = [chapter(13, ["e3"]), chapter(14, ["e4"])]
+    repair.repair_chapters(only, None, LEDGER, ["e4"], "b2", 13)
+    assert only[0]["events_covered"] == ["e3"]  # nothing of its own would be left: the checks decide
+    derived = [ev("e4.1", "a complication of e4", parent="e4", source="derived")]
+    mine = [chapter(13, ["e4", "e4.1"])]
+    repair.repair_chapters(mine, None, LEDGER + derived, ["e4", "e4.1"], "b2", 13)
+    assert mine[0]["events_covered"] == ["e4", "e4.1"]  # a complication of the act's own event is the act's

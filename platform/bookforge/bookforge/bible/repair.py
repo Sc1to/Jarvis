@@ -138,10 +138,26 @@ def repair_chapters(raw: list, raw_tracks: list | None, ledger_events: list[dict
         if ordered != covered:
             c["events_covered"] = ordered
             notes.append(f"{c['id']}: its events put in the order they happen ({', '.join(ordered)})")
+    notes += _drop_foreign(chapters, set(act_events), order)
     if not any(c.get("events_continued") for c in chapters):
         notes += _swap_chapters(chapters, raw_tracks, order, expected)
         raw[:] = chapters  # the reply's own list, in the new order
     notes += _attach_uncovered(chapters, act_events, ledger_events, order)
+    return notes
+
+
+def _drop_foreign(chapters: list[dict], act_events: set[str], order: dict[str, int]) -> list[str]:
+    """A chapter may tell only the events of its own act. One it lists from another act (told by an earlier act, or reserved for a later one) is taken out
+    of its events, so it is told once, where it belongs. A chapter left with nothing of its own is left alone: that takes judgement."""
+    notes = []
+    for c in chapters:
+        for key in ("events_covered", "events_continued"):
+            foreign = [x for x in c.get(key) or [] if x in order and x not in act_events]
+            keep = [x for x in c.get(key) or [] if x not in foreign]
+            other = c.get("events_continued" if key == "events_covered" else "events_covered") or []
+            if foreign and (keep or other):
+                c[key] = keep
+                notes.append(f"{c['id']} listed {', '.join(foreign)}, which belongs to another act; taken out so it is told only there")
     return notes
 
 
