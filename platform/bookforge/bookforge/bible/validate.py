@@ -520,7 +520,7 @@ def _ledger_chapter_checks(project, data, chapters: list[Chapter], act: Act, led
         from ..qc.repeat_confirm import confirm_repeats
         findings = confirm_repeats(ctx, findings)
     if ctx is not None and project.config.qc.fix_retells:  # a retold event is a wording slip one narrow call fixes; the whole-book check does that (and the fix is saved), instead of whole-act correction rounds
-        findings = [f for f in findings if f.code != "chapter_retells_event"]
+        findings = [f for f in findings if f.code not in ("chapter_retells_event", "event_repeated", "chapter_replans_chapter")]
     problems += accepted.hard_lines(project, findings, "chapters")
     return derived
 

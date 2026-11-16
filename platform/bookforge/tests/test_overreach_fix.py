@@ -148,12 +148,47 @@ def test_ratings_that_are_still_flat_or_incomplete_leave_the_saved_tension_alone
     assert overreach_fix.fix_tension(StepContext(project=project, layer="chapters", llm=partial), chs, found) == []
 
 
-def test_what_the_fixes_could_not_clear_is_kept_as_a_warning_except_a_retold_event():
+def test_what_the_fixes_could_not_clear_is_kept_as_a_warning_but_structural_findings_stay_hard():
     from bookforge.validators import findings as F
     kept = overreach_fix.demote_unfixable([F.hard("chapters", "end_state_overreach", "over", ["b2.ch10", "e12"]), F.hard("chapters", "flat_tension", "flat", ["b2.ch12"]),
                                            F.hard("chapters", "chapter_retells_event", "retold", ["b2.ch14", "e14"]), F.hard("chapters", "event_not_covered", "gone", ["e10"])])
-    assert [(f.code, f.severity) for f in kept] == [("end_state_overreach", "soft"), ("flat_tension", "soft"), ("chapter_retells_event", "hard"), ("event_not_covered", "hard")]
+    assert [(f.code, f.severity) for f in kept] == [("end_state_overreach", "soft"), ("flat_tension", "soft"), ("chapter_retells_event", "soft"), ("event_not_covered", "hard")]
     assert kept[0].message.startswith("(the tool tried to fix this and could not; kept as a warning)")
     accepted = F.hard("chapters", "flat_tension", "flat", ["b2.ch12"])
     accepted.accepted = True
     assert overreach_fix.demote_unfixable([accepted])[0].severity == "hard"
+
+
+HALLOWAY = "Foreman Halloway arrives at the site with a security team, not to negotiate but to enforce a containment seal that will bury the Kestrel and every occupant inside it."
+
+
+def twins():
+    one = chapter(10, ["e1"], "Halloway holds the bay.", "The bay is held.")
+    one.title, one.summary = "The Seal", HALLOWAY
+    two = chapter(12, ["e2"], "Eli boards.", "Eli is aboard.")
+    two.title, two.summary = "The Hunt", HALLOWAY.replace("arrives at the site", "arrives")
+    return [one, two]
+
+
+def test_two_chapters_that_plan_the_same_event_get_the_later_one_rewritten_and_kept_when_the_check_passes(project):
+    from bookforge.validators import repeats
+    chs = twins()
+    plain = [c.model_dump() for c in chs]
+    found = [f for f in repeats.repeated_events(plain, [], ledger_events=LONG) if f.severity == HARD]
+    assert found and found[0].code == "event_repeated" and found[0].items == ["b2.ch10", "b2.ch12"]
+    fixed = json.dumps({"purpose": "To get Eli aboard the Kestrel.", "summary": "Eli reaches the hatch and boards the Kestrel, then begins the launch sequence while the lockdown holds the sector."})
+    llm = RuleLLM([("describe an event that an EARLIER chapter already told", fixed)])
+    notes = overreach_fix.fix_retells(StepContext(project=project, layer="chapters", llm=llm), chs, LONG, found)
+    assert len(notes) == 1 and "b2.ch12" in notes[0] and "b2.ch10" in notes[0]
+    assert chs[0].summary == HALLOWAY and chs[1].summary.startswith("Eli reaches the hatch")  # the earlier chapter is untouched
+    assert not [f for f in repeats.repeated_events([c.model_dump() for c in chs], [], ledger_events=LONG) if f.severity == HARD]
+
+
+def test_a_rewrite_that_repeats_the_earlier_chapter_again_is_thrown_away(project):
+    from bookforge.validators import repeats
+    chs = twins()
+    found = [f for f in repeats.repeated_events([c.model_dump() for c in chs], [], ledger_events=LONG) if f.severity == HARD]
+    again = json.dumps({"purpose": "Halloway arrives with a security team.", "summary": HALLOWAY})
+    llm = RuleLLM([("describe an event that an EARLIER chapter already told", again)])
+    before = chs[1].summary
+    assert overreach_fix.fix_retells(StepContext(project=project, layer="chapters", llm=llm), chs, LONG, found) == [] and chs[1].summary == before
