@@ -64,12 +64,39 @@ def normalize_chapters(project, data, raw: list, act, ledger, first_number: int)
     return drop_empty_tail(raw), notes, []
 
 
-def normalize_scenes(project, data, raw: list, chapter, ledger) -> list[str]:
-    """Scene ids by position, events another chapter tells taken out, an event shown twice kept once, one shown nowhere added."""
+def normalize_scenes(project, data, raw: list, chapter, ledger) -> tuple[list[str], list[str]]:
+    """(notes, problems). The tool cuts the chapter's events at each scene's `starts_with` (a bad start is the only problem, and goes back to the model
+    alone), then scene ids by position, an event another chapter tells taken out, one shown twice kept once, one shown nowhere added."""
     if ledger is None or not raw:
-        return []
+        return [], []
+    problems = partition.assign_scenes(raw, list(chapter.events_covered), list(chapter.events_continued))
+    if problems:
+        return [], problems
     notes = repair.repair_scenes(raw, data.get("tracks") if isinstance(data, dict) else None, list(chapter.events_covered),
                                  list(chapter.events_covered) + list(chapter.events_continued), [e.model_dump() for e in ledger.events], project.book,
                                  parse_position(chapter.id).chapter)
     _note(project, "scenes", chapter.id, notes)
-    return notes
+    return notes, []
+
+
+def derive_days(raw: list, prev_day: int | None) -> None:
+    """Story days by construction: a scene says how many days after the one before it happens (`days_later`, 0 for the same day), the tool adds them up.
+    Only a flashback gives an absolute `day`. A scene that gives neither is on the same day. A reply that still gives absolute days is left as it is."""
+    day = prev_day
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        if item.get("flashback"):
+            continue  # runs backwards on purpose: its own absolute day (checked as before), and the main line goes on from where it was
+        if "days_later" in item:
+            try:
+                later = max(0, int(item.pop("days_later")))
+            except (TypeError, ValueError):
+                later = 0
+            item["day"] = (day if day is not None else 1) + later
+        elif item.get("day") in (None, ""):
+            item["day"] = day if day is not None else 1
+        try:
+            day = int(item["day"])
+        except (TypeError, ValueError):
+            pass

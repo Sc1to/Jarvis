@@ -1,6 +1,7 @@
 """The model names where each chapter starts; the tool cuts the act's events there. What used to need checks and repairs cannot be written any more."""
 
 import copy
+import structure_fakes as sf
 
 from conftest import RuleLLM
 from ledger_structure_fakes import chapters, dump, rules
@@ -133,3 +134,85 @@ def test_a_possessive_is_the_same_name_in_the_unknown_name_check():
     units = [dict(id="b2.ch12", purpose="Halloway's men reach the bay.", summary="Eli's plan fails and the Kestrel's engines wake.", end_state="The empty chair is Mara's.")]
     names = [n for f in name_checks.unknown_names(units, cast, "chapters") for n in f.message.split(" names ", 1)[1].split(", which")[0].split(", ")]
     assert "halloway's" not in names and "eli's" not in names and sorted(names) == ["kestrel", "mara"]  # the cast is the cast; real unknown names are still found
+
+
+# ── scenes ─────────────────────────────────────────────────────────────────
+
+def sc(*start, **kw):
+    d = {"purpose": "p"}
+    if start:
+        d["starts_with"] = start[0]
+    d.update(kw)
+    return d
+
+
+def test_each_scene_tells_the_stretch_from_its_starting_event_and_a_scene_with_no_start_goes_on_with_the_one_before():
+    raw = [sc("e1"), sc(), sc("e3"), sc("e4")]
+    assert partition.assign_scenes(raw, ["e1", "e2", "e3", "e4"], []) == []
+    assert [s["events"] for s in raw] == [["e1", "e2"], [], ["e3"], ["e4"]] and all("starts_with" not in s for s in raw)
+
+
+def test_the_first_scene_starts_with_the_chapters_first_event_and_takes_an_event_the_chapter_only_continues():
+    raw = [sc("e2"), sc("e3")]
+    assert partition.assign_scenes(raw, ["e1", "e2", "e3"], ["e0"]) == []
+    assert [s["events"] for s in raw] == [["e0", "e1", "e2"], ["e3"]]
+    bare = [sc(), sc()]  # no starts_with at all: the old shape, left as it is
+    assert partition.assign_scenes(bare, ["e1"], []) == [] and "events" not in bare[0]
+    carry_only = [sc(starts_with=None) | {"starts_with": None}]
+    assert partition.assign_scenes(carry_only, [], ["e0"]) == [] and carry_only[0]["events"] == ["e0"]
+
+
+def test_a_scene_start_the_chapter_does_not_own_or_that_goes_backwards_goes_back_to_the_model_alone():
+    foreign = partition.assign_scenes([sc("e1"), sc("e9")], ["e1", "e2"], [])
+    assert len(foreign) == 1 and "'e9'" in foreign[0] and "not an event of this chapter" in foreign[0] and "e1, e2" in foreign[0]
+    back = partition.assign_scenes([sc("e2"), sc("e1")], ["e1", "e2"], [])
+    assert len(back) == 1 and "later and later events" in back[0]
+    both = [sc("e1", events=["e2"]), sc("e2", events=["e1"])]  # both fields: starts_with alone is read
+    assert partition.assign_scenes(both, ["e1", "e2"], []) == [] and [s["events"] for s in both] == [["e1"], ["e2"]]
+
+
+def test_story_days_are_added_up_from_days_later_and_cannot_run_backwards():
+    from bookforge.bible import normalize
+    raw = [dict(days_later=0), dict(days_later=2), dict(days_later=-3), dict(), dict(flashback=True, day=1), dict(days_later="soon"), dict(days_later=1)]
+    normalize.derive_days(raw, None)
+    assert [s["day"] for s in raw] == [1, 3, 3, 3, 1, 3, 4]  # a negative or unreadable number is today; a flashback has its own day and the story goes on from where it was
+    assert "days_later" not in raw[1]
+    old = [dict(day=5), dict(day=2)]
+    normalize.derive_days(old, 4)
+    assert [s["day"] for s in old] == [5, 2]  # absolute days are left as they were (and checked as before)
+    follow = [dict(days_later=0), dict()]
+    normalize.derive_days(follow, 7)
+    assert [s["day"] for s in follow] == [7, 7]
+
+
+def scenes_with_starts(ch, starts):
+    out = copy.deepcopy(sf.scenes_reply(ch))
+    for s, st in zip(out["scenes"], starts):
+        s.pop("events", None)
+        s.pop("id", None)
+        if st:
+            s["starts_with"] = st
+    return out
+
+
+def test_a_chapters_scenes_planned_with_starts_and_days_later_are_saved_with_the_events_and_days_the_tool_cut(project):
+    import ledger_structure_fakes as lf
+    p = project_ready(project)
+    run(p, RuleLLM(rules()), HANDLERS, until="chapters")
+    replies = []
+    for ch in range(1, 5):
+        r = lf.scenes(ch)
+        for i, s in enumerate(r["scenes"]):
+            s.pop("events", None)
+            s.pop("id", None)
+            s.pop("day", None)
+            s["days_later"] = 0 if (ch == 1 and i == 0) else 1  # each scene a day after the one before: no two places at one moment
+            if i == 0:
+                s["starts_with"] = lf.COVER[ch][0]
+        replies.append((f"Scene ids are consecutive: b1.ch{ch:02d}.s1", dump(r)))
+    summary = run(p, RuleLLM(replies + rules()[:4]), HANDLERS, until="scenes")
+    assert summary.ran == ["scenes"], summary.detail
+    scenes = store.load_scenes(p)
+    assert [s.id for s in scenes][:2] == ["b1.ch01.s1", "b1.ch01.s2"] and scenes[0].events == ["e1"] and scenes[1].events == []
+    days = [t.day for t in store.load_timeline(p)]
+    assert days == list(range(1, len(days) + 1))  # 0 then 1 day later each time: 1, 2, 3 ...

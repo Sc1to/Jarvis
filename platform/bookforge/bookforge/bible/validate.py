@@ -17,7 +17,7 @@ from pydantic import ValidationError
 from .. import diagnostics
 from ..project import Project
 from ..validators import accepted
-from . import normalize, store
+from . import normalize, partition, store
 from .models import Act, Chapter, Constants, Entity, Rule, Scene, TimelineEntry, Track, problems_from
 from .positions import act_id, canonical, chapter_id, parse_act_id, parse_position, scene_id
 
@@ -371,6 +371,7 @@ def parse_chapters(
     raw = _items(data, "chapters", problems)
     entities = entity_map(constants)
     new_places = adopt_places(raw, entities, act.id)
+    new_shape = ledger is not None and partition.uses_starts([c for c in raw if isinstance(c, dict)])  # the tool cut the events (not the model's lists)
     raw, repairs, bad_starts = normalize.normalize_chapters(project, data, raw, act, ledger, first_number)
     if bad_starts:  # nothing else is checked: chapters without events would only add a wall of follow-on errors that tell the model to list events itself
         return None, problems + bad_starts
@@ -403,7 +404,7 @@ def parse_chapters(
                            allowed_from=allowed, prefix="tracks", problems=problems)
     derived: list = []
     if ledger is not None:
-        derived = _ledger_chapter_checks(project, data, chapters, act, ledger, chapters_before or [], acts or [], problems, ctx, constants)
+        derived = _ledger_chapter_checks(project, data, chapters, act, ledger, chapters_before or [], acts or [], problems, ctx, constants, new_shape)
     if raw and not any(t.plan for t in tracks):
         # Without tracks the story's changes (injuries, who knows what, where people are) are neither planned nor checked later.
         problems.append(f"{act.id} defines no state tracks: add a 'tracks:' list with at least one track created or extended in these chapters "
@@ -443,7 +444,8 @@ def normalize_derived(raw, per_parent: dict[str, int]) -> dict:
     return raw
 
 
-def _ledger_chapter_checks(project, data, chapters: list[Chapter], act: Act, ledger, before: list[Chapter], acts: list[Act], problems: list[str], ctx=None, constants=None) -> list:
+def _ledger_chapter_checks(project, data, chapters: list[Chapter], act: Act, ledger, before: list[Chapter], acts: list[Act], problems: list[str], ctx=None, constants=None,
+                           new_shape: bool = True) -> list:
     """Ledger rules for the chapters of one act: derived complications, events told once, in order, each chapter with something new."""
     from ..validators import HARD, hard, ledger as ledger_checks, repeats
     from .models import StoryEvent
@@ -492,7 +494,7 @@ def _ledger_chapter_checks(project, data, chapters: list[Chapter], act: Act, led
         findings = confirm_repeats(ctx, findings)
     if ctx is not None and project.config.qc.fix_retells:  # a retold event is a wording slip one narrow call fixes; the whole-book check does that (and the fix is saved), instead of whole-act correction rounds
         findings = [f for f in findings if f.code not in ("chapter_retells_event", "event_repeated", "chapter_replans_chapter")]
-    diagnostics.record(project, "chapters", act.id, findings, {"reply": data if isinstance(data, dict) else {}, "chapters": now})
+    diagnostics.record(project, "chapters", act.id, findings, {"reply": data if isinstance(data, dict) else {}, "chapters": now}, enabled=new_shape)
     problems += accepted.hard_lines(project, findings, "chapters")
     return derived
 
@@ -526,7 +528,12 @@ def parse_scenes(
     raw = _items(data, "scenes", problems)
     entities = entity_map(constants)
     new_places = adopt_places(raw, entities, chapter.id)
-    normalize.normalize_scenes(project, data, raw, chapter, ledger)  # mechanical slips (a scene id's number, an event shown twice or nowhere) are put right, not asked about
+    scenes_new_shape = ledger is not None and any(isinstance(x, dict) and "starts_with" in x for x in raw)
+    _, bad_starts = normalize.normalize_scenes(project, data, raw, chapter, ledger)  # events cut at each starts_with; slips (an id's number, an event twice or nowhere) put right
+    if bad_starts:  # nothing else is checked: scenes without events would only add a wall of follow-on errors
+        return None, problems + bad_starts
+    if ledger is not None:
+        normalize.derive_days(raw, prev_day)  # story days from `days_later`: they cannot run backwards
     lo, hi = count_range(project, "scenes")
     if raw and not lo <= len(raw) <= hi:
         problems.append(f"{chapter.id} needs {lo} to {hi} scenes, got {len(raw)}")
@@ -577,7 +584,7 @@ def parse_scenes(
         found += ledger_checks.check_scene_texts(plain_scenes, [c.model_dump() for c in all_chapters or [chapter]], plain_events)
         found += repeats_check.scene_repeats_in_chapters(plain_scenes)
         found += ledger_checks.scene_count_plausibility(chapter.model_dump(), plain_scenes, plain_events, max_scenes=count_range(project, "scenes")[1])
-        diagnostics.record(project, "scenes", chapter.id, found, {"reply": data if isinstance(data, dict) else {}, "scenes": plain_scenes})
+        diagnostics.record(project, "scenes", chapter.id, found, {"reply": data if isinstance(data, dict) else {}, "scenes": plain_scenes}, enabled=scenes_new_shape)
         problems += accepted.hard_lines(project, found, "scenes")
     return (None, problems) if problems else (ScenesBundle(scenes, timeline, tracks_after, new_places), [])
 
