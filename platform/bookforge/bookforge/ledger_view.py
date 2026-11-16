@@ -32,10 +32,15 @@ def act_events(ledger: Ledger, ids: list[str]) -> list[StoryEvent]:
     return [e for e in ledger.events if e.id in want or (e.parent and e.parent in want and e.id in want)]
 
 
+NOT_YET = "More of the story follows. It is not yours to tell, prepare or hint at."
+
+
 def status_text(ledger: Ledger, mine: set[str], chapters_done: list[Chapter], mine_label: str = "ASSIGNED HERE: plan these", continuing: set[str] | None = None,
-                done_limit: int | None = None) -> str:
+                done_limit: int | None = None, future: str = "show") -> str:
     """done / assigned here / reserved for later, with an explicit instruction about what must not be used yet.
-    `done_limit` keeps only the last few DONE events in full and sums up the rest: a long list of events already told invites a model to copy them."""
+    `done_limit` keeps only the last few DONE events in full and sums up the rest: a long list of events already told invites a model to copy them.
+    `future="hidden"` leaves the events reserved for later out altogether (need-to-know): a model that is shown a fact and told to ignore it uses it, so a
+    planner of one chapter or scene gets the past and the present and one neutral line about the rest, never the text of what comes later."""
     covered = covered_map(chapters_done)
     done, here, later, cont = [], [], [], []
     for e in ledger.events:
@@ -55,7 +60,8 @@ def status_text(ledger: Ledger, mine: set[str], chapters_done: list[Chapter], mi
     return ("DONE (already told; never tell again, refer to them only as the past):\n" + ("\n".join(done) or "none yet")
             + ("\n\nCONTINUING FROM THE CHAPTER BEFORE (this chapter carries it on; do not start it again, do not repeat what was already shown):\n" + "\n".join(cont) if cont else "")
             + f"\n\n{mine_label}:\n" + ("\n".join(here) or "none")
-            + "\n\nRESERVED FOR LATER (do NOT use, hint at, stage or resolve any of these yet):\n" + ("\n".join(later) or "none"))
+            + ("\n\nNOT YET TOLD:\n" + NOT_YET if future == "hidden" and later
+               else "\n\nRESERVED FOR LATER (do NOT use, hint at, stage or resolve any of these yet):\n" + ("\n".join(later) or "none")))
 
 
 def carried_text(project, max_chars: int = 1800) -> str:

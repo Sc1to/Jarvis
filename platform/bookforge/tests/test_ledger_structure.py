@@ -35,14 +35,14 @@ def test_the_whole_structure_is_planned_from_the_ledger(project):
     assert "every event of the ledger belongs to exactly one act" in first_acts_prompt.lower() or "EVERY event of the ledger" in first_acts_prompt
 
 
-def test_the_chapter_planner_is_told_what_is_done_and_what_is_reserved(project):
+def test_the_chapter_planner_is_told_what_is_done_and_nothing_of_what_comes_later(project):
     p = project_ready(project)
     llm = RuleLLM(rules())
     run(p, llm, HANDLERS, until="chapters")
     act2 = next(c for c in llm.calls if "events need, b1.ch03 onward" in c["messages"][-1]["content"])["messages"][-1]["content"]
     assert "DONE (already told" in act2 and "e1 (once" in act2 and "[told in b1.ch01]" in act2
     act1 = next(c for c in llm.calls if "events need, b1.ch01 onward" in c["messages"][-1]["content"])["messages"][-1]["content"]
-    assert "RESERVED FOR LATER" in act1 and "e3 (once" in act1.split("RESERVED FOR LATER")[1]  # act 2's events are off limits in act 1
+    assert "RESERVED FOR LATER" not in act1 and "e3 (once" not in act1 and "NOT YET TOLD" in act1  # act 2's events are not shown at all in act 1 (need-to-know)
     assert "Reference only" in act1 and "must never become a beat" in act1
 
 

@@ -16,7 +16,7 @@ Plan the SCENES of one chapter, when they happen, and how they pin down the stat
 
 {chapter}
 
-## The ledger: what has happened, what this chapter shows, what is reserved
+## The ledger: what has happened and what this chapter shows
 
 {ledger_status}
 
@@ -71,7 +71,7 @@ scenes:
     pov: anna
     setting: harbor
     characters: [anna, jonas]
-    starts_with: e3
+    starts_with: <an id from the list above>
     beats:
       - Anna finds the ledger open on the desk.
       - She reads her own name and runs.

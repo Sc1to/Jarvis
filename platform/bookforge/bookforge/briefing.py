@@ -275,11 +275,8 @@ def _assemble(d: _Data, k: _Knobs) -> tuple[list[Section], Deps]:
         sections.append(Section("Research notes (reference only: for accuracy and texture; never a beat, an obstacle or a plot device)", body))
         deps.research = [tag(f.id, [f.claim, f.url, f.quote]) for f in facts]
 
-    # 4b. events that belong to later chapters (only when the book has a ledger): not to be used yet
-    later = _reserved_events(d)
-    if later:
-        sections.append(Section("Not yet: story events reserved for later (do not show, hint at or resolve them)", later))
-        deps.bible.append(tag("ledger:reserved", later))
+    # 4b. what comes later is not shown at all (need-to-know): a writer shown the next chapters' events uses them. The scene's own plan and the story
+    # so far are all it needs; the checks still catch a scene that tells an event of another chapter.
 
     # 5. the story so far
     so_far, summary_tags = _story_so_far(d, k)
@@ -295,16 +292,6 @@ def _assemble(d: _Data, k: _Knobs) -> tuple[list[Section], Deps]:
             sections.append(Section(f"How the previous scene ended ({prev.id}): continue the moment; do not restate or summarize it", tail))
             deps.previous = [tag(prev.id, tail)]
     return sections, deps
-
-
-def _reserved_events(d: _Data) -> str:
-    from .bible.store import active_ledger
-    ledger = active_ledger(d.project)
-    if ledger is None:
-        return ""
-    cur = parse_position(d.chapter.id).chapter
-    covered_now_or_before = {ev for c in d.chapters if parse_position(c.id).chapter <= cur for ev in c.events_covered}
-    return "\n".join(f"- {e.id}: {e.text}" for e in ledger.events if e.id not in covered_now_or_before and not e.carried_in)
 
 
 def _scene_summary(d: _Data, s: Scene) -> tuple[str, str]:

@@ -76,13 +76,16 @@ def _entries(deps: Deps, key: str) -> dict[str, str]:
     return out
 
 
+LEGACY_RESERVED = "ledger:reserved"
+
+
 def diff(old: Deps, new: Deps, keys=STALE_KEYS) -> list[Reason]:
     """What differs between what a scene was built from and what is there now."""
     reasons = []
     for key in keys:
         a, b = _entries(old, key), _entries(new, key)
         reasons += [Reason(key, i, "changed") for i in a if i in b and a[i] != b[i]]
-        reasons += [Reason(key, i, "removed") for i in a if i not in b]
+        reasons += [Reason(key, i, "removed") for i in a if i not in b and i != LEGACY_RESERVED]  # no longer part of a briefing (need-to-know): not a reason to redo a scene
         reasons += [Reason(key, i, "added") for i in b if i not in a]
     return reasons
 
