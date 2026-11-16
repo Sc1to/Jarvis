@@ -85,10 +85,14 @@ def _check_retell(original: tuple[str, str]):
     return check
 
 
+RETOLD_CODES = ("chapter_retells_event", "event_repeated", "chapter_replans_chapter")
+
+
 def fix_retells(ctx, chapters: list, events: list[dict], findings: list) -> list[str]:
-    """Rewrite the purpose and summary of each chapter a hard chapter_retells_event points to, so it describes only its own events. Kept only if the
-    check then no longer finds that retelling (and nothing else changes). Returns one note per chapter fixed."""
-    from ..validators import ledger as ledger_checks
+    """Rewrite the purpose and summary of a chapter that retells what an earlier chapter already tells, so it describes only its own events. Three
+    findings point to this: a chapter text that describes an event told earlier (chapter_retells_event), and two chapters that plan the same event
+    (event_repeated, chapter_replans_chapter), where the LATER chapter is rewritten. Kept only if the check then no longer finds it. One note per chapter."""
+    from ..validators import ledger as ledger_checks, repeats
 
     project = ctx.project
     if ctx.llm is None or not project.config.qc.fix_retells:
@@ -96,33 +100,54 @@ def fix_retells(ctx, chapters: list, events: list[dict], findings: list) -> list
     by_id = {c.id: c for c in chapters}
     by_event = {e["id"]: e for e in events}
     notes: list[str] = []
+    done: set[str] = set()
+
+    def still_found(f, cid: str, other: str) -> bool:
+        plain = [c.model_dump() for c in chapters]
+        if f.code == "chapter_retells_event":
+            return any(x.code == "chapter_retells_event" and x.severity == HARD and x.items[:2] == [cid, other] for x in ledger_checks.check_chapter_texts(plain, events))
+        return any(x.severity == HARD and x.code in ("event_repeated", "chapter_replans_chapter") and cid in x.items and other in x.items
+                   for x in repeats.repeated_events(plain, [], ledger_events=events))
+
     for f in findings[:MAX_FIXES]:
-        if f.severity != HARD or f.accepted or f.code != "chapter_retells_event" or len(f.items) < 2:
+        if f.severity != HARD or f.accepted or f.code not in RETOLD_CODES or len(f.items) < 2:
             continue
-        cid, ev_id = f.items[0], f.items[1]
-        ch, ev = by_id.get(cid), by_event.get(ev_id)
-        if ch is None or ev is None:
-            continue
-        told_in = next((c.id for c in chapters if ev_id in c.events_covered and c.id != cid), "an earlier chapter")
-        own = [by_event[x] for x in list(ch.events_covered) + list(ch.events_continued) if x in by_event]
-        if not own:
-            continue  # a chapter with no events of its own cannot be rewritten into one: that takes judgement
-        old = (ch.purpose, ch.summary)
-        try:
-            data = ask_json(ctx, f"fix retold event {cid}", project.config.layers["chapters"].model, "retell_fix", _check_retell(old), max_tokens=900,
-                            title=ch.title, purpose=ch.purpose, summary=ch.summary, own_events="\n".join(f"- {e['id']}: {e['text']}" for e in own),
-                            forbidden=f"{ev_id}: {ev['text']}", told_in=told_in)
-        except Exception as e:  # no rewrite is no change: the finding stays
-            log.info("%s: retold event not fixed (%s)", cid, e)
-            continue
-        ch.purpose, ch.summary = data["purpose"].strip(), data["summary"].strip()
-        still = [x for x in ledger_checks.check_chapter_texts([c.model_dump() for c in chapters], events)
-                 if x.code == "chapter_retells_event" and x.severity == HARD and x.items[:2] == [cid, ev_id]]
-        if still:
-            ch.purpose, ch.summary = old  # the rewrite still retells it: the saved wording stands
-            log.info("%s: retold event not fixed (the check still finds it)", cid)
-            continue
-        notes.append(f"{cid}: its purpose and summary retold {ev_id}, which {told_in} already tells; the wording was rewritten and the check passes")
+        if f.code == "chapter_retells_event":
+            cid, ev_id = f.items[0], f.items[1]
+            ch, ev = by_id.get(cid), by_event.get(ev_id)
+            if ch is None or ev is None:
+                continue
+            told_in = next((c.id for c in chapters if ev_id in c.events_covered and c.id != cid), "an earlier chapter")
+            jobs = [(ch, f"{ev_id}: {ev['text']}", told_in, ev_id)]
+        else:
+            ids = [x for x in f.items if x in by_id]
+            if len(ids) < 2:
+                continue
+            ids.sort(key=lambda x: chapters.index(by_id[x]))
+            first = by_id[ids[0]]
+            jobs = [(by_id[x], f"{first.title}: {first.summary}", first.id, first.id) for x in ids[1:]]
+        for ch, forbidden, told_in, other in jobs:
+            if ch.id in done:
+                continue
+            own = [by_event[x] for x in list(ch.events_covered) + list(ch.events_continued) if x in by_event]
+            if not own:
+                continue  # a chapter with no events of its own cannot be rewritten into one: that takes judgement
+            old = (ch.purpose, ch.summary)
+            try:
+                data = ask_json(ctx, f"fix retold {ch.id}", project.config.layers["chapters"].model, "retell_fix", _check_retell(old), max_tokens=900,
+                                title=ch.title, purpose=ch.purpose, summary=ch.summary, own_events="\n".join(f"- {e['id']}: {e['text']}" for e in own),
+                                forbidden=forbidden, told_in=told_in)
+            except Exception as e:  # no rewrite is no change: the finding stays
+                log.info("%s: retold text not fixed (%s)", ch.id, e)
+                continue
+            ch.purpose, ch.summary = data["purpose"].strip(), data["summary"].strip()
+            if still_found(f, ch.id, other):
+                ch.purpose, ch.summary = old  # the rewrite still retells it: the saved wording stands
+                log.info("%s: retold text not fixed (the check still finds it)", ch.id)
+                continue
+            done.add(ch.id)
+            what = f"{other}, which {told_in} already tells" if f.code == "chapter_retells_event" else f"what {told_in} already tells"
+            notes.append(f"{ch.id}: its purpose and summary retold {what}; the wording was rewritten and the check passes")
     return notes
 
 
@@ -180,12 +205,12 @@ def fix_tension(ctx, chapters: list, findings: list) -> list[str]:
     return notes
 
 
-UNFIXABLE_WARNINGS = ("end_state_overreach", "flat_tension")  # wording and rating heuristics: a warning when one narrow fix did not clear them, not a stop for the whole book
+UNFIXABLE_WARNINGS = ("end_state_overreach", "flat_tension", "chapter_retells_event", "event_repeated", "chapter_replans_chapter")  # wording and rating heuristics (a word-overlap check says a chapter retells another): a warning when one narrow fix did not clear them, not a stop for the whole book
 
 
 def demote_unfixable(findings: list) -> list:
     """After the fixes were tried: a hard finding of these kinds that is still there becomes a soft one that says so (it stays in the stage checks, but the
-    run goes on). A retold event stays hard: it is a concrete defect in the plan."""
+    run goes on). Structural findings (an event in no chapter, in the wrong act, out of order) are not on the list and stay hard."""
     from dataclasses import replace
 
     from ..validators import SOFT

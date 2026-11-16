@@ -473,7 +473,7 @@ def _book_chapter_checks(project, chapters: list[Chapter], ledger, ctx=None) -> 
 
     findings = compute()
     over = [f for f in findings if f.code == "end_state_overreach" and f.severity == HARD and not f.accepted]
-    retold = [f for f in findings if f.code == "chapter_retells_event" and f.severity == HARD and not f.accepted]
+    retold = [f for f in findings if f.code in ("chapter_retells_event", "event_repeated", "chapter_replans_chapter") and f.severity == HARD and not f.accepted]
     flat = [f for f in findings if f.code == "flat_tension" and f.severity == HARD and not f.accepted]
     if (over or retold or flat) and ctx is not None:  # a chapter whose own wording or rating is wrong is corrected, once, in a narrow call, instead of asking you
         from ..qc import overreach_fix

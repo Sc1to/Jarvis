@@ -195,4 +195,5 @@ export interface InboxView {
   demoted?: Record<string, { rate: number; of: number; since: string }>
   canon?: { id: string; item: string; answer: string; entities: string[]; needs: string[]; at: string; undone?: boolean }[]
   policy?: { world_facts: 'research' | 'extrapolate' | 'invent'; invention: string; source: string }
+  diagnostics?: { count: number; folder: string; latest: { file: string; at: string; layer: string; key: string; codes: string[] }[] }
 }

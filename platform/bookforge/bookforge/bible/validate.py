@@ -14,10 +14,10 @@ import logging
 import yaml
 from pydantic import ValidationError
 
-from .. import healing
+from .. import diagnostics
 from ..project import Project
 from ..validators import accepted
-from . import store
+from . import normalize, store
 from .models import Act, Chapter, Constants, Entity, Rule, Scene, TimelineEntry, Track, problems_from
 from .positions import act_id, canonical, chapter_id, parse_act_id, parse_position, scene_id
 
@@ -174,12 +174,7 @@ def parse_acts(text: str, project: Project, ledger=None) -> tuple[list[Act] | No
         return None, [error]
     problems: list[str] = []
     raw = _items(data, "acts", problems)
-    if ledger is not None and raw:  # mechanical slips (events in no act, in two acts, out of order) are put right, not asked about
-        from . import repair
-        notes = repair.repair_acts(raw, [e.model_dump() for e in ledger.events])
-        for note in notes:
-            log.info("acts: %s", note)
-        healing.note(project, "acts", "acts", notes)
+    normalize.normalize_acts(project, raw, ledger)  # mechanical slips (events in no act, in two acts, out of order) are put right, not asked about
     cfg = project.config.layers
     forced = cfg["acts"].count
     lo, hi = forced or (3, 4)
@@ -212,6 +207,7 @@ def parse_acts(text: str, project: Project, ledger=None) -> tuple[list[Act] | No
                 a.sizing_reason = fixed["sizing_reason"]
         findings = ledger_checks.check_acts([a.model_dump() for a in acts], [e.model_dump() for e in ledger.events], weight_per_chapter=project.config.ledger.weight_per_chapter,
                                              capacity_estimate=(ledger.capacity or {}).get("estimated_chapters"), tolerance=project.config.ledger.count_tolerance)
+        diagnostics.record(project, "acts", "acts", findings, {"acts": [a.model_dump() for a in acts]})
         problems += accepted.hard_lines(project, findings, "acts")
     return (None, problems) if problems else (acts, [])
 
@@ -363,22 +359,6 @@ def merge_derived(events: list, derived: list) -> list:
     return out
 
 
-def _drop_empty_tail(raw: list) -> list:
-    """Chapters at the end of an act that only repeat events earlier chapters of the act already tell, and continue nothing: the act's events ran
-    out and the model filled the ceiling. Nothing new is lost by leaving them out, so they are dropped instead of failing the act."""
-    items = list(raw)
-    while len(items) > 1:
-        last = items[-1]
-        if not isinstance(last, dict) or last.get("events_continued"):
-            break
-        covered = last.get("events_covered")
-        told = {e for c in items[:-1] if isinstance(c, dict) for e in (c.get("events_covered") or []) if isinstance(e, str)}
-        if not isinstance(covered, list) or not covered or not all(isinstance(e, str) and e in told for e in covered):
-            break
-        items.pop()
-    return items
-
-
 def parse_chapters(
     text: str, *, project: Project, act: Act, first_number: int, constants: Constants,
     tracks_so_far: list[Track], fact_ids: set[str], ledger=None, chapters_before: list[Chapter] | None = None, acts: list[Act] | None = None, ctx=None,
@@ -391,18 +371,9 @@ def parse_chapters(
     raw = _items(data, "chapters", problems)
     entities = entity_map(constants)
     new_places = adopt_places(raw, entities, act.id)
-    repairs: list[str] = []
-    if ledger is not None:
-        from . import partition, repair
-        declared = data.get("derived_events") if isinstance(data, dict) else None
-        bad_starts = partition.assign(raw, partition.act_order(ledger.events, act.events, declared if isinstance(declared, list) else None))  # the tool cuts the act's events at each chapter's starts_with
-        if bad_starts:  # nothing else is checked: chapters without events would only add a wall of follow-on errors that tell the model to list events itself
-            return None, problems + bad_starts
-        repairs = repair.repair_chapters(raw, data.get("tracks") if isinstance(data, dict) else None, [e.model_dump() for e in ledger.events], list(act.events) + [e.id for e in ledger.events if e.parent and e.parent in act.events], project.book, first_number)
-        for note in repairs:
-            log.info("chapters %s: %s", act.id, note)
-        healing.note(project, "chapters", act.id, repairs)
-        raw = _drop_empty_tail(raw)
+    raw, repairs, bad_starts = normalize.normalize_chapters(project, data, raw, act, ledger, first_number)
+    if bad_starts:  # nothing else is checked: chapters without events would only add a wall of follow-on errors that tell the model to list events itself
+        return None, problems + bad_starts
     limit = (max_chapters or act.chapter_count) if ledger is not None else act.chapter_count
     if raw and ledger is not None and len(raw) > limit:  # with a ledger the count follows from the act's events: at most what they can supply
         problems.append(f"{act.id} has events for at most {limit} chapters, got {len(raw)}: a chapter needs an event of its own")
@@ -520,7 +491,8 @@ def _ledger_chapter_checks(project, data, chapters: list[Chapter], act: Act, led
         from ..qc.repeat_confirm import confirm_repeats
         findings = confirm_repeats(ctx, findings)
     if ctx is not None and project.config.qc.fix_retells:  # a retold event is a wording slip one narrow call fixes; the whole-book check does that (and the fix is saved), instead of whole-act correction rounds
-        findings = [f for f in findings if f.code != "chapter_retells_event"]
+        findings = [f for f in findings if f.code not in ("chapter_retells_event", "event_repeated", "chapter_replans_chapter")]
+    diagnostics.record(project, "chapters", act.id, findings, {"reply": data if isinstance(data, dict) else {}, "chapters": now})
     problems += accepted.hard_lines(project, findings, "chapters")
     return derived
 
@@ -554,13 +526,7 @@ def parse_scenes(
     raw = _items(data, "scenes", problems)
     entities = entity_map(constants)
     new_places = adopt_places(raw, entities, chapter.id)
-    if ledger is not None and raw:  # mechanical slips (a scene id's number, an event shown twice or nowhere) are put right, not asked about
-        from . import repair
-        notes = repair.repair_scenes(raw, data.get("tracks") if isinstance(data, dict) else None, list(chapter.events_covered),
-                                     list(chapter.events_covered) + list(chapter.events_continued), [e.model_dump() for e in ledger.events], project.book, parse_position(chapter.id).chapter)
-        for note in notes:
-            log.info("scenes %s: %s", chapter.id, note)
-        healing.note(project, "scenes", chapter.id, notes)
+    normalize.normalize_scenes(project, data, raw, chapter, ledger)  # mechanical slips (a scene id's number, an event shown twice or nowhere) are put right, not asked about
     lo, hi = count_range(project, "scenes")
     if raw and not lo <= len(raw) <= hi:
         problems.append(f"{chapter.id} needs {lo} to {hi} scenes, got {len(raw)}")
@@ -611,6 +577,7 @@ def parse_scenes(
         found += ledger_checks.check_scene_texts(plain_scenes, [c.model_dump() for c in all_chapters or [chapter]], plain_events)
         found += repeats_check.scene_repeats_in_chapters(plain_scenes)
         found += ledger_checks.scene_count_plausibility(chapter.model_dump(), plain_scenes, plain_events, max_scenes=count_range(project, "scenes")[1])
+        diagnostics.record(project, "scenes", chapter.id, found, {"reply": data if isinstance(data, dict) else {}, "scenes": plain_scenes})
         problems += accepted.hard_lines(project, found, "scenes")
     return (None, problems) if problems else (ScenesBundle(scenes, timeline, tracks_after, new_places), [])
 

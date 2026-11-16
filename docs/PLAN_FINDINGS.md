@@ -1,0 +1,131 @@
+# Plan: no structural errors, and every content error comes with a one-tap fix (approved 2026-11-17)
+
+Branch `ccr-62191c26-s69gvc`. Backend `platform/bookforge/bookforge/`, frontend `frontend/bookforge/src/`. One PR per phase, tests with each, merge on green (full local suite; the repo has no CI).
+
+## Context
+On the first real b2 run, every run showed a new kind of finding. We fixed them one at a time (repairs, narrow rewrites, warnings) and the next run showed another. The research for this plan shows why:
+
+- **The model still writes structure the tool already knows.** Scene events, act events, track `from` positions, `chapter_count`, `turning_point_event`, derived-event ids, scene days, ending/decision flags. Each field has its own check and its own repair, spread over about 14 repair calls and about 10 silent normalisers, with no single entry point per layer. A slip in any of them is a finding.
+- **Content findings reach you as open text boxes.** Of ~110 finding codes, the Inbox can suggest something for only 2 kinds (`sentence_not_covered`, world-fact questions). Everything else is "Your instruction for the next run", with no suggestion.
+- Evidence from the b2 call log: the model's own first reply copied events already told, the tool's error cascade made it write the old format, and one correction round could not fix a retold chapter.
+
+You asked for two rules, and this plan makes them the architecture:
+- **(a) Structural errors do not exist.** The model never writes anything the tool can derive. If a structural problem still appears, it is a tool bug, not an item for you.
+- **(b) Content errors always come with a recommended, executable fix.** No empty text boxes. One tap applies it.
+
+You decided: **per book, Ask me (default) or Apply recommended** (Apply recommended applies the tool's fix on its own, lists it in the morning report, with Undo).
+
+## Principles
+1. **Derive, don't ask.** A field with exactly one right answer is computed by the tool (by construction), never written by the model and then checked.
+2. **A finding is a remedy waiting to run.** Each finding code is registered with a class and its remedies; a code with no registered remedy fails a test.
+3. **Content never stops a run.** Wording, rating and repeat findings are collected, fixed or offered, and only block the checkpoint approval. Only a story DECISION at the ledger stage still stops (as now), because later layers would be built on it.
+4. **Everything applied is undoable** (reuse `versions.keep`) and re-checked.
+
+## Part A: structural errors cannot occur
+
+### A0. One normalisation entry point per layer, and a tool-bug path
+- New `bookforge/bible/normalize.py` with `normalize_acts / chapters / scenes / ledger / cast(raw, context) -> (plain data, notes)`. It composes what exists today (`partition.assign`, `repair.*`, `normalize_derived`, `adopt_places`, id assignment, track remapping) so each layer has ONE pipeline; `parse_*` in `bible/validate.py` call only it. Adopted and cached files go through the same entry (today adopted files bypass repair).
+- **Invariant:** after `normalize_*`, no structural check can fire. If one does, it is a tool bug: it is not an Inbox item and never sent back to the model as a wall of errors. The run writes a diagnostics bundle (`books/<b>/diagnostics/<stamp>.json`: the raw reply, the normalised data, the failing check) and retries once from the by-construction path; the page shows "Internal problem, diagnostics saved" with the file path. This also ends the "send me files" round trips.
+
+### A1. Convert what the model still writes into things the tool derives
+Ranked by value (from the structure map), each with the checks that become impossible:
+
+| # | Field today | Replacement | Checks and repairs that go away |
+|---|---|---|---|
+| 1 | Scene `events` | Scenes name `starts_with` like chapters; reuse `partition.assign` on `chapter.events_covered`; a scene with no `starts_with` carries on the previous one | `scene_event_not_in_chapter`, `chapter_event_not_in_scenes`, `once_only_repeated` (scenes), `repair_scenes` (except renumbering) |
+| 2 | Act `events` list | Acts name `starts_with` (same partition); ending event forced into the last act | `event_in_two_acts`, `event_in_no_act`, `acts_out_of_order`, `unknown_event` (acts), `resolution_not_in_last_act`, all of `repair_acts` |
+| 3 | Act `chapter_count`, `sizing_reason`, `turning_point_event` | Tool computes count from `act_weight`, writes the `[computed: ...]` note, sets the turning point to the act's last event (last act: decision or ending) | `acts_differ_from_capacity`, `sizing_reason_mismatch`, `implausible_chapter_count`, `chapter_count_exceeds_capacity`, `turning_point_without_event`, `turning_point_not_in_act`, `final_turning_point_is_transition`, `repair_sizing`, the `override:` convention |
+| 4 | Track `from` positions (chapters and scenes) | States nest under the chapter (`states: [{track, value, must_show}]`); scenes pin by track id (`shows: [...]`); tool pivots to tracks with `from` set | all `from` spelling / not-allowed / used-twice problems, `_remap_tracks`, `_apply_refinement` guards, must_show-not-pinned |
+| 5 | Chapter `events_continued` | `continues: true`; tool takes the previous chapter's last event | `continued_event_not_begun`, other-act case |
+| 6 | Derived-event ids, parent, `after`, weight, kind | Model gives only `text`, attached to a chapter; tool sets the rest | `derived_not_minor`, `derived_not_after_parent`, `derived_without_parent`, id collision |
+| 7 | Scene `day` (absolute) | `days_later` deltas; absolute `day` only for a flashback | `story_day_backwards`, in-parse and `validate_bible` day problems |
+| 8 | Ids: act, chapter, scene (non-ledger mode too), cast entity and rule, ledger event, question | Never asked for; assigned by position / slugified from `name` | all id-mismatch problems, `duplicate_event_id` |
+| 9 | Ledger `ending: true`, `decision: true`, setup/payoff `kind` | Top-level `ending: eN`, `decision: eN`; `pays_off` alone sets both kinds | `several_endings`, `several_decisions`, `no_resolution`, `payoff_target_not_setup`, `payoff_without_setup` |
+| 10 | pov / setting / characters / research ids | Tool resolves an id, a name or a near-miss to a cast id; attaches the research ids it injected | "not in the cast", wrong-kind, unknown research id |
+
+Also: structural codes with no remedy today (`event_cycle`, `resolution_not_final_paragraph`, `synopsis_not_covered`, `weights_flat`, `continued...`) are each either made impossible by the rows above or turned into a DECISION item with options (Part B).
+
+### A2. The guarantee, as a test
+Add `hypothesis` (dev requirement). Property tests per layer: generate a valid plan, apply random model-style mutations (wrong ids, duplicates, missing starts, foreign events, reordering, extra fields, both old and new shape), and assert `normalize_*` output has zero structural findings, covers each event once, and is idempotent. A registry test (B1) asserts every structural code is either marked "impossible by construction" or has a normaliser.
+
+### A3. Prompts and the weak model
+Prompts get shorter (sizing paragraphs, id instructions, event lists go away). Wherever the model must pick an event, the prompt lists the valid ids (done for chapters; same for scenes and acts). The correction message for a bad pick returns only that problem (done for chapters), never follow-on errors.
+
+## Part B: content errors always carry an executable recommendation
+
+### B1. Finding registry (`bookforge/remedies/registry.py`)
+`FindingSpec(code, stage, klass, remedies)`, where class is STRUCTURAL (Part A), WORDING, RATING or DECISION, and `Remedy(id, label, effect, kind, build(finding, project) -> Action, rank)`. Exactly one remedy is `recommended`. A test enumerates every code emitted by `hard()/soft()` plus parser problem kinds and audit types (the catalog is already built) and fails on any code without a registered class, or a content code without a recommended remedy.
+
+### B2. Actions and executor (`bookforge/remedies/actions.py`)
+Executable, undoable, re-checked steps built from existing code:
+
+| Action | Reuses |
+|---|---|
+| `rewrite_text(chapter\|scene, fields, forbidden)` | `qc/overreach_fix.py` (`fix`, `fix_retells`, `_check_*`), `ask_json` |
+| `rerate_tension(ids)` | `overreach_fix.fix_tension` |
+| `rewrite_passage(scene, flags)` | `prose_repair.fix`, `qc/revise.revise_text` |
+| `merge_chapters / drop_chapter / split_chapter` | `partition` (re-cut starts), `repair._remap_tracks`, `versions.keep` |
+| `set_pov(unit, id)`, `rewrite_to_follow_pov` | `validate` entity checks |
+| `add_cast_entity(name, kind, facts)`, `replace_name(old, id)` | `cast.add`, `cast` rename, `canon` |
+| `waive / attach / widen / new_event` | `resolve.py`, `answers.py` |
+| `accept(finding)` | `accepted.accept` |
+
+The executor applies one option, snapshots first (`versions.keep`), re-runs only the affected check, records the outcome in `decisions.jsonl` (existing per-outcome stats and demotion keep working) and a "Fixed" line in healing.
+
+### B3. Recommended options per content finding
+Each item shows the options with the recommended one preselected. Initial table for the codes that reach you most (the registry covers all of them):
+
+| Finding | Recommended | Alternatives |
+|---|---|---|
+| `chapter_retells_event`, `event_repeated`, `chapter_replans_chapter` | Rewrite the later chapter's purpose and summary (`rewrite_text`) | Merge the two chapters; drop the later chapter (if its events are told elsewhere); accept as a deliberate echo |
+| `end_state_overreach` | Rewrite the end_state and summary | Move the event into this chapter; accept |
+| `flat_tension` | Rate the stretch again | Accept |
+| `pov_not_in_text` / `pov_not_main` | Change the POV to the character the text follows | Rewrite the text to follow the POV; accept |
+| `unknown_name` | Add as a new cast entry (if named 2+ times), else replace with the closest cast name | Ignore |
+| `scene_retells_event`, `scene_repeats_scene` | Rewrite the later scene's beats | Merge the scenes; accept |
+| `implausible_scene_count`, `chapter_overloaded` | Split / merge scenes to the count the weights imply | Move an event to a neighbouring chapter; accept |
+| `action_pattern_repeated`, `research_in_beats` | Rewrite the named beats | Accept |
+| `state_regression`, `two_places_at_once` | Add the missing `cause` / correct the location in the earlier scene (shown as a diff) | Accept |
+| `sentences_repeated`, `chapter_opens_with_previous_ending` | Rewrite the passage (`prose_repair`) | Accept |
+| `sentence_not_covered` (existing) | Existing proposal (widen / attach / waive / new_event) | unchanged |
+| Audit questions: `contradiction`, `cast_conflict`, `condition_order`, `unknown_name`, `unestablished_object`, `motive_gap` | The tool's best option from the question's `options` (marked recommended; today they exist but none is preferred) | the other options |
+
+### B4. Inbox, API and UI (390px, light and dark)
+- Every item: radio list of options, recommended preselected, a one-line effect preview, one **Apply** button. The existing proposal/accepted/undo machinery (`resolve.py`, `inbox.py`, `api_inbox.py`) carries the rest.
+- **No empty text boxes.** "Something else..." opens a box prefilled with the recommended instruction; there is no "Your instruction for the next run" any more.
+- **Apply recommended to all (N)** for the items on screen.
+- `POST .../inbox/apply {item, option}`; the CLI gets the same through `ops.py`.
+- **Per-book switch** (extends `answers.yaml: mode`): *Ask me* (default) or *Apply recommended*. In Apply recommended an overnight run applies every recommended content fix itself, lists each in the morning report ("The tool's decisions") and in a "Fixed automatically" group with Undo. Content findings never stop a layer; they block only the checkpoint approval.
+
+### B5. Severity policy
+Retire the hard/soft split for wording, rating and repeat codes: they are `content` items with options (resolved, offered, or accepted). Only structural bugs (A0) and ledger-stage DECISIONS stop a stage. The earlier `warn_unfixable` demotion is superseded: an item the tool cannot fix still has options (accept is always one).
+
+## Phases (each a PR with tests, merged on green)
+1. **Foundation:** `normalize.py` entry points (behaviour-preserving), diagnostics bundle + tool-bug path, finding registry with the completeness test (no behaviour change).
+2. **Scenes by construction** (A1 #1, #7 and scene ids). Biggest structural win for the least new machinery.
+3. **Acts by construction** (A1 #2, #3).
+4. **Tracks nested** (A1 #4), chapters `continues` and derived events (A1 #5, #6).
+5. **Ids, ledger flags, pov/setting resolver** (A1 #8 to #10) and the Hypothesis property tests for every layer.
+6. **Remedy executor + chapter-level remedies** (B2, the top rows of B3), Inbox options UI (B4).
+7. **Remaining remedies** (scene, name, POV, state, audit-question recommendations) so the registry test passes with no gaps.
+8. **Apply recommended mode,** morning-report section, Undo, retire the instruction box.
+9. **b2 calibration:** re-plan b2 under the new formats (earlier versions are kept, nothing is deleted), compare what the tool recommended with what you chose, tune the recommendations from the recorded outcomes.
+
+## Critical files
+`bible/validate.py` (parsers become thin), `bible/repair.py` and `bible/partition.py` (folded into `bible/normalize.py`), `bible/models.py`, `prompts/{acts_ledger,chapters_ledger,scenes_ledger,ledger,cast}.md`, `layers/structure.py` (`get_piece`, `_book_*_checks`, `_resized`), `layers/ledger.py`, `validators/*.py` (findings gain a `klass` and remedy link), `qc/overreach_fix.py` and `prose_repair.py` (become actions), `resolve.py`, `inbox.py`, `api_inbox.py`, `ops.py`, `answers.py`, `healing.py`, `versions.py`, `frontend/bookforge/src/pages/InboxItems.tsx`.
+
+## Reuse (do not rewrite)
+`partition.assign/act_order` (generalised to acts and scenes), `repair._remap_tracks`, `normalize_derived`, `adopt_places`, `act_capacity/act_weight` (`validators/ledger.py`), `qc/overreach_fix.py` fixers, `prose_repair.fix`, `qc/revise.revise_text`, `resolve.propose_*`, `answers.py` modes and demotion, `versions.keep`, `healing.py`, `cast.py`, `accepted.py`, the existing 390px screenshot scripts in the scratchpad.
+
+## Verification
+- `cd platform/bookforge && venv/bin/pytest -q` after each phase (now 1319 passed, 2 skipped), plus the new property tests and the registry test.
+- `python -m bookforge suite` (known-bad fixtures) must still catch every known-bad case, now as options with a recommendation instead of a bare error.
+- Fuzz check per layer: 1000 mutated replies, zero structural findings, idempotent.
+- Frontend `npm run build`, 390px screenshots (light and dark) of an item with options, Apply recommended to all, the Fixed automatically group, and the per-book switch.
+- After each merge, on the mini PC: plan b2 again and look at (1) any structural finding (must be none), (2) any Inbox item without a recommended option (must be none), (3) the diagnostics folder (must stay empty).
+
+## Risks, said plainly
+- **Nothing here has run on a real model yet.** The prompts for `starts_with` (acts, scenes) rely on a 35B model picking ids correctly; the mitigation is the closed list of valid ids in the prompt and a one-problem correction message, but only b2 will tell.
+- **Format changes re-plan existing b2 acts/scenes once** (earlier versions are kept and restorable; written prose is never touched).
+- **Recommendations will sometimes be wrong.** That is why the default is Ask me, every action has Undo, and overrides are recorded per outcome so a recommendation you keep overriding is switched off (existing demotion).
+- **Scope:** about eight PRs. Phases 1 to 5 can ship without touching the Inbox; Phases 6 to 8 are the part you will see.
