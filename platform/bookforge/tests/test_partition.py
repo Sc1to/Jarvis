@@ -216,3 +216,101 @@ def test_a_chapters_scenes_planned_with_starts_and_days_later_are_saved_with_the
     assert [s.id for s in scenes][:2] == ["b1.ch01.s1", "b1.ch01.s2"] and scenes[0].events == ["e1"] and scenes[1].events == []
     days = [t.day for t in store.load_timeline(p)]
     assert days == list(range(1, len(days) + 1))  # 0 then 1 day later each time: 1, 2, 3 ...
+
+
+# ── acts ───────────────────────────────────────────────────────────────────
+
+EV = ["e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8"]
+
+
+def act(*start, **kw):
+    d = {"title": "t", "summary": "s", "purpose": "p", "turning_point": "x"}
+    if start:
+        d["starts_with"] = start[0]
+    d.update(kw)
+    return d
+
+
+def test_each_act_takes_the_stretch_from_its_starting_event_and_gets_its_id_by_position():
+    raw = [act("e1", id="wrong", events=["e5"], chapter_count=9), act("e4"), act("e7")]
+    problems, notes = partition.assign_acts(raw, EV, ["e8"], "b2")
+    assert problems == [] and notes == []
+    assert [a["events"] for a in raw] == [["e1", "e2", "e3"], ["e4", "e5", "e6"], ["e7", "e8"]]
+    assert [a["id"] for a in raw] == ["b2.act1", "b2.act2", "b2.act3"] and all("starts_with" not in a and "chapter_count" not in a for a in raw)
+
+
+def test_the_first_act_starts_with_the_first_event_and_the_resolution_is_always_in_the_last_act():
+    raw = [act("e2"), act("e5")]
+    problems, notes = partition.assign_acts(raw, EV, ["e4"], "b2")  # the ending is event 4, but the last act was told to start at 5
+    assert problems == [] and [a["events"] for a in raw] == [["e1", "e2", "e3"], ["e4", "e5", "e6", "e7", "e8"]]
+    assert any("first act starts with e1" in n for n in notes) and any("holds the resolution" in n for n in notes)
+    merged = [act("e1"), act("e3"), act("e6")]
+    problems, notes = partition.assign_acts(merged, EV, ["e2"], "b2")  # the ending is event 2: the acts after it have nothing of their own
+    assert problems == [] and [a["events"] for a in merged] == [["e1"], EV[1:]]  # the third act starts after the ending: merged away; the second is pulled back to hold it
+    assert any("merged into the act before" in n for n in notes) and any("holds the resolution" in n for n in notes)
+
+
+def test_an_act_start_that_is_not_an_event_or_goes_backwards_or_is_missing_goes_back_to_the_model_alone():
+    p1, _ = partition.assign_acts([act("e1"), act("e99")], EV, [], "b2")
+    assert len(p1) == 1 and "'e99'" in p1[0] and "e1, e2, e3" in p1[0]
+    p2, _ = partition.assign_acts([act("e4"), act("e2")], EV, [], "b2")
+    assert len(p2) == 1 and "later and later events" in p2[0]
+    p3, _ = partition.assign_acts([act("e1"), act()], EV, [], "b2")
+    assert len(p3) == 1 and "needs `starts_with`" in p3[0]
+    old = [dict(id="b2.act1", events=["e1", "e2"]), dict(id="b2.act2", events=["e3"])]  # no starts_with at all: left as it is
+    assert partition.assign_acts(old, EV, [], "b2") == ([], []) and old[0]["events"] == ["e1", "e2"]
+
+
+def numbered(*events_per_act, weights, decision=None, ending=None):
+    from bookforge.bible import normalize
+    evs = [StoryEvent(id=f"e{i}", text=f"event {i}", once_only=True, kind="event", weight=weights[i - 1], source="synopsis", decision=(decision == f"e{i}"),
+                      ending=(ending == f"e{i}")) for i in range(1, len(weights) + 1)]
+    from bookforge.bible.models import Ledger
+    ledger = Ledger(events=evs)
+    raw = [dict(title="t", summary="s", purpose="p", turning_point="x", events=list(e)) for e in events_per_act]
+    normalize.derive_act_numbers(raw, ledger, 2.0)
+    return raw
+
+
+def test_chapter_counts_come_from_the_ledgers_weights_and_add_up_to_its_estimate_and_the_text_is_the_computed_note():
+    raw = numbered(["e1", "e2", "e3"], ["e4", "e5", "e6"], ["e7", "e8"], weights=[3, 2, 2, 3, 2, 2, 2, 2])  # weights 7, 7, 4: 3.5 + 3.5 + 2 = 9 chapters
+    assert [a["chapter_count"] for a in raw] == [4, 3, 2] and sum(a["chapter_count"] for a in raw) == 9
+    assert all(a["sizing_reason"].startswith("[computed: weight") for a in raw) and "weight 7 over 3 events" in raw[0]["sizing_reason"]
+    thin = numbered(["e1"], ["e2"], weights=[1, 1])  # never fewer than a chapter
+    assert [a["chapter_count"] for a in thin] == [1, 1]
+    capped = numbered(["e1"], ["e2"], weights=[3, 2])  # one event of weight 3 can supply at most 3 chapters (itself, a second, a complication): 1.5 -> 2 is fine
+    assert capped[0]["chapter_count"] <= 3
+
+
+def test_the_turning_point_is_the_acts_last_event_and_the_books_last_turning_point_is_the_decision_or_the_resolution():
+    raw = numbered(["e1", "e2", "e3"], ["e4", "e5", "e6", "e7", "e8"], weights=[2] * 8, decision="e7", ending="e8")
+    assert [a["turning_point_event"] for a in raw] == ["e3", "e7"]  # the decision is in the second half of the last act
+    early = numbered(["e1", "e2"], ["e3", "e4", "e5", "e6", "e7"], weights=[2] * 7, decision="e3", ending="e7")
+    assert early[1]["turning_point_event"] == "e7"  # the decision opens the act: the resolution ends it
+    none = numbered(["e1", "e2"], ["e3", "e4"], weights=[2] * 4)
+    assert [a["turning_point_event"] for a in none] == ["e2", "e4"]
+
+
+def test_a_whole_book_planned_with_act_starts_is_saved_with_the_events_numbers_and_turning_points_the_tool_derived(project):
+    import ledger_structure_fakes as lf
+    p = project_ready(project)
+    new = {"acts": [dict(title="Act one", summary="Anna finds the ledger and crosses a name out.", purpose="Set the trap.", turning_point="The name is crossed out.", starts_with="e1"),
+                    dict(title="Act two", summary="Jonas learns the truth and Anna burns the ledger.", purpose="Spring the trap.", turning_point="The ledger burns.", starts_with="e3")]}
+    rest = [r for r in rules() if not r[0].startswith("Divide the book into ACTS")]
+    summary = run(p, RuleLLM([("Divide the book into ACTS by assigning", dump(new))] + rest), HANDLERS, until="chapters")
+    assert summary.ran == ["acts", "chapters"], summary.detail
+    acts = store.load_acts(p)
+    assert [a.id for a in acts] == ["b1.act1", "b1.act2"] and [a.events for a in acts] == [["e1", "e2"], ["e3", "e4"]]
+    assert [a.turning_point_event for a in acts] == ["e2", "e4"] and [a.chapter_count for a in acts] == [2, 2]
+    assert all(a.sizing_reason.startswith("[computed: weight 4 over 2 events") for a in acts)
+
+
+def test_a_bad_act_start_is_handed_back_and_nothing_else_is_asked(project):
+    p = project_ready(project)
+    bad = {"acts": [dict(title="a", summary="s", purpose="p", turning_point="x", starts_with="e1"), dict(title="b", summary="s", purpose="p", turning_point="x", starts_with="e9")]}
+    llm = RuleLLM([("Divide the book into ACTS by assigning", dump(bad))])
+    run(p, llm, HANDLERS, until="acts")
+    feedback = " ".join(c["messages"][-1]["content"] for c in llm.calls if "Your previous document has these problems" in c["messages"][-1]["content"])
+    assert "starts_with is 'e9', which is not an event of the book" in feedback
+    for noise in ("event_in_no_act", "turning_point_without_event", "chapter_count", "sizing_reason"):
+        assert noise not in feedback
