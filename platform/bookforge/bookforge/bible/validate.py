@@ -391,7 +391,7 @@ def parse_chapters(
     repairs: list[str] = []
     if ledger is not None:
         from . import repair
-        repairs = repair.repair_chapters(raw, data.get("tracks") if isinstance(data, dict) else None, [e.model_dump() for e in ledger.events], list(act.events), project.book, first_number)
+        repairs = repair.repair_chapters(raw, data.get("tracks") if isinstance(data, dict) else None, [e.model_dump() for e in ledger.events], list(act.events) + [e.id for e in ledger.events if e.parent and e.parent in act.events], project.book, first_number)
         for note in repairs:
             log.info("chapters %s: %s", act.id, note)
         raw = _drop_empty_tail(raw)
