@@ -109,7 +109,7 @@ def test_a_checkpoint_with_nothing_open_for_its_stages_approves_without_ceremony
 def test_the_inbox_page_runs_again_with_the_ordinary_run_and_answered_items_wait_for_it(book):
     seed(book, CONTRADICTION)
     data(client.post(f"{B}/inbox/answer", json={"id": "question:q1", "answer": "Keep A"}))
-    assert data(client.get(f"{B}/inbox"))["summary"] == {"open": 0, "blocking": 0, "answered_waiting": 1, "resolved": 0, "needs_run": True, "by_stage": {}}
+    assert data(client.get(f"{B}/inbox"))["summary"] == {"open": 0, "blocking": 0, "answered_waiting": 1, "resolved": 0, "healed": 0, "needs_run": True, "by_stage": {}}
     job = data(client.post(f"{B}/run", json={"until": "ledger"}), 202)  # the button posts this: the same call as `run` on the command line
     assert finish(job)["status"] in ("done", "failed")
 
@@ -321,3 +321,50 @@ def test_accepting_the_tools_suggestion_waives_the_sentence_without_writing_an_i
     assert item["status"] == "answered" and got["summary"]["blocking"] == 0 and got["summary"]["needs_run"] and got["proposal_stats"]["waive"]["accepted"] == 1
     assert answers.load(book)["waived"] == [{"quote": sentence, "reason": "it only describes", "decided_by": "you"}]
     error(client.post(f"{B}/inbox/accept", json={"id": "finding:nope"}), 400)
+
+
+def test_what_the_tool_corrected_by_itself_is_listed_as_fixed_automatically_and_never_counts_or_blocks(book):
+    from bookforge import healing
+    seed(book, THIN)
+    healing.begin(book, "chapters")
+    healing.note(book, "chapters", "b2.act4", ["b2.ch13 listed e16, which belongs to another act; taken out so it is told only there"])
+    healing.note(book, "scenes", "b2.ch01", ["scene ids renumbered"])  # another stage's pending notes are saved only by that stage's commit
+    healing.commit(book, "chapters")
+    got = data(client.get(f"{B}/inbox"))
+    healed = [i for i in got["items"] if i["kind"] == "healed"]
+    assert [(i["stage"], i["status"], i["blocking"]) for i in healed] == [("chapters", "healed", False)] and "e16" in healed[0]["title"]
+    assert got["summary"]["open"] == 1 and got["summary"]["blocking"] == 0 and got["summary"]["healed"] == 1  # only the thin question is open
+    assert inbox.blocking_for_checkpoint(book, "structure") == []  # approving never has to skip it
+    assert all(i["kind"] != "healed" for i in inbox.collect(book, include_done=False) if i["status"] == "healed")
+
+
+def test_a_slip_that_comes_back_in_the_next_run_is_open_but_still_not_blocking_and_a_clean_run_clears_the_list(book):
+    from bookforge import healing
+    note = "b2.ch13 listed e16, which belongs to another act; taken out so it is told only there"
+    for _ in range(2):
+        healing.begin(book, "chapters")
+        healing.note(book, "chapters", "b2.act4", [note])
+        healing.commit(book, "chapters")
+    item = next(i for i in inbox.collect(book) if i["kind"] == "healed")
+    assert item["repeated"] and item["status"] == "open" and not item["blocking"]
+    assert inbox.summary(book)["blocking"] == 0 and inbox.summary(book)["needs_run"] is False
+    healing.begin(book, "chapters")
+    healing.commit(book, "chapters")  # the next run needed no correction
+    assert [i for i in inbox.collect(book) if i["kind"] == "healed"] == []
+
+
+def test_a_failed_attempt_leaves_no_note_and_a_retry_of_the_same_piece_replaces_its_notes(book):
+    from bookforge import healing
+    healing.begin(book, "scenes")
+    healing.note(book, "scenes", "b2.ch01", ["first attempt slip"])
+    healing.note(book, "scenes", "b2.ch01", ["second attempt slip"])
+    healing.begin(book, "scenes")  # the layer failed and starts again: the old attempt is forgotten
+    healing.note(book, "scenes", "b2.ch01", ["scene ids renumbered"])
+    assert healing.commit(book, "scenes") == ["scene ids renumbered"]
+
+
+def test_a_ledger_run_s_soft_auto_repaired_findings_are_listed_as_fixed_automatically(book):
+    seed(book)
+    put_findings(book, "ledger", [finding("ledger", "auto_repaired", [], message="e3 moved after e2", severity="soft")])
+    item = next(i for i in inbox.collect(book) if i["kind"] == "healed")
+    assert item["stage"] == "ledger" and item["status"] == "healed" and not item["blocking"] and item["title"] == "e3 moved after e2"

@@ -11,10 +11,25 @@ const STAGE_ORDER = ['ledger', 'acts', 'chapters', 'scenes', 'prose']
 export const CHECKPOINT_STAGES: Record<string, string[]> = { ledger: ['ledger'], structure: ['acts', 'chapters', 'scenes'], voice: ['prose'], final: ['prose'] }
 
 const STATUS_STYLE: Record<string, string> = {
-  resolved: 'bg-violet-100 text-violet-900',
+  resolved: 'bg-violet-100 text-violet-900', healed: 'bg-slate-100 text-slate-600',
   open: 'bg-amber-100 text-amber-900', answered: 'bg-sky-100 text-sky-800', applied: 'bg-emerald-100 text-emerald-800', dismissed: 'bg-slate-100 text-slate-600',
 }
-const STATUS_LABEL: Record<string, string> = { resolved: 'decided by the tool', open: 'open', answered: 'answered, waits for the next run', applied: 'applied', dismissed: 'dismissed' }
+const STATUS_LABEL: Record<string, string> = { healed: 'fixed automatically', resolved: 'decided by the tool', open: 'open', answered: 'answered, waits for the next run', applied: 'applied', dismissed: 'dismissed' }
+
+/** A slip the tool corrected by itself: one grey line, nothing to do. One that came back in the next run is amber (the model keeps making it), still never blocking. */
+function HealedCard({ item }: { item: InboxItem }) {
+  const back = !!item.repeated
+  return (
+    <li className={`space-y-1 rounded-md border p-2 text-sm ${back ? 'border-amber-300 bg-amber-50/50' : 'border-slate-200 bg-slate-50/60'}`}>
+      <div className="flex flex-wrap items-center gap-1.5 text-xs">
+        <span className={`rounded-full px-2 py-0.5 ${back ? 'bg-amber-100 text-amber-900' : 'bg-slate-100 text-slate-600'}`}>{back ? 'came back — the same slip again' : 'fixed automatically'}</span>
+        <span className="text-slate-500">{STAGE_LABEL[item.stage] ?? item.stage}</span>
+      </div>
+      <p className="break-words text-sm text-slate-700">{item.title}</p>
+      {back && <p className="text-xs text-slate-600">The tool corrected this again; nothing is blocked. If it keeps coming back, the planner prompt or model is making the same mistake each run.</p>}
+    </li>
+  )
+}
 
 /** One question or finding: its words, the quoted sentences, one-tap answers, a text box you can edit, Answer / Dismiss / Edit. */
 function ItemCard({ item, base, locked, onDone }: { item: InboxItem; base: string; locked: boolean; onDone: () => void }) {
@@ -137,15 +152,20 @@ export default function InboxItems({ series, book, status, reload }: { series: s
   const done = () => { inbox.reload(); reload() }
   const view = inbox.data
   const items = view?.items ?? []
-  const active = items.filter((i) => i.status === 'open' || i.status === 'answered')
-  const handled = items.filter((i) => i.status === 'applied' || i.status === 'dismissed')
-  const byTool = items.filter((i) => i.status === 'resolved')
+  const real = items.filter((i) => i.kind !== 'healed')
+  const active = real.filter((i) => i.status === 'open' || i.status === 'answered')
+  const needs = active.filter((i) => i.status === 'open')
+  const waiting = active.filter((i) => i.status === 'answered') // your answer or the tool's fix is waiting for the next run: nothing to do but run
+  const healedItems = items.filter((i) => i.kind === 'healed' && i.status === 'healed')
+  const cameBack = items.filter((i) => i.kind === 'healed' && i.status === 'open')
+  const handled = real.filter((i) => i.status === 'applied' || i.status === 'dismissed')
+  const byTool = real.filter((i) => i.status === 'resolved')
   const canon = view?.canon ?? []
   const undoCanon = useAction()
   const setMode = useAction()
   const changeMode = async (mode: string) => { if (await setMode.run(() => api(`${base}/inbox/mode`, { method: 'PUT', body: { mode } }))) done() }
   const changePolicy = async (world_facts: string) => { if (await setMode.run(() => api(`${base}/inbox/policy`, { method: 'PUT', body: { world_facts } }))) done() }
-  const groups = STAGE_ORDER.map((st) => ({ stage: st, items: active.filter((i) => i.stage === st) })).filter((g) => g.items.length)
+  const groups = STAGE_ORDER.map((st) => ({ stage: st, items: needs.filter((i) => i.stage === st) })).filter((g) => g.items.length)
   const blocking = view?.summary.blocking ?? 0
   const canRun = !!view && blocking === 0 && !!view.summary.needs_run
   const lr = view?.last_run
@@ -160,7 +180,7 @@ export default function InboxItems({ series, book, status, reload }: { series: s
   }
 
   return (
-    <Card title={`Questions and findings (${blocking ? blocking + ' blocking, ' : ''}${active.length} open)`}>
+    <Card title={`Questions and findings (${blocking ? blocking + ' blocking, ' : ''}${needs.length} open)`}>
       <p className="mb-2 text-xs text-slate-600">What stopped a stage and needs your word. Tap a suggested answer or write your own, then run again.</p>
       {inbox.error && <ErrorBanner message={inbox.error} />}
       {view && (
@@ -198,7 +218,7 @@ export default function InboxItems({ series, book, status, reload }: { series: s
       )}
       <ErrorBanner message={setMode.error} onClose={setMode.clear} />
       {!view && <Loading />}
-      {view && !active.length && <Empty>Nothing is waiting for an answer.</Empty>}
+      {view && !needs.length && <Empty>Nothing needs you.{waiting.length || healedItems.length ? ' What is listed below needs no action.' : ''}</Empty>}
       <div className="space-y-4">
         {groups.map((g) => (
           <section key={g.stage} aria-label={STAGE_LABEL[g.stage] ?? g.stage} className="space-y-2">
@@ -210,6 +230,7 @@ export default function InboxItems({ series, book, status, reload }: { series: s
           </section>
         ))}
       </div>
+      {cameBack.length > 0 && <ul className="mt-3 space-y-2">{cameBack.map((it) => <HealedCard key={it.id} item={it} />)}</ul>}
       {view && withoutProposal > 0 && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <Button disabled={!!locked || propose.busy} onClick={getSuggestions}>{propose.busy ? 'Working out suggestions…' : 'Get suggestions from the tool'}</Button>
@@ -261,6 +282,19 @@ export default function InboxItems({ series, book, status, reload }: { series: s
             ))}
           </ul>
           <ErrorBanner message={undoCanon.error} onClose={undoCanon.clear} />
+        </details>
+      )}
+      {waiting.length > 0 && (
+        <details className="mt-3 text-sm" open>
+          <summary className="min-h-11 cursor-pointer py-2 text-slate-600">Will clear on its own ({waiting.length}) — nothing to do, just run again</summary>
+          <ul className="space-y-3">{waiting.map((it) => <ItemCard key={`${it.id}:${it.status}:${it.answer}`} item={it} base={base} locked={!!locked} onDone={done} />)}</ul>
+        </details>
+      )}
+      {healedItems.length > 0 && (
+        <details className="mt-3 text-sm">
+          <summary className="min-h-11 cursor-pointer py-2 text-slate-600">Fixed automatically ({healedItems.length}) — no action needed</summary>
+          <p className="mb-2 text-xs text-slate-600">Slips the planner made that the tool corrected during the last run. They never block a stage and never count as open.</p>
+          <ul className="space-y-2">{healedItems.map((it) => <HealedCard key={it.id} item={it} />)}</ul>
         </details>
       )}
       {byTool.length > 0 && (

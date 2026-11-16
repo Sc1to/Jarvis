@@ -14,6 +14,7 @@ import logging
 import yaml
 from pydantic import ValidationError
 
+from .. import healing
 from ..project import Project
 from ..validators import accepted
 from . import store
@@ -175,8 +176,10 @@ def parse_acts(text: str, project: Project, ledger=None) -> tuple[list[Act] | No
     raw = _items(data, "acts", problems)
     if ledger is not None and raw:  # mechanical slips (events in no act, in two acts, out of order) are put right, not asked about
         from . import repair
-        for note in repair.repair_acts(raw, [e.model_dump() for e in ledger.events]):
+        notes = repair.repair_acts(raw, [e.model_dump() for e in ledger.events])
+        for note in notes:
             log.info("acts: %s", note)
+        healing.note(project, "acts", "acts", notes)
     cfg = project.config.layers
     forced = cfg["acts"].count
     lo, hi = forced or (3, 4)
@@ -394,6 +397,7 @@ def parse_chapters(
         repairs = repair.repair_chapters(raw, data.get("tracks") if isinstance(data, dict) else None, [e.model_dump() for e in ledger.events], list(act.events) + [e.id for e in ledger.events if e.parent and e.parent in act.events], project.book, first_number)
         for note in repairs:
             log.info("chapters %s: %s", act.id, note)
+        healing.note(project, "chapters", act.id, repairs)
         raw = _drop_empty_tail(raw)
     limit = (max_chapters or act.chapter_count) if ledger is not None else act.chapter_count
     if raw and ledger is not None and len(raw) > limit:  # with a ledger the count follows from the act's events: at most what they can supply
@@ -546,9 +550,11 @@ def parse_scenes(
     new_places = adopt_places(raw, entities, chapter.id)
     if ledger is not None and raw:  # mechanical slips (a scene id's number, an event shown twice or nowhere) are put right, not asked about
         from . import repair
-        for note in repair.repair_scenes(raw, data.get("tracks") if isinstance(data, dict) else None, list(chapter.events_covered),
-                                         list(chapter.events_covered) + list(chapter.events_continued), [e.model_dump() for e in ledger.events], project.book, parse_position(chapter.id).chapter):
+        notes = repair.repair_scenes(raw, data.get("tracks") if isinstance(data, dict) else None, list(chapter.events_covered),
+                                     list(chapter.events_covered) + list(chapter.events_continued), [e.model_dump() for e in ledger.events], project.book, parse_position(chapter.id).chapter)
+        for note in notes:
             log.info("scenes %s: %s", chapter.id, note)
+        healing.note(project, "scenes", chapter.id, notes)
     lo, hi = count_range(project, "scenes")
     if raw and not lo <= len(raw) <= hi:
         problems.append(f"{chapter.id} needs {lo} to {hi} scenes, got {len(raw)}")
