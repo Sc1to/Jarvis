@@ -32,8 +32,10 @@ def act_events(ledger: Ledger, ids: list[str]) -> list[StoryEvent]:
     return [e for e in ledger.events if e.id in want or (e.parent and e.parent in want and e.id in want)]
 
 
-def status_text(ledger: Ledger, mine: set[str], chapters_done: list[Chapter], mine_label: str = "ASSIGNED HERE: plan these", continuing: set[str] | None = None) -> str:
-    """done / assigned here / reserved for later, with an explicit instruction about what must not be used yet."""
+def status_text(ledger: Ledger, mine: set[str], chapters_done: list[Chapter], mine_label: str = "ASSIGNED HERE: plan these", continuing: set[str] | None = None,
+                done_limit: int | None = None) -> str:
+    """done / assigned here / reserved for later, with an explicit instruction about what must not be used yet.
+    `done_limit` keeps only the last few DONE events in full and sums up the rest: a long list of events already told invites a model to copy them."""
     covered = covered_map(chapters_done)
     done, here, later, cont = [], [], [], []
     for e in ledger.events:
@@ -47,6 +49,9 @@ def status_text(ledger: Ledger, mine: set[str], chapters_done: list[Chapter], mi
             done.append(event_line(e, "  [already true when the book begins]"))
         else:
             later.append(event_line(e))
+    if done_limit is not None and len(done) > done_limit:
+        older = len(done) - done_limit
+        done = [f"({older} earlier events are told in the chapters before; never tell any of them again. The most recent ones:)"] + done[-done_limit:]
     return ("DONE (already told; never tell again, refer to them only as the past):\n" + ("\n".join(done) or "none yet")
             + ("\n\nCONTINUING FROM THE CHAPTER BEFORE (this chapter carries it on; do not start it again, do not repeat what was already shown):\n" + "\n".join(cont) if cont else "")
             + f"\n\n{mine_label}:\n" + ("\n".join(here) or "none")

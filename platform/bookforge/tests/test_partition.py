@@ -105,3 +105,31 @@ def test_a_bad_start_hands_back_only_that_problem_not_a_wall_of_follow_on_errors
     assert "starts_with is 'e3', which is not an event of this act" in feedback
     for noise in ("events_covered is empty", "chapter_without_events", "event_not_covered"):
         assert noise not in feedback
+
+
+def test_the_chapters_prompt_names_the_acts_events_as_the_only_valid_starts_and_sums_up_the_long_done_list(project):
+    from bookforge.ledger_view import status_text
+    from bookforge.bible.models import Chapter, Ledger
+    events = [StoryEvent(id=f"e{i}", text=f"event {i}", once_only=True, kind="event", weight=2, source="synopsis") for i in range(1, 9)]
+    done_chapters = [Chapter(id=f"b2.ch{i:02d}", act="b2.act1", title="t", purpose="p", summary="s", pov="a", setting="b", tension=3, events_covered=[f"e{i}"]) for i in range(1, 6)]
+    text = status_text(Ledger(events=events), {"e6", "e7"}, done_chapters, done_limit=2)
+    assert "3 earlier events are told in the chapters before" in text and "- e4 " in text and "- e5 " in text and "- e1 " not in text and "- e3 " not in text
+    assert "- e6 " in text and "- e8 " in text  # assigned here and reserved are untouched
+    assert "- e1 " in status_text(Ledger(events=events), {"e6", "e7"}, done_chapters)  # the scenes prompt still lists them all
+
+
+def test_the_chapters_prompt_carries_the_valid_starts_of_the_act(project):
+    p = project_ready(project)
+    llm = RuleLLM([("Plan the chapters this act's events need, b1.ch01 onward", dump(starts_reply(1, ["e1", "e2"])))] + rules())
+    run(p, llm, HANDLERS, until="chapters")
+    first = next(c["messages"][-1]["content"] for c in llm.calls if "Plan the CHAPTERS of one act" in c["messages"][-1]["content"])
+    assert "Use ONLY these ids, in this order (they are the events of this act): e1, e2" in first
+
+
+def test_a_possessive_is_the_same_name_in_the_unknown_name_check():
+    from bookforge.bible.models import Constants, Entity
+    from bookforge.validators import names as name_checks
+    cast = Constants(entities=[Entity(id="eli-vance", kind="character", name="Eli Vance", facts=["a miner"]), Entity(id="halloway", kind="character", name="Foreman Halloway", facts=["a foreman"])])
+    units = [dict(id="b2.ch12", purpose="Halloway's men reach the bay.", summary="Eli's plan fails and the Kestrel's engines wake.", end_state="The empty chair is Mara's.")]
+    names = [n for f in name_checks.unknown_names(units, cast, "chapters") for n in f.message.split(" names ", 1)[1].split(", which")[0].split(", ")]
+    assert "halloway's" not in names and "eli's" not in names and sorted(names) == ["kestrel", "mara"]  # the cast is the cast; real unknown names are still found

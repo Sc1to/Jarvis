@@ -60,7 +60,8 @@ def unknown_names(units: list[dict], constants, stage: str, text_keys=("purpose"
     out: list[Finding] = []
     for u in units:
         text = " ".join(str(u.get(k, "")) for k in text_keys) + " " + " ".join(str(b) for b in (u.get("beats") or []))
-        names = sorted(n for n in proper_nouns(text) if n not in known and len(n) >= 3)
+        names = sorted({re.sub(r"[\u2019']s$", "", n) for n in proper_nouns(text)})  # "Halloway's" is Halloway
+        names = [n for n in names if n not in known and len(n) >= 3]
         if names:
             out.append(soft(stage, "unknown_name", f"{u['id']} names {', '.join(names[:5])}, which is in nobody's name in the cast: add them to the cast, or use the name the cast already has", [u["id"]] + names[:5], [text[:160]]))
     return out

@@ -13,7 +13,7 @@ import shutil
 from pathlib import Path
 from typing import Callable
 
-from ..bible import store
+from ..bible import partition, store
 from ..bible.models import Act, Chapter, Constants, Track
 from ..bible.positions import parse_position
 from ..bible.store import dump_yaml, to_plain
@@ -394,7 +394,8 @@ def _build_chapters(ctx: StepContext, files: list[str]) -> str:
                 ctx, "chapters", act.id.split(".")[-1],
                 lambda act=act, first=first, last=last, before=before, ledger=ledger: _messages(
                     project, "chapters_ledger", act=act_for_chapters(act), acts_overview=acts_overview_for_chapters(act_list, act),
-                    ledger_status=status_text(ledger, set(act.events), before), story_so_far=chapters_end_digest(before), carried=carried_for_prompt(project),
+                    ledger_status=status_text(ledger, set(act.events), before, done_limit=3), story_so_far=chapters_end_digest(before), carried=carried_for_prompt(project),
+                    starting_events=", ".join(partition.act_order(ledger.events, act.events)),
                     cast=cast_digest(constants), tracks_so_far=tracks_digest(tracks), research_notes=notes_text(project, act_text),
                     chapter_count=str(act.chapter_count), max_chapters=str(limit), child_events=_child_events_note(act, ledger), first_chapter=_ch(project, first), last_chapter=_ch(project, last), **stars),
                 lambda text, act=act, first=first, before=before, ledger=ledger, limit=limit: parse_chapters(
