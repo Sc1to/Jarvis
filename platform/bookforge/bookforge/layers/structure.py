@@ -394,7 +394,7 @@ def _build_chapters(ctx: StepContext, files: list[str]) -> str:
                 ctx, "chapters", act.id.split(".")[-1],
                 lambda act=act, first=first, last=last, before=before, ledger=ledger: _messages(
                     project, "chapters_ledger", act=act_for_chapters(act), acts_overview=acts_overview_for_chapters(act_list, act),
-                    ledger_status=status_text(ledger, set(act.events), before, done_limit=3), story_so_far=chapters_end_digest(before), carried=carried_for_prompt(project),
+                    ledger_status=status_text(ledger, set(act.events), before, done_limit=3, future="hidden"), story_so_far=chapters_end_digest(before), carried=carried_for_prompt(project),
                     starting_events=", ".join(partition.act_order(ledger.events, act.events)),
                     cast=cast_digest(constants), tracks_so_far=tracks_digest(tracks), research_notes=notes_text(project, act_text),
                     chapter_count=str(act.chapter_count), max_chapters=str(limit), child_events=_child_events_note(act, ledger), first_chapter=_ch(project, first), last_chapter=_ch(project, last), **stars),
@@ -523,8 +523,8 @@ def story_so_far_planning(project, chapters_before: list[Chapter], scenes_before
 def _book_scene_checks(project, chapters: list[Chapter], scenes_all: list, timeline: list, tracks: list[Track], constants, ledger, ctx=None) -> str:
     """Whole-book checks on the planned scenes. Hard findings stop the layer (the pieces are kept for a rerun)."""
     from ..validators import HARD, accepted, ledger as ledger_checks, names as name_checks, repeats, research_leak, state as state_checks, store as findings_store
+    from ..qc.repeat_confirm import confirm_repeats
     ch = [c.model_dump() for c in chapters]
-    sc = [s.model_dump() for s in scenes_all]
     tl = [t.model_dump() for t in timeline]
     ev = [e.model_dump() for e in ledger.events]
     names = {e.id for e in constants.entities} | {w.lower() for e in constants.entities if e.kind == "character" for w in e.name.split()}
@@ -532,12 +532,25 @@ def _book_scene_checks(project, chapters: list[Chapter], scenes_all: list, timel
     story_texts = [_read(project, f"books/{project.book}/synopsis.md"), _read(project, "north-star.md"), _read(project, f"books/{project.book}/north-star.md"),
                    " ".join(e.text for e in ledger.events), " ".join(" ".join(e.facts) + " " + e.name for e in constants.entities)]
     tracks_plain = [to_plain(t) for t in tracks]
-    findings = (ledger_checks.check_scenes_vs_chapters(sc, ch, ev) + ledger_checks.check_scene_texts(sc, ch, ev) + repeats.repeated_events(ch, sc, names, ev, stage="scenes")
-                + repeats.action_patterns(sc, ch, names) + research_leak.research_in_beats(sc, claims, story_texts)
-                + state_checks.track_regressions(tracks_plain) + state_checks.location_conflicts(sc, tl, tracks_plain) + state_checks.day_regressions(sc, tl)
-                + name_checks.pov_findings(sc, constants, "scenes", ("purpose",)) + name_checks.unknown_names(sc, constants, "scenes", ("purpose",)))
-    from ..qc.repeat_confirm import confirm_repeats
-    findings = accepted.apply(project, confirm_repeats(ctx, findings), "scenes")
+
+    def compute() -> list:
+        sc = [s.model_dump() for s in scenes_all]
+        found = (ledger_checks.check_scenes_vs_chapters(sc, ch, ev) + ledger_checks.check_scene_texts(sc, ch, ev) + repeats.repeated_events(ch, sc, names, ev, stage="scenes")
+                 + repeats.action_patterns(sc, ch, names) + research_leak.research_in_beats(sc, claims, story_texts)
+                 + state_checks.track_regressions(tracks_plain) + state_checks.location_conflicts(sc, tl, tracks_plain) + state_checks.day_regressions(sc, tl)
+                 + name_checks.pov_findings(sc, constants, "scenes", ("purpose",)) + name_checks.unknown_names(sc, constants, "scenes", ("purpose",)))
+        return accepted.apply(project, confirm_repeats(ctx, found), "scenes")
+
+    findings = compute()
+    retold = [f for f in findings if f.code in ("scene_retells_event", "scene_repeats_scene") and f.severity == HARD and not f.accepted]
+    if retold and ctx is not None:  # a scene that retells what is told elsewhere: its wording is corrected, once, in a narrow call, instead of asking you
+        from ..qc import overreach_fix
+        fixed = overreach_fix.fix_scene_retells(ctx, scenes_all, chapters, ev, retold)
+        if fixed:
+            healing.note(project, "scenes", "retold", fixed)
+            findings = compute()
+        if ctx.llm is not None and project.config.qc.warn_unfixable:  # tried, and still there: a warning in the stage checks, not a stop
+            findings = overreach_fix.demote_unfixable(findings)
     rel = findings_store.save(project, "scenes", findings)
     hard_left = [f.line() for f in findings if f.severity == HARD]
     if hard_left:
@@ -627,7 +640,7 @@ def _build_scenes(ctx: StepContext, files: list[str]) -> str:
                 act_line = f"{act.id} {act.title}: {_short(act.purpose, 200)}" if act else chapter.act
                 return _messages(
                     project, "scenes_ledger", chapter=dump_yaml(to_plain(chapter)), act=act_line,
-                    ledger_status=status_text(ledger, set(chapter.events_covered), ch_list[:idx], "SHOWN IN THIS CHAPTER: plan scenes for these", set(chapter.events_continued)),
+                    ledger_status=status_text(ledger, set(chapter.events_covered), ch_list[:idx], "SHOWN IN THIS CHAPTER: plan scenes for these", set(chapter.events_continued), done_limit=3, future="hidden"),
                     story_so_far=story_so_far_planning(project, ch_list[:idx], scenes_so_far), carried=carried_for_prompt(project),
                     cast=cast_digest(constants), tracks_in_chapter=tracks_in_chapter_digest(tracks, project.book, ch_num),
                     other_tracks="\n".join(f"- {t.id} (owner {t.entity})" for t in others) or "none",

@@ -584,6 +584,8 @@ def parse_scenes(
         found += ledger_checks.check_scene_texts(plain_scenes, [c.model_dump() for c in all_chapters or [chapter]], plain_events)
         found += repeats_check.scene_repeats_in_chapters(plain_scenes)
         found += ledger_checks.scene_count_plausibility(chapter.model_dump(), plain_scenes, plain_events, max_scenes=count_range(project, "scenes")[1])
+        if project.config.qc.fix_retells:  # a retold event or a repeated scene is a wording slip one narrow call fixes; the whole-book check does that (and the fix is saved)
+            found = [f for f in found if f.code not in ("scene_retells_event", "scene_repeats_scene")]
         diagnostics.record(project, "scenes", chapter.id, found, {"reply": data if isinstance(data, dict) else {}, "scenes": plain_scenes}, enabled=scenes_new_shape)
         problems += accepted.hard_lines(project, found, "scenes")
     return (None, problems) if problems else (ScenesBundle(scenes, timeline, tracks_after, new_places), [])

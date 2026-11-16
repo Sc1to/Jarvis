@@ -192,3 +192,48 @@ def test_a_rewrite_that_repeats_the_earlier_chapter_again_is_thrown_away(project
     llm = RuleLLM([("describe an event that an EARLIER chapter already told", again)])
     before = chs[1].summary
     assert overreach_fix.fix_retells(StepContext(project=project, layer="chapters", llm=llm), chs, LONG, found) == [] and chs[1].summary == before
+
+
+def scene(cid, n, events, purpose, beats):
+    from bookforge.bible.models import Scene
+    return Scene(id=f"{cid}.s{n}", chapter=cid, purpose=purpose, pov="eli", setting="mine", characters=["eli"], beats=beats, events=events, end_state="x")
+
+
+def retelling_scenes():
+    first = scene("b2.ch11", 1, ["e1"], "Eli decides to upload the contamination data.", ["Eli plugs the drive into the network."])
+    second = scene("b2.ch12", 1, ["e2"], "Eli boards the Kestrel.", ["Eli uploads the contamination data to the local network, triggering an alarm and forcing a lockdown of the sector.", "He boards."])
+    return [first, second]
+
+
+def test_a_scene_that_retells_an_event_of_another_chapter_has_its_purpose_and_beats_rewritten_and_kept_when_the_check_passes(project):
+    from bookforge.validators import ledger as ledger_checks
+    scs, chs = retelling_scenes(), retelling_chapters()
+    found = [f for f in ledger_checks.check_scene_texts([s.model_dump() for s in scs], [c.model_dump() for c in chs], LONG) if f.code == "scene_retells_event" and f.severity == HARD]
+    assert found and found[0].items == ["b2.ch12.s1", "e1"]
+    fixed = json.dumps({"purpose": "Eli boards the Kestrel and starts the launch.", "beats": ["Eli crosses the bay to the Kestrel.", "He boards her and starts the launch sequence."]})
+    llm = RuleLLM([("describe something that happens elsewhere in the story", fixed)])
+    notes = overreach_fix.fix_scene_retells(StepContext(project=project, layer="scenes", llm=llm), scs, chs, LONG, found)
+    assert len(notes) == 1 and "b2.ch12.s1" in notes[0] and "e1" in notes[0] and scs[1].beats[0].startswith("Eli crosses") and scs[0].beats == ["Eli plugs the drive into the network."]
+    assert not [f for f in ledger_checks.check_scene_texts([s.model_dump() for s in scs], [c.model_dump() for c in chs], LONG) if f.code == "scene_retells_event" and f.severity == HARD]
+
+
+def test_a_scene_rewrite_that_still_retells_it_is_thrown_away(project):
+    from bookforge.validators import ledger as ledger_checks
+    scs, chs = retelling_scenes(), retelling_chapters()
+    found = [f for f in ledger_checks.check_scene_texts([s.model_dump() for s in scs], [c.model_dump() for c in chs], LONG) if f.code == "scene_retells_event" and f.severity == HARD]
+    again = json.dumps({"purpose": "Eli boards.", "beats": ["Eli uploads the contamination data to the local network, triggering an alarm and forcing a lockdown of the sector."]})
+    llm = RuleLLM([("describe something that happens elsewhere in the story", again)])
+    before = (scs[1].purpose, list(scs[1].beats))
+    assert overreach_fix.fix_scene_retells(StepContext(project=project, layer="scenes", llm=llm), scs, chs, LONG, found) == [] and (scs[1].purpose, scs[1].beats) == before
+    scs[1].events = []  # no event of its own for a retold event: judgement
+    assert overreach_fix.fix_scene_retells(StepContext(project=project, layer="scenes", llm=llm), scs, chs, LONG, found) == []
+    project.config.qc.fix_retells = False
+    scs[1].events = ["e2"]
+    assert overreach_fix.fix_scene_retells(StepContext(project=project, layer="scenes", llm=llm), scs, chs, LONG, found) == []
+
+
+def test_scene_retold_findings_are_warnings_when_the_fix_could_not_clear_them_and_never_in_the_per_chapter_loop():
+    from bookforge.validators import findings as F
+    kept = overreach_fix.demote_unfixable([F.hard("scenes", "scene_retells_event", "r", ["b2.ch12.s1", "e1"]), F.hard("scenes", "scene_repeats_scene", "r", ["a", "b"]),
+                                           F.hard("scenes", "once_only_repeated", "x", ["e1"])])
+    assert [f.severity for f in kept] == ["soft", "soft", "hard"]
