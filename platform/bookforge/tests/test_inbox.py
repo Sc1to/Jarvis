@@ -163,7 +163,7 @@ def test_a_failed_ledger_attempt_leaves_its_events_for_the_suggestions(book, mon
     monkeypatch.setattr(api, "make_llm", lambda project: RuleLLM([("A sentence of a story synopsis has no event", json.dumps(
         {"outcome": "change", "change": "Mara finds a drive naming Corso as a smuggler", "words": "finds a data drive that names Corso", "reason": "a discovery"}))]))
     job = finish(data(client.post(f"{B}/inbox/propose"), 202))
-    assert job["status"] == "done" and job["result"] == {"proposals": 1}
+    assert job["status"] == "done" and job["result"] == {"proposals": 1, "no_suggestion": {}}
     item = next(i for i in data(client.get(f"{B}/inbox"))["items"] if i["kind"] == "finding")
     p = item["proposal"]
     assert p["outcome"] == "widen" or p["outcome"] == "new_event"  # e2 tells "Mara forces her way into the ferry": which step answers depends on the words; either way a suggestion, not an action
@@ -368,3 +368,10 @@ def test_a_ledger_run_s_soft_auto_repaired_findings_are_listed_as_fixed_automati
     put_findings(book, "ledger", [finding("ledger", "auto_repaired", [], message="e3 moved after e2", severity="soft")])
     item = next(i for i in inbox.collect(book) if i["kind"] == "healed")
     assert item["stage"] == "ledger" and item["status"] == "healed" and not item["blocking"] and item["title"] == "e3 moved after e2"
+
+
+def test_the_suggestion_job_says_which_open_items_it_has_nothing_to_suggest_for(book, monkeypatch):
+    seed(book)
+    put_findings(book, "chapters", [finding("chapters", "end_state_overreach", ["b2.ch16", "e22"])])
+    job = finish(data(client.post(f"{B}/inbox/propose"), 202))
+    assert job["status"] == "done" and job["result"]["proposals"] == 0 and job["result"]["no_suggestion"] == {"end_state_overreach": 1}
