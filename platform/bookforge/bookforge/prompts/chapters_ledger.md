@@ -44,19 +44,19 @@ Plan the CHAPTERS of one act of the book, and the state tracks they create. The 
 
 Plan the chapters this act's events need, {first_chapter} onward, covering this act's events from its first to its turning point.
 
-The number of chapters follows from the events, not the other way round. One chapter per event; a weight 3 event (a climax, a confrontation) may take a second chapter that continues it; a minor complication derived from an event may be added to the odd chapter that has too little to tell. The acts stage estimated {chapter_count} chapters: that is a guess, not an order. Write as few or as many as the events need, never more than {max_chapters} ({first_chapter} to {last_chapter}). Every chapter needs an event of its own: when the act's events are all told, STOP. Never fill chapters by retelling an event or borrowing one from another act.
+The number of chapters follows from the events, not the other way round. About one chapter per event; a weight 3 event (a climax, a confrontation) may take a second chapter that continues it; a minor complication derived from an event may be added to the odd chapter that has too little to tell. The acts stage estimated {chapter_count} chapters: that is a guess, not an order. Write as few or as many as the events need, never more than {max_chapters} ({first_chapter} to {last_chapter}). Every chapter needs an event of its own: when the act's events are all told, STOP. Never fill chapters by retelling an event or borrowing one from another act.
 
 Child events: {child_events}
 
 Each chapter has:
 - a title and a purpose: what the chapter changes, for the plot or for a character;
-- `events_covered`: the ledger event ids it tells. Use only events from "ASSIGNED HERE" (or minor complications you derive below). A `once_only` event is told in exactly ONE chapter: never retell an event listed as DONE, and never touch one RESERVED FOR LATER. Together the chapters cover every event assigned here, in ledger order;
-- at least one event that has not been told before: every chapter must move the story forward. A heavy event (weight 3: a climax, a confrontation, a turning point) may take TWO consecutive chapters: the second chapter lists it under `events_continued` (never in `events_covered`) and goes on with it instead of starting a new event. No lighter event, and no event for a third chapter. Never fill a chapter with an event that belongs to another act;
+- `starts_with`: the id of the FIRST event this chapter tells, taken from "ASSIGNED HERE" (or a minor complication you derive below). You do not list the other events: the chapters are consecutive stretches of this act's events in ledger order, so a chapter tells everything from its `starts_with` event up to, but not including, the event the next chapter starts with, and the last chapter runs to the act's last event. The first chapter starts with the act's first event, and every chapter starts with a LATER event than the chapter before: so every event is told exactly once, none from another act (never retell an event listed as DONE, and never start a chapter with one RESERVED FOR LATER);
+- every chapter must move the story forward. A heavy event (weight 3: a climax, a confrontation, a turning point) may take TWO consecutive chapters: the second chapter lists it under `events_continued` and goes on with it, then starts with the next event as usual (a chapter that only carries on a heavy event and tells nothing new has no `starts_with`). No lighter event, and no event for a third chapter;
 - a summary of what happens, 2 to 5 sentences. Say what happens and why, not how it is told. Describe only this chapter's own events: it must not restate an earlier chapter, and the events RESERVED FOR LATER (other acts) must not appear in it at all, not even as a goal or a rumour. You may close by pointing at what the next chapter of this act takes up, in a clause, but never describe it;
 - `end_state`: where things stand when the chapter ends (where the key people are, what they hold, who knows what);
 - a point-of-view character and a main setting, using ids from the cast; a tension value from 1 (calm) to 10 (peak), so the act has a shape (rising and falling, not flat).
 
-If the act's events (with their second chapters) are still too few for the number of chapters, give a chapter a minor complication instead of repeating anything: add it to `derived_events` AND list its id in the `events_covered` of the chapter that tells it (a complication no chapter tells is an error): a small obstacle, delay or consequence that grows out of one event, with `parent` set to that event's id, id `<parent>.1`, `.2`... (at most three per parent), `weight: 1`, `kind: event`, `after: [the parent]`. A derived event is never a new turn of the plot, a reveal, a setup or an ending. Do not add any if the chapters are already full.
+If the act's events (with their second chapters) are still too few for the number of chapters, give a chapter a minor complication instead of repeating anything: add it to `derived_events` (it is told by the chapter that tells its parent, or by a chapter that starts with it): a small obstacle, delay or consequence that grows out of one event, with `parent` set to that event's id, id `<parent>.1`, `.2`... (at most three per parent), `weight: 1`, `kind: event`, `after: [the parent]`. A derived event is never a new turn of the plot, a reveal, a setup or an ending. Do not add any if the chapters are already full.
 
 Also create or extend STATE TRACKS for everything that changes and will constrain later scenes: injuries, where a key character is, relationships, possessions, who knows which secret. A track belongs to one entity and lists its states over time; each entry says from which chapter the state holds. Set must_show: true when the change itself has to happen on the page. A state that returns to an earlier value needs a `cause`. To extend an existing track repeat its id and give only the new entries. Use plan entries only for chapters of this act.
 
@@ -70,14 +70,14 @@ chapters:
     title: short title
     purpose: what this chapter changes
     summary: what happens
-    events_covered: [e1, e2]
+    starts_with: e1      # the first event this chapter tells (the next chapter's starts_with ends it)
     events_continued: []   # only for a weight 3 event begun in the chapter before
     end_state: where things stand at the end
     pov: anna
     setting: harbor
     tension: 4
     research: []        # optional ids of research notes this chapter relies on
-derived_events: []      # optional minor complications, each like this (and its id also in some chapter's events_covered):
+derived_events: []      # optional minor complications, each like this :
 #  - id: e2.1
 #    text: one line, what the small delay or obstacle is
 #    parent: e2

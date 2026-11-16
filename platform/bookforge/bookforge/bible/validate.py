@@ -393,7 +393,9 @@ def parse_chapters(
     new_places = adopt_places(raw, entities, act.id)
     repairs: list[str] = []
     if ledger is not None:
-        from . import repair
+        from . import partition, repair
+        declared = data.get("derived_events") if isinstance(data, dict) else None
+        problems += partition.assign(raw, partition.act_order(ledger.events, act.events, declared if isinstance(declared, list) else None))  # the tool cuts the act's events at each chapter's starts_with
         repairs = repair.repair_chapters(raw, data.get("tracks") if isinstance(data, dict) else None, [e.model_dump() for e in ledger.events], list(act.events) + [e.id for e in ledger.events if e.parent and e.parent in act.events], project.book, first_number)
         for note in repairs:
             log.info("chapters %s: %s", act.id, note)
