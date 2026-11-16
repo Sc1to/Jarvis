@@ -1,4 +1,9 @@
-"""A chapter that reports the outcome of an event a later chapter tells is corrected in its wording, once, instead of being sent back to you.
+"""A chapter whose own wording is wrong in a way one narrow call can fix is corrected in that wording, once, instead of being sent back to you.
+
+Two cases: a chapter that reports the outcome of an event a later chapter tells (`fix`), and a chapter whose purpose and summary retell an event an earlier
+chapter already told (`fix_retells`, below).
+
+The first case:
 
 The whole-book check finds a chapter whose summary or end_state says an event's outcome is already done (a chapter about deciding to do something
 that ends with it done), and a model has confirmed it (qc/repeat_confirm.py). Planning the whole act again tends to repeat the slip, and the fix is
@@ -63,4 +68,59 @@ def fix(ctx, chapters: list, events: list[dict], findings: list) -> list[str]:
             continue
         done.add(cid)
         notes.append(f"{cid}: its summary and end_state reported the outcome of {ev_id}, which a later chapter tells; the wording was rewritten and the check passes")
+    return notes
+
+
+def _check_retell(original: tuple[str, str]):
+    def check(data: dict) -> list[str]:
+        p, s = data.get("purpose"), data.get("summary")
+        if not isinstance(p, str) or not isinstance(s, str) or not p.strip() or not s.strip():
+            return ['the reply must be {"purpose": "...", "summary": "..."}, both non-empty']
+        out = []
+        for name, new, old in (("purpose", p, original[0]), ("summary", s, original[1])):
+            n, n_old = word_count(new), max(1, word_count(old))
+            if n < 0.4 * n_old or n > 2.0 * n_old + 10:
+                out.append(f"the {name} has {n} words; keep it close to the original {n_old}")
+        return out
+    return check
+
+
+def fix_retells(ctx, chapters: list, events: list[dict], findings: list) -> list[str]:
+    """Rewrite the purpose and summary of each chapter a hard chapter_retells_event points to, so it describes only its own events. Kept only if the
+    check then no longer finds that retelling (and nothing else changes). Returns one note per chapter fixed."""
+    from ..validators import ledger as ledger_checks
+
+    project = ctx.project
+    if ctx.llm is None or not project.config.qc.fix_retells:
+        return []
+    by_id = {c.id: c for c in chapters}
+    by_event = {e["id"]: e for e in events}
+    notes: list[str] = []
+    for f in findings[:MAX_FIXES]:
+        if f.severity != HARD or f.accepted or f.code != "chapter_retells_event" or len(f.items) < 2:
+            continue
+        cid, ev_id = f.items[0], f.items[1]
+        ch, ev = by_id.get(cid), by_event.get(ev_id)
+        if ch is None or ev is None:
+            continue
+        told_in = next((c.id for c in chapters if ev_id in c.events_covered and c.id != cid), "an earlier chapter")
+        own = [by_event[x] for x in list(ch.events_covered) + list(ch.events_continued) if x in by_event]
+        if not own:
+            continue  # a chapter with no events of its own cannot be rewritten into one: that takes judgement
+        old = (ch.purpose, ch.summary)
+        try:
+            data = ask_json(ctx, f"fix retold event {cid}", project.config.layers["chapters"].model, "retell_fix", _check_retell(old), max_tokens=900,
+                            title=ch.title, purpose=ch.purpose, summary=ch.summary, own_events="\n".join(f"- {e['id']}: {e['text']}" for e in own),
+                            forbidden=f"{ev_id}: {ev['text']}", told_in=told_in)
+        except Exception as e:  # no rewrite is no change: the finding stays
+            log.info("%s: retold event not fixed (%s)", cid, e)
+            continue
+        ch.purpose, ch.summary = data["purpose"].strip(), data["summary"].strip()
+        still = [x for x in ledger_checks.check_chapter_texts([c.model_dump() for c in chapters], events)
+                 if x.code == "chapter_retells_event" and x.severity == HARD and x.items[:2] == [cid, ev_id]]
+        if still:
+            ch.purpose, ch.summary = old  # the rewrite still retells it: the saved wording stands
+            log.info("%s: retold event not fixed (the check still finds it)", cid)
+            continue
+        notes.append(f"{cid}: its purpose and summary retold {ev_id}, which {told_in} already tells; the wording was rewritten and the check passes")
     return notes
