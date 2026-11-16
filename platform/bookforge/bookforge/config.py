@@ -171,6 +171,8 @@ class QC(_Strict):
     extract_observed: bool = True  # record what each accepted scene says about the tracked states
     review_structure: bool = True  # critic review of acts, chapters and scene plans against their parents
     confirm_repeats: bool = True  # each hard repeat finding is put to the critic once: only 'different events' downgrades it
+    fix_tension: bool = True  # a flat stretch of chapter tension is rated again from what happens in the chapters, kept only if the check then passes
+    warn_unfixable: bool = True  # an overreach or flat tension the fixes could not clear is kept as a warning, not a stop
     fix_retells: bool = True  # a chapter whose purpose and summary retell an event an earlier chapter told has them rewritten once (whole-book check), kept only if the check then passes
     fix_overreach: bool = True  # a chapter that reports the outcome of an event a later chapter tells has its summary and end_state rewritten once, kept only if the check then passes
     fix_prose_findings: bool = True  # a copied chapter opening or repeated sentences (whole-book prose checks) are fixed in the scene they point to, once, and kept only if the check then passes
