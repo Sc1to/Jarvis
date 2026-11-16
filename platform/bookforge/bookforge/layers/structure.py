@@ -474,16 +474,19 @@ def _book_chapter_checks(project, chapters: list[Chapter], ledger, ctx=None) -> 
     findings = compute()
     over = [f for f in findings if f.code == "end_state_overreach" and f.severity == HARD and not f.accepted]
     retold = [f for f in findings if f.code == "chapter_retells_event" and f.severity == HARD and not f.accepted]
-    if (over or retold) and ctx is not None:  # a chapter whose own wording is wrong is corrected, once, in a narrow call, instead of asking you
+    flat = [f for f in findings if f.code == "flat_tension" and f.severity == HARD and not f.accepted]
+    if (over or retold or flat) and ctx is not None:  # a chapter whose own wording or rating is wrong is corrected, once, in a narrow call, instead of asking you
         from ..qc import overreach_fix
         fixed = overreach_fix.fix(ctx, chapters, ev, over) if over else []
         fixed_retold = overreach_fix.fix_retells(ctx, chapters, ev, retold) if retold else []
-        if fixed:
-            healing.note(project, "chapters", "overreach", fixed)
-        if fixed_retold:
-            healing.note(project, "chapters", "retold", fixed_retold)
-        if fixed or fixed_retold:
+        fixed_flat = overreach_fix.fix_tension(ctx, chapters, flat) if flat else []
+        for key, notes in (("overreach", fixed), ("retold", fixed_retold), ("tension", fixed_flat)):
+            if notes:
+                healing.note(project, "chapters", key, notes)
+        if fixed or fixed_retold or fixed_flat:
             findings = compute()
+        if ctx.llm is not None and project.config.qc.warn_unfixable:  # tried, and still there: a warning in the stage checks, not a stop
+            findings = overreach_fix.demote_unfixable(findings)
     rel = findings_store.save(project, "chapters", findings)
     hard_left = [f.line() for f in findings if f.severity == HARD]
     if hard_left:

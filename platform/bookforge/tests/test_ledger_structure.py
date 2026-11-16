@@ -198,19 +198,19 @@ def test_a_whole_book_failure_plans_the_involved_acts_again_with_the_findings(pr
 
     def flat_once(chapters, stage="chapters", spread=2):
         calls["n"] += 1
-        return [F.hard("chapters", "flat_tension", "tension is flat for 4 chapters", ["b1.ch03", "b1.ch04"])] if calls["n"] == 1 else []
+        return [F.hard("chapters", "event_before_cause", "b1.ch04 covers an event before its cause", ["b1.ch03", "b1.ch04"])] if calls["n"] == 1 else []
 
     monkeypatch.setattr(tension, "flat_stretches", flat_once)
     first = run(p, RuleLLM(rules()), HANDLERS, until="chapters")
     assert first.stopped == "failed" and "act2 will be planned again" in first.detail
     note = steering.read(p, "chapters")
-    assert steering.CHECKS_MARKER in note and "flat_tension" in note
+    assert steering.CHECKS_MARKER in note and "event_before_cause" in note
     llm = RuleLLM(rules())
     second = run(p, llm, HANDLERS, until="chapters")
     assert second.ran == ["chapters"], second.detail
     asked = [next(m["content"] for m in c["messages"] if m["role"] == "user") for c in llm.calls]
     act2 = [t for t in asked if "Plan the chapters this act's events need, b1.ch03 onward" in t]
-    assert act2 and "Why the previous attempt was rejected" in act2[0] and "flat_tension" in act2[0]
+    assert act2 and "Why the previous attempt was rejected" in act2[0] and "event_before_cause" in act2[0]
     assert not any("Plan the chapters this act's events need, b1.ch01 onward" in t for t in asked)  # act 1 was fine: its saved piece is reused
     assert steering.read(p, "chapters") == ""  # the note is gone once the layer is accepted
 
@@ -354,3 +354,31 @@ def test_a_wrong_weight_in_an_acts_reasoning_is_corrected_without_a_correction_r
     assert summary.ran == ["acts"], summary.detail
     assert len([c for c in llm.calls if "Divide the book into ACTS" in c["messages"][-1]["content"]]) == 1  # accepted at once
     assert all("weight of 4" in a.sizing_reason and "weight of 7" not in a.sizing_reason for a in store.load_acts(p))
+
+
+def test_a_flat_stretch_is_fixed_by_the_whole_book_check_or_kept_as_a_warning_when_the_fix_cannot(project, monkeypatch):
+    from bookforge import healing
+    from bookforge.layers.runner import StepContext
+    from bookforge.layers.structure import _book_chapter_checks
+    from bookforge.validators import findings as F, tension
+    p = project_ready(project)
+    run(p, RuleLLM(rules()), HANDLERS, until="chapters")
+
+    def flat_when_all_equal(chapters, stage="chapters", spread=2):  # a stand-in for the real check, which needs a longer book
+        return [F.hard("chapters", "flat_tension", "tension is flat", [c["id"] for c in chapters])] if len({c["tension"] for c in chapters}) == 1 else []
+
+    monkeypatch.setattr(tension, "flat_stretches", flat_when_all_equal)
+    flat = [c.model_copy(update={"tension": 9}) for c in store.load_chapters(p)]
+    ids = [c.id for c in flat]
+    good = json.dumps({"tension": {i: v for i, v in zip(ids, [4, 8, 3, 9])}})
+    healing.begin(p, "chapters")
+    _book_chapter_checks(p, flat, store.load_ledger(p), StepContext(project=p, layer="chapters", llm=RuleLLM([("Rate the tension of the chapters listed below again", good)])))
+    assert [c.tension for c in flat] == [4, 8, 3, 9]
+    assert any("rated again" in n for n in healing.commit(p, "chapters"))
+    flat2 = [c.model_copy(update={"tension": 9}) for c in flat]
+    still_flat = json.dumps({"tension": {i: 9 for i in ids}})
+    _book_chapter_checks(p, flat2, store.load_ledger(p), StepContext(project=p, layer="chapters", llm=RuleLLM([("Rate the tension of the chapters listed below again", still_flat)])))  # no stop
+    saved = json.loads((p.book_dir / "validation" / "chapters.json").read_text())
+    warn = [f for f in saved["findings"] if f["code"] == "flat_tension"]
+    assert warn and all(f["severity"] == "soft" and "kept as a warning" in f["message"] for f in warn)
+    assert [c.tension for c in flat2] == [9, 9, 9, 9]  # the saved ratings were not touched

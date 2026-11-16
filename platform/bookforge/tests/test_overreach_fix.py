@@ -111,3 +111,49 @@ def test_the_per_act_check_leaves_a_retold_event_to_the_whole_book_fix_unless_th
     problems = []
     validate._ledger_chapter_checks(project, {}, now, act, ledger, before, [act], problems, ctx)
     assert any("chapter_retells_event" in p for p in problems)  # with the fix off the act is sent back as before
+
+
+def flat_chapters(n=8, tension=8):
+    out = []
+    for i in range(n):
+        c = chapter(10 + i, [f"e{i}"], f"Things happen in chapter {i}.", f"State {i}.")
+        c.tension = tension
+        out.append(c)
+    return out
+
+
+def test_a_flat_stretch_is_rated_again_from_the_chapters_and_kept_when_the_check_passes(project):
+    from bookforge.validators import tension as T
+    chs = flat_chapters()
+    found = [f for f in T.flat_stretches([c.model_dump() for c in chs]) if f.severity == HARD]
+    assert found and found[0].code == "flat_tension"
+    ids = found[0].items
+    new = {cid: v for cid, v in zip(ids, [5, 8, 4, 9, 6, 9, 3, 10][:len(ids)])}
+    llm = RuleLLM([("Rate the tension of the chapters listed below again", json.dumps({"tension": new}))])
+    notes = overreach_fix.fix_tension(StepContext(project=project, layer="chapters", llm=llm), chs, found)
+    assert len(notes) == 1 and ids[0] in notes[0] and [c.tension for c in chs[:len(ids)]] == list(new.values())
+    assert not [f for f in T.flat_stretches([c.model_dump() for c in chs]) if f.severity == HARD]
+
+
+def test_ratings_that_are_still_flat_or_incomplete_leave_the_saved_tension_alone(project):
+    from bookforge.validators import tension as T
+    chs = flat_chapters()
+    found = [f for f in T.flat_stretches([c.model_dump() for c in chs]) if f.severity == HARD]
+    ids = found[0].items
+    flat = RuleLLM([("Rate the tension of the chapters listed below again", json.dumps({"tension": {i: 7 + (k % 2) for k, i in enumerate(ids)}}))])
+    assert overreach_fix.fix_tension(StepContext(project=project, layer="chapters", llm=flat), chs, found) == [] and {c.tension for c in chs} == {8}
+    partial = RuleLLM([("Rate the tension of the chapters listed below again", json.dumps({"tension": {ids[0]: 3}}))])
+    assert overreach_fix.fix_tension(StepContext(project=project, layer="chapters", llm=partial), chs, found) == [] and {c.tension for c in chs} == {8}
+    project.config.qc.fix_tension = False
+    assert overreach_fix.fix_tension(StepContext(project=project, layer="chapters", llm=partial), chs, found) == []
+
+
+def test_what_the_fixes_could_not_clear_is_kept_as_a_warning_except_a_retold_event():
+    from bookforge.validators import findings as F
+    kept = overreach_fix.demote_unfixable([F.hard("chapters", "end_state_overreach", "over", ["b2.ch10", "e12"]), F.hard("chapters", "flat_tension", "flat", ["b2.ch12"]),
+                                           F.hard("chapters", "chapter_retells_event", "retold", ["b2.ch14", "e14"]), F.hard("chapters", "event_not_covered", "gone", ["e10"])])
+    assert [(f.code, f.severity) for f in kept] == [("end_state_overreach", "soft"), ("flat_tension", "soft"), ("chapter_retells_event", "hard"), ("event_not_covered", "hard")]
+    assert kept[0].message.startswith("(the tool tried to fix this and could not; kept as a warning)")
+    accepted = F.hard("chapters", "flat_tension", "flat", ["b2.ch12"])
+    accepted.accepted = True
+    assert overreach_fix.demote_unfixable([accepted])[0].severity == "hard"

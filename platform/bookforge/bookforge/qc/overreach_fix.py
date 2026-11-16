@@ -124,3 +124,76 @@ def fix_retells(ctx, chapters: list, events: list[dict], findings: list) -> list
             continue
         notes.append(f"{cid}: its purpose and summary retold {ev_id}, which {told_in} already tells; the wording was rewritten and the check passes")
     return notes
+
+
+def _check_tension(ids: list[str]):
+    def check(data: dict) -> list[str]:
+        t = data.get("tension")
+        if not isinstance(t, dict):
+            return ['the reply must be {"tension": {"<chapter id>": <1-10>, ...}}']
+        out = [f"{i} has no tension value" for i in ids if i not in t]
+        out += [f"{i}: tension must be a whole number from 1 to 10" for i in ids if i in t and not (isinstance(t[i], int) and not isinstance(t[i], bool) and 1 <= t[i] <= 10)]
+        return out
+    return check
+
+
+def fix_tension(ctx, chapters: list, findings: list) -> list[str]:
+    """Rate the tension of each flat stretch of chapters again, from what happens in them (one narrow call per stretch); kept only if the check then no
+    longer finds that stretch flat. Tension is a number the planning model wrote down, not part of the story's facts."""
+    from ..validators import tension as tension_checks
+
+    project = ctx.project
+    if ctx.llm is None or not project.config.qc.fix_tension:
+        return []
+    notes: list[str] = []
+    for f in findings[:4]:
+        if f.severity != HARD or f.accepted or f.code != "flat_tension" or not f.items:
+            continue
+        ids = list(f.items)
+        index = {c.id: i for i, c in enumerate(chapters)}
+        picked = [chapters[index[x]] for x in ids if x in index]
+        if len(picked) != len(ids):
+            continue
+        lo, hi = index[ids[0]], index[ids[-1]]
+        around = [c for c in chapters[max(0, lo - 2):lo] + chapters[hi + 1:hi + 3]]
+        old = {c.id: c.tension for c in picked}
+        block = "\n".join(f"- {c.id} \"{c.title}\" (now {c.tension}): {c.purpose} {c.summary} End: {c.end_state}" for c in picked)
+        near = "\n".join(f"- {c.id} \"{c.title}\" (tension {c.tension}): {c.summary[:240]}" for c in around) or "none"
+        try:
+            data = ask_json(ctx, f"fix flat tension {ids[0]}", project.config.layers["chapters"].model, "tension_fix", _check_tension(ids), max_tokens=500, chapters=block, around=near)
+        except Exception as e:  # no new ratings is no change: the finding stays
+            log.info("%s: flat tension not fixed (%s)", ids[0], e)
+            continue
+        values = data["tension"]
+        if max(values[i] for i in ids) - min(values[i] for i in ids) < 3:
+            log.info("%s: flat tension not fixed (the new ratings are still flat)", ids[0])
+            continue
+        for c in picked:
+            c.tension = int(values[c.id])
+        still = [x for x in tension_checks.flat_stretches([c.model_dump() for c in chapters]) if x.severity == HARD and set(x.items) & set(ids)]
+        if still:
+            for c in picked:
+                c.tension = old[c.id]  # the new ratings are still a flat stretch: the saved ones stand
+            log.info("%s: flat tension not fixed (the check still finds it)", ids[0])
+            continue
+        notes.append(f"{ids[0]} to {ids[-1]}: the tension stayed between {min(old.values())} and {max(old.values())}; it was rated again from what happens in each chapter and the check passes")
+    return notes
+
+
+UNFIXABLE_WARNINGS = ("end_state_overreach", "flat_tension")  # wording and rating heuristics: a warning when one narrow fix did not clear them, not a stop for the whole book
+
+
+def demote_unfixable(findings: list) -> list:
+    """After the fixes were tried: a hard finding of these kinds that is still there becomes a soft one that says so (it stays in the stage checks, but the
+    run goes on). A retold event stays hard: it is a concrete defect in the plan."""
+    from dataclasses import replace
+
+    from ..validators import SOFT
+
+    out = []
+    for f in findings:
+        if f.severity == HARD and not f.accepted and f.code in UNFIXABLE_WARNINGS:
+            out.append(replace(f, severity=SOFT, message=f"(the tool tried to fix this and could not; kept as a warning) {f.message}"))
+        else:
+            out.append(f)
+    return out
