@@ -13,30 +13,38 @@ _ABSTRACT = frozenset("""hope future truth freedom free peace home together chan
  forever whatever together story life world light dark""".split())
 
 
-def repeated_sentences(scene_texts: list[tuple[str, str]], stage: str = "prose") -> list[Finding]:
-    """Sentences (six words or more) that already appeared in an earlier scene, exactly or nearly (shared 5-word shingles)."""
-    out: list[Finding] = []
+def duplicate_sentences(scene_texts: list[tuple[str, str]]) -> dict[str, tuple[int, list[str]]]:
+    """Per scene: (its sentences of six words or more, those of them already written in an earlier scene, exactly or nearly (shared 5-word shingles))."""
+    out: dict[str, tuple[int, list[str]]] = {}
     seen: dict[str, str] = {}
     seen_sh: list[tuple[set, str]] = []
     for sid, text in scene_texts:
-        dup: list[tuple[str, str]] = []
+        dup: list[str] = []
         sents = [s for s in sentences(text) if len(WORD.findall(s)) >= MIN_SENTENCE_WORDS]
         for s in sents:
             n = norm_sentence(s)
             if n in seen and seen[n] != sid:
-                dup.append((s, seen[n]))
+                dup.append(s)
                 continue
             sh = shingles(s, 5)
             if sh and any(len(sh & o) / len(sh | o) >= 0.7 for o, osid in seen_sh if osid != sid):
-                dup.append((s, "an earlier scene"))
+                dup.append(s)
         for s in sents:
             seen.setdefault(norm_sentence(s), sid)
             seen_sh.append((shingles(s, 5), sid))
         if dup:
-            share = len(dup) / max(1, len(sents))
-            make = hard if len(dup) >= 4 or share >= 0.1 else soft
-            out.append(make(stage, "sentences_repeated", f"{sid}: {len(dup)} sentence(s) ({share:.0%}) were already written in earlier scenes",
-                            [sid], [d[0][:120] for d in dup[:3]]))
+            out[sid] = (len(sents), dup)
+    return out
+
+
+def repeated_sentences(scene_texts: list[tuple[str, str]], stage: str = "prose") -> list[Finding]:
+    """Sentences (six words or more) that already appeared in an earlier scene, exactly or nearly (shared 5-word shingles)."""
+    out: list[Finding] = []
+    for sid, (n_sents, dup) in duplicate_sentences(scene_texts).items():
+        share = len(dup) / max(1, n_sents)
+        make = hard if len(dup) >= 4 or share >= 0.1 else soft
+        out.append(make(stage, "sentences_repeated", f"{sid}: {len(dup)} sentence(s) ({share:.0%}) were already written in earlier scenes",
+                        [sid], [d[:120] for d in dup[:3]]))
     return out
 
 

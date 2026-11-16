@@ -411,6 +411,16 @@ def prose(ctx: StepContext) -> StepResult:
     try:  # whole-book checks on the accepted text: copied sentences and chapter openings, wrap-up endings, tic words
         from ..validators.book import hard_lines, save_prose_findings
         found, rel = save_prose_findings(project, ctx)
+        from .. import healing, prose_repair
+        healing.begin(project, "prose")
+        try:  # a copied chapter opening or repeated sentences: the scene's passage is rewritten, once, if the check then passes
+            fixed = prose_repair.fix(ctx, found)
+        except Exception as e:  # a model that cannot be reached must not hide the findings, which stay as they are
+            log.warning("prose findings could not be fixed: %s", e)
+            fixed = []
+        if fixed:
+            found, rel = save_prose_findings(project, ctx)
+        healing.commit(project, "prose", fixed)
         files.append(rel)
         hard_prose = hard_lines(found)
     except Exception as e:  # never lose a run to a failed report

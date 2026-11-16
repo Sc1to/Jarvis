@@ -12,7 +12,7 @@ count towards what is open, never block a stage and never trigger a notification
 import json
 from datetime import datetime, timezone
 
-STAGES = ("ledger", "acts", "chapters", "scenes")
+STAGES = ("ledger", "acts", "chapters", "scenes", "prose")
 _pending: dict[tuple[str, str], dict[str, list[str]]] = {}
 
 

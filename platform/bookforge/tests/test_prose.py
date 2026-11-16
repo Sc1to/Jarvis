@@ -384,3 +384,19 @@ def test_copied_sentences_across_scenes_stop_the_prose_layer_from_being_accepted
     go(p, llm, until="prose")
     saved = findings.load(p, "prose")
     assert saved["summary"]["hard"] >= 1 and p.state.layers["prose"].status == "flagged"
+
+
+@pytest.mark.real_prose_checks
+def test_a_model_that_fails_while_fixing_prose_findings_leaves_them_standing(book):
+    from bookforge.validators import store as findings
+
+    def gone(messages):
+        raise RuntimeError("the model is gone")
+
+    p = book
+    llm = RuleLLM([("Say it in new words, or cut it", gone)] + prose_rules())  # the scripted writer gives every scene similar text, so the whole-book check is hard
+    go(p, llm, until="prose")
+    p.state.approve_checkpoint("voice")
+    p.save_state()
+    go(p, llm, until="prose")
+    assert findings.load(p, "prose")["summary"]["hard"] >= 1 and p.state.layers["prose"].status == "flagged"
