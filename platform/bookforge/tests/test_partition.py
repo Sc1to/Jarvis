@@ -88,3 +88,20 @@ def test_a_start_the_act_does_not_own_is_corrected_by_the_model_not_left_to_you(
     summary = run(p, llm, HANDLERS, until="chapters")
     assert summary.stopped == "failed"
     assert any("starts_with is 'e3', which is not an event of this act" in c["messages"][-1]["content"] for c in llm.calls)
+
+
+def test_a_reply_with_both_starts_with_and_events_covered_is_read_by_starts_with_alone():
+    raw = [dict(title="t", starts_with="e1", events_covered=["e1", "e2", "e3"]), dict(title="t", starts_with="e4", events_covered=["e9"])]
+    assert partition.assign(raw, ORDER) == []
+    assert [c["events_covered"] for c in raw] == [["e1", "e2", "e3"], ["e4", "e5", "e6"]]  # the second chapter's own list (e9) is ignored
+
+
+def test_a_bad_start_hands_back_only_that_problem_not_a_wall_of_follow_on_errors(project):
+    p = project_ready(project)
+    bad = starts_reply(1, ["e3", "e4"])  # both belong to act 2
+    llm = RuleLLM([("Plan the chapters this act's events need, b1.ch01 onward", dump(bad))] + rules()[:2])
+    run(p, llm, HANDLERS, until="chapters")
+    feedback = " ".join(c["messages"][-1]["content"] for c in llm.calls if "Your previous document has these problems" in c["messages"][-1]["content"])
+    assert "starts_with is 'e3', which is not an event of this act" in feedback
+    for noise in ("events_covered is empty", "chapter_without_events", "event_not_covered"):
+        assert noise not in feedback

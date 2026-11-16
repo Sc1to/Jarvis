@@ -472,11 +472,16 @@ def _book_chapter_checks(project, chapters: list[Chapter], ledger, ctx=None) -> 
 
     findings = compute()
     over = [f for f in findings if f.code == "end_state_overreach" and f.severity == HARD and not f.accepted]
-    if over and ctx is not None:  # a chapter that reports an outcome a later chapter tells: its wording is corrected, once, instead of asking you
+    retold = [f for f in findings if f.code == "chapter_retells_event" and f.severity == HARD and not f.accepted]
+    if (over or retold) and ctx is not None:  # a chapter whose own wording is wrong is corrected, once, in a narrow call, instead of asking you
         from ..qc import overreach_fix
-        fixed = overreach_fix.fix(ctx, chapters, ev, over)
+        fixed = overreach_fix.fix(ctx, chapters, ev, over) if over else []
+        fixed_retold = overreach_fix.fix_retells(ctx, chapters, ev, retold) if retold else []
         if fixed:
             healing.note(project, "chapters", "overreach", fixed)
+        if fixed_retold:
+            healing.note(project, "chapters", "retold", fixed_retold)
+        if fixed or fixed_retold:
             findings = compute()
     rel = findings_store.save(project, "chapters", findings)
     hard_left = [f.line() for f in findings if f.severity == HARD]

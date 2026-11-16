@@ -10,8 +10,7 @@ including) the next chapter's; the last one runs to the act's last event. What u
 - none comes from another act, because only events of this act can start a chapter;
 - the order is the ledger's, because the stretches are cut from the ledger's list.
 
-A chapter that only carries on a heavy event from the chapter before (`events_continued`, nothing new) has no `starts_with`. A reply that still lists
-`events_covered` (an older file, a hand-edited one) is taken as it is, with the old checks.
+A chapter that only carries on a heavy event from the chapter before (`events_continued`, nothing new) has no `starts_with`. A reply with no `starts_with` at all (an older file, a hand-edited one) is taken as it is, with the old checks; one that has both is read by its `starts_with`.
 """
 
 import re
@@ -32,7 +31,9 @@ def act_order(ledger_events, act_events, declared: list | None = None) -> list[s
 
 
 def uses_starts(chapters: list[dict]) -> bool:
-    return bool(chapters) and any("starts_with" in c for c in chapters) and not any(c.get("events_covered") for c in chapters)
+    """The reply is in the new shape as soon as one chapter has `starts_with`. A reply that has both (a correction round that was told to list events)
+    is read by its `starts_with` alone: `events_covered` is the tool's to fill in."""
+    return bool(chapters) and any("starts_with" in c for c in chapters)
 
 
 def assign(raw: list, order: list[str]) -> list[str]:
@@ -47,6 +48,7 @@ def assign(raw: list, order: list[str]) -> list[str]:
     for k, c in enumerate(chapters):
         label = f"chapters[{k}]"
         sw = c.pop("starts_with", None)
+        c.pop("events_covered", None)  # the tool's to fill in, whatever the model wrote
         continued = c.get("events_continued") or []
         if sw in (None, "", []):
             if not continued:

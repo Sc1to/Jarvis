@@ -395,7 +395,9 @@ def parse_chapters(
     if ledger is not None:
         from . import partition, repair
         declared = data.get("derived_events") if isinstance(data, dict) else None
-        problems += partition.assign(raw, partition.act_order(ledger.events, act.events, declared if isinstance(declared, list) else None))  # the tool cuts the act's events at each chapter's starts_with
+        bad_starts = partition.assign(raw, partition.act_order(ledger.events, act.events, declared if isinstance(declared, list) else None))  # the tool cuts the act's events at each chapter's starts_with
+        if bad_starts:  # nothing else is checked: chapters without events would only add a wall of follow-on errors that tell the model to list events itself
+            return None, problems + bad_starts
         repairs = repair.repair_chapters(raw, data.get("tracks") if isinstance(data, dict) else None, [e.model_dump() for e in ledger.events], list(act.events) + [e.id for e in ledger.events if e.parent and e.parent in act.events], project.book, first_number)
         for note in repairs:
             log.info("chapters %s: %s", act.id, note)
@@ -517,6 +519,8 @@ def _ledger_chapter_checks(project, data, chapters: list[Chapter], act: Act, led
     if ctx is not None:  # the lexical repeat check is only a first look: the critic says whether it really is the same event
         from ..qc.repeat_confirm import confirm_repeats
         findings = confirm_repeats(ctx, findings)
+    if ctx is not None and project.config.qc.fix_retells:  # a retold event is a wording slip one narrow call fixes; the whole-book check does that (and the fix is saved), instead of whole-act correction rounds
+        findings = [f for f in findings if f.code != "chapter_retells_event"]
     problems += accepted.hard_lines(project, findings, "chapters")
     return derived
 
