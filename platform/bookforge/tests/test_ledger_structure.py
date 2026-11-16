@@ -57,7 +57,7 @@ def test_acts_whose_events_interleave_are_corrected_then_block(project):
     assert any("acts_out_of_order" in c["messages"][-1]["content"] for c in llm.calls[1:])  # the error was fed back
 
 
-def test_chapters_that_retell_an_event_or_use_a_reserved_one_are_refused(project):
+def test_chapters_that_retell_an_event_are_put_right_and_the_slip_is_told_once(project):
     p = project_ready(project)
     bad = chapters(1)
     bad["chapters"][0]["events_covered"] = ["e1", "e2"]
@@ -67,13 +67,6 @@ def test_chapters_that_retell_an_event_or_use_a_reserved_one_are_refused(project
     assert summary.ran == ["acts", "chapters"], summary.detail
     told = [x for c in store.load_chapters(p)[:2] for x in c.events_covered]
     assert sorted(told) == ["e1", "e2"]
-    reserved = chapters(1)
-    reserved["chapters"][0]["events_covered"] = ["e1", "e2"]
-    reserved["chapters"][1]["events_covered"] = ["e3"]  # e3 belongs to act 2, and nothing of this chapter's own is left to keep it by
-    llm = RuleLLM([("Plan the chapters this act's events need, b1.ch01 onward", dump(reserved))] + rules()[:2])
-    p2 = project_ready(__import__("conftest").Project.create(p.root.parent / "second", "x\n"))
-    summary = run(p2, llm, HANDLERS, until="chapters")
-    assert summary.stopped == "failed" and "event_from_other_act" in " ".join(c["messages"][-1]["content"] for c in llm.calls)
 
 
 def test_derived_complications_join_the_ledger_and_obey_the_rules(project):

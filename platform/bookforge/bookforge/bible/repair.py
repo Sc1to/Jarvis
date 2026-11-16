@@ -141,7 +141,8 @@ def repair_chapters(raw: list, raw_tracks: list | None, ledger_events: list[dict
     notes += _drop_foreign(chapters, set(act_events), order)
     if not any(c.get("events_continued") for c in chapters):
         notes += _swap_chapters(chapters, raw_tracks, order, expected)
-        raw[:] = chapters  # the reply's own list, in the new order
+    notes += _drop_foreign_tail(chapters, raw_tracks, set(act_events), order)  # after the swap: the tail is what is last in story order
+    raw[:] = chapters  # the reply's own list, in the new order and without the chapters that were left out
     notes += _attach_uncovered(chapters, act_events, ledger_events, order)
     notes += _dedupe_within_act(chapters, ledger_events)
     return notes
@@ -195,6 +196,22 @@ def _dedupe_within_act(chapters: list[dict], ledger_events: list[dict]) -> list[
                     dropped.append(d["id"])
             if dropped:
                 notes.append(f"{x} was told in {len(idx)} chapters; kept in {chapters[keep]['id']}, where it fits best, and taken out of {', '.join(dropped)}")
+    return notes
+
+
+def _drop_foreign_tail(chapters: list[dict], raw_tracks, act_events: set[str], order: dict[str, int]) -> list[str]:
+    """Chapters at the end of an act that tell only events of OTHER acts and continue nothing: the model told the act's own events and then filled the
+    ceiling with what later acts tell. Those acts tell them, so nothing is lost by leaving the chapter out (state track entries that pointed at it point
+    at the chapter before). A chapter with an event it does not know, or the only chapter of the act, is left for the checks."""
+    notes: list[str] = []
+    while len(chapters) > 1:
+        last = chapters[-1]
+        covered = [x for x in last.get("events_covered") or [] if isinstance(x, str)]
+        if last.get("events_continued") or not covered or any(x in act_events for x in covered) or not all(x in order for x in covered):
+            break
+        dropped = chapters.pop()
+        _remap_tracks(raw_tracks, {dropped["id"]: chapters[-1]["id"]})
+        notes.append(f"{dropped['id']} told only {', '.join(covered)}, which belong to other acts: the act's own events are told, so the chapter was left out")
     return notes
 
 
