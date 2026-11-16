@@ -60,16 +60,19 @@ def test_acts_whose_events_interleave_are_corrected_then_block(project):
 def test_chapters_that_retell_an_event_or_use_a_reserved_one_are_refused(project):
     p = project_ready(project)
     bad = chapters(1)
-    bad["chapters"][1]["events_covered"] = ["e1"]  # tells e1 again, and e2 is never told
+    bad["chapters"][0]["events_covered"] = ["e1", "e2"]
+    bad["chapters"][1]["events_covered"] = ["e1", "e2"]  # both chapters tell both events: a mechanical slip, told once where the words fit
     other = [("Plan the chapters this act's events need, b1.ch01 onward", dump(bad))]
     summary = run(p, RuleLLM(other + rules()), HANDLERS, until="chapters")
-    assert summary.stopped == "failed"
-    assert "once_only_repeated" in summary.detail or "chapter_nothing_new" in summary.detail or "event_not_covered" in summary.detail
+    assert summary.ran == ["acts", "chapters"], summary.detail
+    told = [x for c in store.load_chapters(p)[:2] for x in c.events_covered]
+    assert sorted(told) == ["e1", "e2"]
     reserved = chapters(1)
     reserved["chapters"][0]["events_covered"] = ["e1", "e2"]
     reserved["chapters"][1]["events_covered"] = ["e3"]  # e3 belongs to act 2, and nothing of this chapter's own is left to keep it by
     llm = RuleLLM([("Plan the chapters this act's events need, b1.ch01 onward", dump(reserved))] + rules()[:2])
-    summary = run(p, llm, HANDLERS, until="chapters")
+    p2 = project_ready(__import__("conftest").Project.create(p.root.parent / "second", "x\n"))
+    summary = run(p2, llm, HANDLERS, until="chapters")
     assert summary.stopped == "failed" and "event_from_other_act" in " ".join(c["messages"][-1]["content"] for c in llm.calls)
 
 

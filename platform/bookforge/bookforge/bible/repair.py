@@ -143,6 +143,7 @@ def repair_chapters(raw: list, raw_tracks: list | None, ledger_events: list[dict
         notes += _swap_chapters(chapters, raw_tracks, order, expected)
         raw[:] = chapters  # the reply's own list, in the new order
     notes += _attach_uncovered(chapters, act_events, ledger_events, order)
+    notes += _dedupe_within_act(chapters, ledger_events)
     return notes
 
 
@@ -158,6 +159,42 @@ def _drop_foreign(chapters: list[dict], act_events: set[str], order: dict[str, i
             if foreign and (keep or other):
                 c[key] = keep
                 notes.append(f"{c['id']} listed {', '.join(foreign)}, which belongs to another act; taken out so it is told only there")
+    return notes
+
+
+def _dedupe_within_act(chapters: list[dict], ledger_events: list[dict]) -> list[str]:
+    """A once_only event listed as begun in two chapters of the act is told once. A weight 3 event in two chapters next to each other is the second
+    chapter carrying it on (events_continued); any other is kept in the chapter whose words fit it best and taken out of the rest. A chapter that
+    would be left with nothing of its own is left alone: that takes judgement."""
+    info = {e["id"]: e for e in ledger_events}
+    texts = {x: e.get("text", "") for x, e in info.items()}
+    fit = lambda c, x: len(_words(texts.get(x, "")) & _words(" ".join(str(c.get(k, "")) for k in ("title", "purpose", "summary", "end_state"))))  # noqa: E731
+    notes: list[str] = []
+    seen: set[str] = set()
+    for c in chapters:
+        for x in list(c.get("events_covered") or []):
+            if x in seen or x not in info or not info[x].get("once_only", True):
+                continue
+            seen.add(x)
+            idx = [i for i, d in enumerate(chapters) if x in (d.get("events_covered") or [])]
+            if len(idx) < 2:
+                continue
+            if len(idx) == 2 and idx[1] == idx[0] + 1 and int(info[x].get("weight", 1)) >= 3 and x not in (chapters[idx[0]].get("events_continued") or []):
+                later = chapters[idx[1]]
+                later["events_covered"] = [y for y in later["events_covered"] if y != x]
+                later["events_continued"] = list(later.get("events_continued") or []) + [x]
+                notes.append(f"{x} was told as new in {chapters[idx[0]]['id']} and {later['id']}; {later['id']} now carries it on")
+                continue
+            keep = max(idx, key=lambda i: fit(chapters[i], x))
+            dropped = []
+            for i in idx:
+                d = chapters[i]
+                rest = [y for y in d["events_covered"] if y != x]
+                if i != keep and (rest or d.get("events_continued")):
+                    d["events_covered"] = rest
+                    dropped.append(d["id"])
+            if dropped:
+                notes.append(f"{x} was told in {len(idx)} chapters; kept in {chapters[keep]['id']}, where it fits best, and taken out of {', '.join(dropped)}")
     return notes
 
 

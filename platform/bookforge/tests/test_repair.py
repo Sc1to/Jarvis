@@ -142,3 +142,17 @@ def test_an_event_of_another_act_is_taken_out_of_a_chapter_that_retells_it_and_a
     mine = [chapter(13, ["e4", "e4.1"])]
     repair.repair_chapters(mine, None, LEDGER + derived, ["e4", "e4.1"], "b2", 13)
     assert mine[0]["events_covered"] == ["e4", "e4.1"]  # a complication of the act's own event is the act's
+
+
+def test_an_event_told_as_new_in_two_chapters_of_one_act_is_carried_on_or_kept_in_the_best_fit_and_never_leaves_a_chapter_empty():
+    big = [ev("e4", "Halloway hunts them", weight=3), ev("e5", "Eli decides to broadcast"), ev("e6", "Mara is injured in the struggle")]
+    raw = [chapter(4, ["e4"]), chapter(5, ["e4", "e5"])]
+    notes = repair.repair_chapters(raw, None, big, ["e4", "e5"], "b2", 4)
+    assert raw[0]["events_covered"] == ["e4"] and raw[1]["events_covered"] == ["e5"] and raw[1]["events_continued"] == ["e4"] and any("carries it on" in n for n in notes)
+    small = [ev("e5", "Eli decides to broadcast"), ev("e6", "Mara is injured in the struggle")]
+    raw = [chapter(4, ["e5", "e6"], title="The struggle"), chapter(5, ["e5"], title="The broadcast", summary="Eli decides to broadcast"), chapter(6, ["e6"], title="Mara is injured")]
+    repair.repair_chapters(raw, None, small, ["e5", "e6"], "b2", 4)
+    assert [c["events_covered"] for c in raw] == [["e6"], ["e5"], ["e6"]]  # e5 stays where its words fit; e6 is in ch04 and ch06 but ch04 would be left empty
+    only = [chapter(4, ["e5"], title="Eli decides to broadcast"), chapter(5, ["e5"], title="Eli decides to broadcast")]
+    repair.repair_chapters(only, None, small, ["e5"], "b2", 4)
+    assert [c["events_covered"] for c in only] == [["e5"], ["e5"]]  # each would be left empty: the checks decide
