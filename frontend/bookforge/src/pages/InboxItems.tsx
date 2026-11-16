@@ -171,7 +171,8 @@ export default function InboxItems({ series, book, status, reload }: { series: s
   const lr = view?.last_run
   const runAgain = async () => { await run.run('/run', {}); done() }
   const getSuggestions = async () => { await propose.run('/inbox/propose', {}); done() }
-  const withoutProposal = active.filter((i) => i.status === 'open' && !i.proposal).length
+  const proposable = (i: InboxItem) => i.kind === 'question' || i.code === 'sentence_not_covered' // the only items the tool works out an answer for
+  const withoutProposal = active.filter((i) => i.status === 'open' && !i.proposal && proposable(i)).length
   const waitingCheckpoints = Object.entries(CHECKPOINT_STAGES).filter(([cp, stages]) => status.checkpoints[cp] === 'waiting' && active.some((i) => stages.includes(i.stage) && i.status === 'open'))
   const approveAnyway = async (cp: string) => {
     const skipped = active.filter((i) => i.status === 'open' && CHECKPOINT_STAGES[cp].includes(i.stage))
@@ -237,6 +238,16 @@ export default function InboxItems({ series, book, status, reload }: { series: s
           <span className="text-xs text-slate-600">It suggests an answer for {withoutProposal} item(s); nothing is applied.</span>
         </div>
       )}
+      {propose.result && !propose.busy && (() => {
+        const r = propose.result as { proposals?: number; no_suggestion?: Record<string, number> }
+        const none = Object.entries(r.no_suggestion ?? {})
+        return (
+          <p className="mt-2 text-xs text-slate-700">
+            {r.proposals ? `${r.proposals} suggestion(s) are ready: open the items above and tap Use suggestion.` : 'The tool has no suggestion for the open items.'}
+            {none.length > 0 && ` Nothing to suggest for ${none.map(([k, n]) => `${k.replace(/_/g, ' ')} (${n})`).join(', ')}: those need your own answer.`}
+          </p>
+        )
+      })()}
       <ErrorBanner message={propose.error} onClose={propose.reset} />
       <ErrorBanner message={run.error} onClose={run.reset} />
       <ErrorBanner message={skip.error} onClose={skip.clear} />

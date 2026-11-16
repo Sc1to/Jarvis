@@ -32,3 +32,15 @@ def test_the_same_change_in_different_words_is_a_repeat_but_unrelated_events_are
     assert found and found[0].code == "state_change_repeated" and found[0].items[2:] == ["e10", "e12"]
     other = [ev("e1", "Mara repairs the engine"), ev("e2", "Corso arrests the inspector")]
     assert S.state_change_repeated([ch(1, ["e1"], ""), ch(2, ["e2"], "")], other) == []
+
+
+def test_a_name_every_chapter_mentions_is_not_what_makes_two_texts_the_same_change():
+    """The protagonist's name plus a result word ('accept') in both a chapter and a later event is not the same change."""
+    events = [ev("e22", "Eli realizes he has achieved freedom but not toppled the Dominion, accepting his role as a survivor")]
+    chapters = [ch(i, [f"e{i}"], f"Eli walks on through the tunnels of level {i}.", "Eli reaches the next level.") for i in range(1, 6)]
+    chapters.insert(3, ch(16, ["e16"], "Eli is free but bound by silence; Mara is dead.", "Eli accepts the terms the corporation sets and boards the Kestrel."))
+    chapters.append(ch(22, ["e22"], "Eli is a survivor."))
+    assert S.end_state_overreach(chapters, events) == []  # 'eli' is in every chapter; 'accept' is the only other shared word
+    two = [ch(16, ["e16"], "The corporation's offer is signed.", "Eli accepts the debt contract."), ch(22, ["e22"], "x")]
+    events2 = [ev("e22", "Eli accepts the debt contract and signs the non-disclosure agreement")]
+    assert [f.code for f in S.end_state_overreach(two, events2)] == ["end_state_overreach"]  # a shared object (the debt contract) is still caught

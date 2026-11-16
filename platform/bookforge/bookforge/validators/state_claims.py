@@ -33,10 +33,23 @@ def classes_in(sig: set[str]) -> set[str]:
     return sig & set(_RESULT_CLASSES)
 
 
-def same_change(a: set[str], b: set[str]) -> set[str]:
-    """What two signatures share when they report the same kind of change of the same thing: a result class and at least one other word."""
+def same_change(a: set[str], b: set[str], ignore: set[str] = frozenset()) -> set[str]:
+    """What two signatures share when they report the same kind of change of the same thing: a result class and at least one other word.
+    `ignore` are words too common in this book to say what a change is about (the protagonist's name, the place everything happens)."""
     shared = a & b
-    return shared if classes_in(shared) and len(shared - set(_RESULT_CLASSES)) >= 1 else set()
+    return shared if classes_in(shared) and len(shared - set(_RESULT_CLASSES) - set(ignore)) >= 1 else set()
+
+
+def ubiquitous(texts: list[str], share: float = 0.25, minimum: int = 3) -> set[str]:
+    """Words that turn up in at least a quarter of the book's chapters: a name or a setting every chapter mentions says nothing about WHICH change two
+    texts describe (so 'Eli' and 'accept' in both a chapter and an event is not the same change)."""
+    sigs = [signature(t) for t in texts]
+    count: dict[str, int] = {}
+    for sig in sigs:
+        for w in sig - set(_RESULT_CLASSES):
+            count[w] = count.get(w, 0) + 1
+    need = max(minimum, int(len(sigs) * share))
+    return {w for w, n in count.items() if n >= need}
 
 
 def _owned(c: dict) -> set[str]:
@@ -49,6 +62,7 @@ def end_state_overreach(chapters: list[dict], events: list[dict], stage: str = "
     by_id = {e["id"]: e for e in events}
     out: list[Finding] = []
     seen: set[str] = set()
+    common = ubiquitous([" ".join(str(c.get(k, "")) for k in ("end_state", "summary")) for c in chapters])
     for i, c in enumerate(chapters):
         mine = _owned(c)
         owned_now = seen | mine
@@ -62,7 +76,7 @@ def end_state_overreach(chapters: list[dict], events: list[dict], stage: str = "
             ev = by_id.get(ev_id)
             if not ev or not ev.get("once_only", True):
                 continue
-            shared = same_change(claim, signature(ev.get("text", "")))
+            shared = same_change(claim, signature(ev.get("text", "")), common)
             if shared:
                 out.append(hard(stage, "end_state_overreach", f"{c['id']} reports the outcome of {ev_id} ('{ev['text'][:80]}') in its summary or end_state, but a later chapter tells it: "
                                 "a chapter may claim only the changes its own events bring about (a chapter about deciding to do something does not end with it done)",

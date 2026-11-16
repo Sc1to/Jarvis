@@ -458,15 +458,26 @@ def _redo_pieces(project, layer: str, hard_findings, pieces_of_item, all_pieces:
 def _book_chapter_checks(project, chapters: list[Chapter], ledger, ctx=None) -> str:
     """Whole-book checks once every act is planned: events and flat stretches. Hard findings stop the layer (the pieces are kept)."""
     from ..validators import HARD, accepted, ledger as ledger_checks, repeats, state_claims, store as findings_store, tension
-    ch = [c.model_dump() for c in chapters]
     ev = [e.model_dump() for e in ledger.events]
     acts_plain = [a.model_dump() for a in store.load_acts(project)]
-    findings = (ledger_checks.check_chapters(ch, ev, acts_plain) + ledger_checks.check_chapter_texts(ch, ev) + repeats.repeated_events(ch, [], ledger_events=ev)
-                + tension.flat_stretches(ch) + ledger_checks.heavy_chapters(ch, ev, project.config.ledger.weight_per_chapter)
-                + state_claims.end_state_overreach(ch, ev) + state_claims.state_change_repeated(ch, ev) + ledger_checks.thin_chapters(ch, ev)
-                + [f for f in ledger_checks.check_ledger(ev) if f.severity == "soft"])
     from ..qc.repeat_confirm import confirm_repeats
-    findings = accepted.apply(project, confirm_repeats(ctx, findings), "chapters")
+
+    def compute() -> list:
+        ch = [c.model_dump() for c in chapters]
+        found = (ledger_checks.check_chapters(ch, ev, acts_plain) + ledger_checks.check_chapter_texts(ch, ev) + repeats.repeated_events(ch, [], ledger_events=ev)
+                 + tension.flat_stretches(ch) + ledger_checks.heavy_chapters(ch, ev, project.config.ledger.weight_per_chapter)
+                 + state_claims.end_state_overreach(ch, ev) + state_claims.state_change_repeated(ch, ev) + ledger_checks.thin_chapters(ch, ev)
+                 + [f for f in ledger_checks.check_ledger(ev) if f.severity == "soft"])
+        return accepted.apply(project, confirm_repeats(ctx, found), "chapters")
+
+    findings = compute()
+    over = [f for f in findings if f.code == "end_state_overreach" and f.severity == HARD and not f.accepted]
+    if over and ctx is not None:  # a chapter that reports an outcome a later chapter tells: its wording is corrected, once, instead of asking you
+        from ..qc import overreach_fix
+        fixed = overreach_fix.fix(ctx, chapters, ev, over)
+        if fixed:
+            healing.note(project, "chapters", "overreach", fixed)
+            findings = compute()
     rel = findings_store.save(project, "chapters", findings)
     hard_left = [f.line() for f in findings if f.severity == HARD]
     if hard_left:

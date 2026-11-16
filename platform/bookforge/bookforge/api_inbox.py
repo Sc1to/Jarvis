@@ -111,7 +111,11 @@ def register(router: APIRouter, h) -> None:
         def job() -> dict:
             project = Project.open(root, book)
             made = resolve.propose_all(project, h.make_llm()(project), h.make_web(project) if h.make_web else None)
-            return {"proposals": len(made)}
+            none: dict[str, int] = {}
+            for it in inbox.collect(project, include_done=False):  # open items the tool has nothing to suggest for: said out loud, not silently skipped
+                if it["status"] == "open" and it["kind"] != "healed" and it["id"] not in made:
+                    none[it.get("code") or it["type"]] = none.get(it.get("code") or it["type"], 0) + 1
+            return {"proposals": len(made), "no_suggestion": none}
 
         return h.start_job(series, book, "propose", {}, job)
 

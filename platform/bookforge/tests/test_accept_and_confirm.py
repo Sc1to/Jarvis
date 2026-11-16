@@ -89,3 +89,23 @@ def test_the_critics_second_look_is_remembered_per_passage_pair(project):
     out2 = confirm_repeats(ctx, [repeat_finding()])  # a correction round or a cached reuse asks the same again
     assert out1[0].severity == out2[0].severity == SOFT and len(llm.calls) == 1
     repeat_confirm._ANSWERS.clear()
+
+
+def overreach_finding():
+    return F.hard("chapters", "end_state_overreach", "b2.ch16 reports the outcome of e22 in its summary or end_state, but a later chapter tells it", ["b2.ch16", "e22"],
+                  ["chapter: Eli is free but bound by silence. Eli decides to board the Kestrel alone", "event e22: Eli realizes he has achieved freedom, accepting his role as a survivor"])
+
+
+def test_an_overreach_is_asked_whether_the_chapter_reports_the_outcome_not_whether_it_is_the_same_event(project):
+    from bookforge.qc import repeat_confirm
+    repeat_confirm._ANSWERS.clear()
+    llm = RuleLLM([("Decide whether the chapter really REPORTS", json.dumps({"outcome_reported": False, "quote": "", "reason": "it only decides to board the ship"}))])
+    out = confirm_repeats(StepContext(project=project, layer="chapters", llm=llm), [overreach_finding()])
+    assert out[0].severity == SOFT and "not reporting the outcome" in out[0].message and len(llm.calls) == 1
+    repeat_confirm._ANSWERS.clear()
+    kept = RuleLLM([("Decide whether the chapter really REPORTS", json.dumps({"outcome_reported": True, "quote": "Eli is free", "reason": "it says he is free"}))])
+    assert confirm_repeats(StepContext(project=project, layer="chapters", llm=kept), [overreach_finding()])[0].severity == HARD
+    repeat_confirm._ANSWERS.clear()
+    unquoted = RuleLLM([("Decide whether the chapter really REPORTS", json.dumps({"outcome_reported": True, "quote": "", "reason": "yes"}))])
+    assert confirm_repeats(StepContext(project=project, layer="chapters", llm=unquoted), [overreach_finding()])[0].severity == SOFT  # a yes without the words is not a yes
+    repeat_confirm._ANSWERS.clear()
