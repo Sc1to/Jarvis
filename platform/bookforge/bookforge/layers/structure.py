@@ -524,7 +524,7 @@ def story_so_far_planning(project, chapters_before: list[Chapter], scenes_before
 
 def _book_scene_checks(project, chapters: list[Chapter], scenes_all: list, timeline: list, tracks: list[Track], constants, ledger, ctx=None) -> str:
     """Whole-book checks on the planned scenes. Hard findings stop the layer (the pieces are kept for a rerun)."""
-    from ..validators import HARD, accepted, ledger as ledger_checks, names as name_checks, repeats, research_leak, state as state_checks, store as findings_store
+    from ..validators import HARD, accepted, ledger as ledger_checks, names as name_checks, repeats, research_leak, state as state_checks, state_claims, store as findings_store
     from ..qc.repeat_confirm import confirm_repeats
     ch = [c.model_dump() for c in chapters]
     ev = [e.model_dump() for e in ledger.events]
@@ -545,12 +545,20 @@ def _book_scene_checks(project, chapters: list[Chapter], scenes_all: list, timel
                  + repeats.action_patterns(sc, ch, names) + research_leak.research_in_beats(sc, claims, story_texts)
                  + state_checks.track_regressions(tracks_plain) + state_checks.location_conflicts(sc, tl, tracks_plain) + state_checks.day_regressions(sc, tl)
                  + state_checks.timeline_flat(tl) + ledger_checks.plan_vs_target(project, scenes_all)
+                 + state_claims.scene_end_state_overreach(sc, ch, ev)
                  + name_checks.pov_findings(sc, constants, "scenes", ("purpose",)) + name_checks.unknown_names(sc, constants, "scenes", ("purpose",)))
         return accepted.apply(project, confirm_repeats(ctx, found), "scenes")
 
     findings = compute()
     retold = [f for f in findings if f.code in ("scene_retells_event", "scene_repeats_scene", "event_repeated") and f.severity == HARD and not f.accepted]
     flat = [f for f in findings if f.code == "timeline_flat" and f.severity == HARD and not f.accepted]
+    over = [f for f in findings if f.code == "end_state_overreach" and f.stage == "scenes" and f.severity == HARD and not f.accepted]
+    if over and ctx is not None:  # a scene that reports the outcome of an event told later: its wording is corrected once, in a narrow call
+        from ..qc import overreach_fix
+        fixed_over = overreach_fix.fix_scene_overreach(ctx, scenes_all, chapters, ev, over)
+        if fixed_over:
+            healing.note(project, "scenes", "overreach", fixed_over)
+            findings = compute()
     if (retold or flat) and ctx is not None:  # a scene that retells what is told elsewhere, or a timeline with no time in it: corrected, once, in a narrow call
         from ..qc import overreach_fix
         fixed = overreach_fix.fix_scene_retells(ctx, scenes_all, chapters, ev, retold) if retold else []
