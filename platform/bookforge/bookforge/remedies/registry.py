@@ -8,6 +8,8 @@ The class says what kind of problem it is, and so who deals with it:
 - WORDING: a text field says something wrong. A narrow rewrite fixes it (qc/overreach_fix.py, prose_repair.py).
 - RATING: a number or a label (tension, a count, a weight).
 - DECISION: needs a story choice (a contradiction, a name that is not in the cast, whose point of view).
+- ADVISORY: a pattern worth knowing about that cannot be told from a deliberate choice (a recurring setting, a repeated action). Never blocks, at
+  any size; reported in the stage checks and the morning report.
 - INFO: housekeeping the tool reports about itself.
 
 `planned` names the row of the plan that makes a structural code impossible (A1 #n in the plan), or "done" when it already is. A test
@@ -16,7 +18,7 @@ The class says what kind of problem it is, and so who deals with it:
 
 from dataclasses import dataclass
 
-STRUCTURAL, WORDING, RATING, DECISION, INFO = "structural", "wording", "rating", "decision", "info"
+STRUCTURAL, WORDING, RATING, DECISION, ADVISORY, INFO = "structural", "wording", "rating", "decision", "advisory", "info"
 
 
 @dataclass(frozen=True)
@@ -68,9 +70,9 @@ def _specs() -> dict[str, FindingSpec]:
         # scenes
         ("scene_event_not_in_chapter", STRUCTURAL, "scenes", "done"), ("chapter_event_not_in_scenes", STRUCTURAL, "scenes", "done"),
         ("scene_without_end_state", WORDING, "scenes"), ("scene_retells_event", WORDING, "scenes"), ("scene_text_misses_event", WORDING, "scenes"),
-        ("scene_text_thin_on_event", WORDING, "scenes"), ("scene_repeats_scene", WORDING, "scenes"), ("action_pattern_repeated", WORDING, "scenes"),
+        ("scene_text_thin_on_event", WORDING, "scenes"), ("scene_repeats_scene", WORDING, "scenes"), ("action_pattern_repeated", ADVISORY, "scenes"),
         ("research_in_beats", WORDING, "scenes"), ("implausible_scene_count", RATING, "scenes"), ("chapter_overloaded", RATING, "scenes"),
-        ("story_day_backwards", STRUCTURAL, "scenes", "A1#7"), ("state_regression", DECISION, "scenes"), ("two_places_at_once", DECISION, "scenes"),
+        ("story_day_backwards", STRUCTURAL, "scenes", "A1#7"), ("state_regression", STRUCTURAL, "scenes", "done", "the tool attaches the changing scene's purpose as the cause"), ("two_places_at_once", DECISION, "scenes", "", "two location tracks of one character that disagree; two scenes are never compared"), ("timeline_flat", RATING, "scenes"),
         # prose
         ("sentences_repeated", WORDING, "prose"), ("chapter_opens_with_previous_ending", WORDING, "prose"), ("wrap_up_ending", WORDING, "prose"),
         ("tic_word", WORDING, "prose"), ("prose_misses_event", WORDING, "prose"),
@@ -101,3 +103,15 @@ def guaranteed(code: str, stage: str) -> bool:
     """A structural code the tool already makes impossible at this stage (planned "done"): if one is raised, it is a bug of the tool."""
     s = SPECS.get(code)
     return bool(s and s.klass == STRUCTURAL and s.planned == "done" and (s.stage == stage or stage in s.also_done))
+
+
+NEVER_STOPS = (WORDING, RATING, DECISION, ADVISORY, INFO)  # everything but STRUCTURAL: once the narrow fixes were tried, a finding of these classes is a warning, not a stop
+
+
+def stops_a_stage(code: str, stage: str) -> bool:
+    """Does a hard finding of this code stop its stage after the fixes were tried? Only a structural one, or a decision at the ledger stage (later layers
+    would be built on it). An unknown code is treated as stopping: a new finding must get a class first (tests/test_registry.py)."""
+    k = klass(code)
+    if k is None or k == STRUCTURAL:
+        return True
+    return k == DECISION and stage == "ledger"

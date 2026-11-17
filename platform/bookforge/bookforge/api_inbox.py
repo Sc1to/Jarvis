@@ -79,6 +79,11 @@ def register(router: APIRouter, h) -> None:
             found = inbox.find_finding(project, key)
             if not found:
                 raise HTTPException(404, "that finding is no longer reported")
+            members = inbox.group_members(project, body.id)  # one item that stands for a group of findings of one cause: the answer settles them all
+            for m in members[1:]:
+                other = inbox.find_finding(project, m["id"].partition(":")[2])
+                if other:
+                    ops.answer_finding(project, other[0], other[1]["code"], other[1].get("items", []), body.answer)
             ops.answer_finding(project, found[0], found[1]["code"], found[1].get("items", []), body.answer)
         else:
             raise HTTPException(422, "an item id looks like question:q1 or finding:<fingerprint>")
@@ -98,6 +103,11 @@ def register(router: APIRouter, h) -> None:
             found = inbox.find_finding(project, key)
             if not found:
                 raise HTTPException(404, "that finding is no longer reported")
+            members = inbox.group_members(project, body.id)  # a group of findings of one cause is dismissed together
+            for m in members[1:]:
+                other = inbox.find_finding(project, m["id"].partition(":")[2])
+                if other:
+                    ops.dismiss_finding(project, other[0], other[1]["code"], other[1].get("items", []), body.reason)
             ops.dismiss_finding(project, found[0], found[1]["code"], found[1].get("items", []), body.reason)
         else:
             raise HTTPException(422, "an item id looks like question:q1 or finding:<fingerprint>")

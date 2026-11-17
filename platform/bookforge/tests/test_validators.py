@@ -143,7 +143,7 @@ def test_action_pattern_repeated_across_chapters():
             "Nia forces the rusted lock on the gate." if i in (1, 2, 3, 4, 5, 6, 7) else f"Nia argues with a stranger number {i} about wages.", f"A different thing {chr(96 + i) * 4} happens."]))
     chapters = [dict(id=f"z.ch{i:02d}") for i in range(1, 11)]
     f = R.action_patterns(scenes, chapters)
-    assert f and f[0].code == "action_pattern_repeated" and f[0].severity == HARD
+    assert f and f[0].code == "action_pattern_repeated" and f[0].severity == "soft"  # advice, never a stop
     assert R.action_patterns(scenes[:5], chapters[:5]) == []
 
 
@@ -179,7 +179,7 @@ def test_state_flip_back_two_places_and_days():
     assert "two_places_at_once" in codes(S.location_conflicts([], [], tracks), HARD)
     scenes = [dict(id="t.ch01.s1", setting="a", characters=["x"]), dict(id="t.ch01.s2", setting="b", characters=["x"])]
     tl = [dict(id="t.ch01.s1", day=3, time="noon"), dict(id="t.ch01.s2", day=3, time="noon")]
-    assert "two_places_at_once" in codes(S.location_conflicts(scenes, tl))
+    assert "two_places_at_once" not in codes(S.location_conflicts(scenes, tl))  # scenes are a sequence: the same moment of the day is a walk, never a conflict
     assert "story_day_backwards" in codes(S.day_regressions(
         [dict(id="t.ch02.s1"), dict(id="t.ch03.s1")], load("timeline.yaml")["scenes"][1:]))
 
@@ -339,7 +339,7 @@ def test_times_of_day_are_compared_as_parts_of_the_day():
     assert S.time_part("just after midnight") == "midnight" and S.time_part("Evening") == S.time_part("dusk") and S.time_part("midday") == "noon"
     scenes = [dict(id="t.ch01.s1", setting="a", characters=["x"]), dict(id="t.ch01.s2", setting="b", characters=["x"])]
     tl = [dict(id="t.ch01.s1", day=3, time="evening"), dict(id="t.ch01.s2", day=3, time="at dusk")]
-    assert "two_places_at_once" in codes(S.location_conflicts(scenes, tl))
+    assert "two_places_at_once" not in codes(S.location_conflicts(scenes, tl))
 
 
 @pytest.mark.real_prose_checks
@@ -506,3 +506,31 @@ def test_an_event_text_that_says_more_than_its_excerpt_is_flagged_softly():
           dict(id="e2", text="Mara reveals that Eli's grandfather was executed by the corporation for discovering mining destabilization", excerpt="she warns Eli that his grandfather did not simply vanish; he was executed by the corporation for discovering that the mining operations were destabilizing the asteroid's core", once_only=True, kind="event", weight=3, ending=True, after=["e1"])]
     found = [f for f in L.check_ledger(ev, syn) if f.code == "event_text_not_in_excerpt"]
     assert [(f.items, f.severity) for f in found] == [(["e1"], SOFT)]
+
+
+def test_scenes_in_different_places_on_one_morning_never_conflict_but_two_location_tracks_of_one_person_do():
+    scenes = [dict(id=f"b2.ch{i:02d}.s1", setting=s, characters=["eli"]) for i, s in enumerate(["lower-sectors", "cockpit", "launch-bay", "cockpit"], 1)]
+    tl = [dict(id=s["id"], day=1, time="morning") for s in scenes]  # the b2 shape: every scene on day 1, morning
+    assert S.location_conflicts(scenes, tl) == []
+    tracks = [dict(id="eli-where", entity="eli", kind="location", plan=[dict(**{"from": "b2.ch01.s1"}, value="lower-sectors")]),
+              dict(id="eli-position", entity="eli", kind="location", plan=[dict(**{"from": "b2.ch01.s1"}, value="cockpit")])]
+    found = S.location_conflicts(scenes, tl, tracks)
+    assert [f.code for f in found] == ["two_places_at_once"] and found[0].items == ["eli", "b2.ch01.s1"]
+
+
+def test_a_timeline_where_most_scenes_share_one_day_is_reported_and_a_short_or_moving_one_is_not():
+    flat = [dict(id=f"b2.ch{i:02d}.s1", day=1, time="morning") for i in range(1, 9)]
+    found = S.timeline_flat(flat)
+    assert [f.code for f in found] == ["timeline_flat"] and "8 of 8 scenes are on story day 1" in found[0].message
+    moving = [dict(id=f"b2.ch{i:02d}.s1", day=1 + i // 2, time="morning") for i in range(1, 9)]
+    assert S.timeline_flat(moving) == [] and S.timeline_flat(flat[:4]) == []
+    with_flashback = flat[:7] + [dict(id="b2.ch08.s1", day=1, flashback=True, time="x")] + [dict(id="b2.ch09.s1", day=2, time="x")] * 3
+    assert S.timeline_flat(with_flashback, share=0.9) == []
+
+
+def test_a_value_that_returns_to_an_earlier_one_is_found_by_returns():
+    plan = [dict(**{"from": "b2.ch11.s1"}, value="Outer seal breached by plasma cutter; inner door sealed"), dict(**{"from": "b2.ch12.s1"}, value="Fully hardened; sector isolated"),
+            dict(**{"from": "b2.ch14.s1"}, value="Outer seal breached by plasma cutter; inner door sealed")]
+    assert S.returns(plan) == [(2, 0)]
+    plan[2]["cause"] = "the Kestrel breaks through"
+    assert S.returns(plan) == []

@@ -144,3 +144,31 @@ def derive_days(raw: list, prev_day: int | None) -> None:
             day = int(item["day"])
         except (TypeError, ValueError):
             pass
+
+
+def first_sentence(text: str, limit: int = 220) -> str:
+    text = " ".join(str(text).split())
+    for stop in (". ", "; ", "! ", "? "):
+        if stop in text:
+            text = text.split(stop)[0]
+            break
+    return text.rstrip(".") [:limit]
+
+
+def attach_return_causes(tracks: list, scenes: list, chapters: list) -> list[str]:
+    """A state that goes back to an earlier value (breached, hardened, breached again) is the story, and its cause is the scene that changes it: the tool
+    writes that scene's purpose (its first sentence) as the entry's `cause`, so the track never has to ask you. Returns one note per cause written."""
+    from ..validators import state as state_checks
+
+    purposes = {s.id: s.purpose for s in scenes}
+    purposes.update({c.id: c.purpose for c in chapters})
+    notes: list[str] = []
+    for t in tracks:
+        plan = sorted(t.plan, key=lambda e: state_checks._pos(str(e.from_)))
+        as_dicts = [{"value": e.value, "cause": e.cause, "from": e.from_} for e in plan]
+        for k, _ in state_checks.returns(as_dicts):
+            why = first_sentence(purposes.get(str(plan[k].from_), ""))
+            if why:
+                plan[k].cause = why
+                notes.append(f"track {t.id} returns to an earlier state at {plan[k].from_}; its cause is the scene's purpose: {why}")
+    return notes

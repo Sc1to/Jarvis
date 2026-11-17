@@ -108,7 +108,6 @@ def action_patterns(scenes: list[dict], chapters: list[dict], names: set[str] = 
                 pair_chapters[pair].add(ch)
     out: list[Finding] = []
     need = max(4, math.ceil(0.2 * n_chapters))
-    hard_at = math.ceil(0.3 * n_chapters)
     reported: list[set] = []
     for pair, chs in sorted(pair_chapters.items(), key=lambda kv: -len(kv[1])):
         if len(chs) < need:
@@ -119,8 +118,7 @@ def action_patterns(scenes: list[dict], chapters: list[dict], names: set[str] = 
         if any(set(pair) & r for r in reported):  # one finding per cluster of related words
             continue
         reported.append(set(pair))
-        make = hard if len(chs) >= hard_at else soft
-        out.append(make(stage, "action_pattern_repeated",
+        out.append(soft(stage, "action_pattern_repeated",  # advice, never a stop: it cannot tell a recurring setting ('seal' + 'sector') from a repeated obstacle
                         f"the same action ('{pair[0]}' + '{pair[1]}') recurs in {len(chs)} of {n_chapters} chapters: "
                         "give later chapters a different obstacle or a different way through",
                         sorted(chs), [example[pair]]))

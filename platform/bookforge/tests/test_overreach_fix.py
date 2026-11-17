@@ -237,3 +237,68 @@ def test_scene_retold_findings_are_warnings_when_the_fix_could_not_clear_them_an
     kept = overreach_fix.demote_unfixable([F.hard("scenes", "scene_retells_event", "r", ["b2.ch12.s1", "e1"]), F.hard("scenes", "scene_repeats_scene", "r", ["a", "b"]),
                                            F.hard("scenes", "once_only_repeated", "x", ["e1"])])
     assert [f.severity for f in kept] == ["soft", "soft", "hard"]
+
+
+# ── phase 5: the b2 scenes flood ──────────────────────────────────────────
+
+def test_a_track_that_goes_back_to_an_earlier_state_gets_the_scenes_purpose_as_its_cause():
+    from bookforge.bible import normalize
+    from bookforge.bible.models import Track
+    track = Track(id="containment-seal-status", entity="eli", kind="other", plan=[
+        dict(**{"from": "b2.ch11.s1"}, value="Outer seal breached by plasma cutter; inner door sealed"),
+        dict(**{"from": "b2.ch12.s1"}, value="Fully hardened; sector isolated from external access"),
+        dict(**{"from": "b2.ch14.s1"}, value="Outer seal breached by plasma cutter; inner door sealed")])
+    scenes = [scene("b2.ch14", 1, ["e1"], "The Kestrel breaks through the seal. Smoke fills the bay.", ["x"])]
+    notes = normalize.attach_return_causes([track], scenes, [])
+    assert len(notes) == 1 and track.plan[2].cause == "The Kestrel breaks through the seal" and track.plan[0].cause == "" and track.plan[1].cause == ""
+    from bookforge.validators import state as S
+    assert S.track_regressions([track.model_dump(by_alias=True)]) == []  # the check can no longer be raised for it
+    assert normalize.attach_return_causes([track], scenes, []) == []  # idempotent
+
+
+def test_every_hard_finding_that_is_not_structural_ends_as_a_warning_and_a_structural_one_still_stops():
+    from bookforge.validators import findings as F
+    kept = overreach_fix.demote_unfixable([
+        F.hard("scenes", "pov_not_in_text", "x", ["a"]), F.hard("scenes", "timeline_flat", "x", ["a"]), F.hard("scenes", "action_pattern_repeated", "x", ["a"]),
+        F.hard("chapters", "end_state_overreach", "x", ["a"]), F.hard("scenes", "two_places_at_once", "x", ["o", "p"]),
+        F.hard("ledger", "event_cycle", "x", ["a"]),  # a decision at the ledger stage: later layers would be built on it
+        F.hard("chapters", "event_not_covered", "x", ["e1"]), F.hard("scenes", "chapter_event_not_in_scenes", "x", ["c"]), F.hard("scenes", "not_a_known_code", "x", ["a"])])
+    assert [f.severity for f in kept] == ["soft", "soft", "soft", "soft", "soft", "hard", "hard", "hard", "hard"]
+
+
+def test_an_event_repeated_across_chapters_at_the_scenes_stage_gets_the_later_scenes_beats_rewritten(project):
+    from bookforge.validators import repeats
+    first = scene("b2.ch11", 1, ["e1"], "Eli checks the navigation logs.", ["Eli confirms the Kestrel is on a trajectory toward the unclaimed moon, beyond Dominion jurisdiction."])
+    later = scene("b2.ch12", 1, ["e2"], "Eli boards the Kestrel.", ["He checks the navigation console and confirms the trajectory toward the unclaimed moon is locked in, beyond Dominion jurisdiction."])
+    third = scene("b2.ch13", 1, ["e2"], "Eli rests.", ["Eli confirms the Kestrel is on a trajectory toward the unclaimed moon, beyond Dominion jurisdiction, again."])
+    scs = [first, later, third]
+    chs = [chapter(11, ["e1"], "a", "b"), chapter(12, ["e2"], "a", "b"), chapter(13, [], "a", "b")]
+    found = [f for f in repeats.repeated_events([c.model_dump() for c in chs], [s.model_dump() for s in scs], ledger_events=LONG, stage="scenes")
+             if f.code == "event_repeated" and f.severity == HARD]
+    assert found and set(found[0].items) >= {"b2.ch11", "b2.ch12", "b2.ch13"}
+    fresh = json.dumps({"purpose": "Eli boards.", "beats": ["Eli crosses the bay and climbs aboard.", "The hatch seals behind him."]})
+    llm = RuleLLM([("describe something that happens elsewhere in the story", fresh)])
+    notes = overreach_fix.fix_scene_retells(StepContext(project=project, layer="scenes", llm=llm), scs, chs, LONG, found)
+    assert len(notes) == 2 and scs[0].beats[0].startswith("Eli confirms") and scs[1].beats[0].startswith("Eli crosses") and scs[2].beats[0].startswith("Eli crosses")
+    assert not [f for f in repeats.repeated_events([c.model_dump() for c in chs], [s.model_dump() for s in scs], ledger_events=LONG, stage="scenes") if f.code == "event_repeated" and f.severity == HARD]
+
+
+def test_a_flat_timeline_is_dated_again_from_what_happens_and_kept_only_when_the_days_then_differ(project):
+    from bookforge.bible.models import TimelineEntry
+    from bookforge.validators import state as S
+    scs = [scene("b2.ch%02d" % i, 1, ["e1"], f"Something happens in chapter {i}.", ["x"]) for i in range(1, 9)]
+    tl = [TimelineEntry(id=s.id, day=1, time="morning") for s in scs]
+    found = S.timeline_flat([t.model_dump() for t in tl])
+    assert found
+    new = json.dumps({"days_later": {s.id: v for s, v in zip(scs, [0, 0, 1, 0, 2, 1, 0, 3])}})
+    llm = RuleLLM([("all happen on the same story day", new)])
+    notes = overreach_fix.fix_timeline(StepContext(project=project, layer="scenes", llm=llm), scs, tl, found)
+    assert len(notes) == 1 and [t.day for t in tl] == [1, 1, 2, 2, 4, 5, 5, 8]
+    assert S.timeline_flat([t.model_dump() for t in tl]) == []
+    tl2 = [TimelineEntry(id=s.id, day=1, time="morning") for s in scs]
+    zeros = json.dumps({"days_later": {s.id: 0 for s in scs}})
+    assert overreach_fix.fix_timeline(StepContext(project=project, layer="scenes", llm=RuleLLM([("all happen on the same story day", zeros)])), scs, tl2, found) == [] and {t.day for t in tl2} == {1}
+    partial = json.dumps({"days_later": {scs[0].id: 0}})
+    assert overreach_fix.fix_timeline(StepContext(project=project, layer="scenes", llm=RuleLLM([("all happen on the same story day", partial)])), scs, tl2, found) == []
+    project.config.qc.fix_timeline = False
+    assert overreach_fix.fix_timeline(StepContext(project=project, layer="scenes", llm=RuleLLM([("all happen on the same story day", new)])), scs, tl2, found) == []
