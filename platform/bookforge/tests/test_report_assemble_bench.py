@@ -323,7 +323,7 @@ def test_a_judge_that_fails_is_unknown_not_a_loss(book, monkeypatch):
     assert "quarrel: unknown" in out.output and out.exit_code == 0
 
 
-def test_the_report_says_what_the_plan_comes_to_instead_of_a_target(full):
+def test_the_report_says_what_the_plan_comes_to_and_beside_it_the_target(full):
     from bookforge import report
     text = report.build_report(full)
-    assert "The plan comes to about" in text and "a result, not a target" in text and "target 90000" not in text
+    assert "The plan comes to about" in text and "the book's target is 90000" in text

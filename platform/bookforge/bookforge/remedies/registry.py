@@ -21,8 +21,8 @@ from dataclasses import dataclass
 
 # The version of the checks. Findings are saved with it (validators/store.py), and the Inbox treats findings saved by an OLDER version as outdated: they are
 # never blocking, and the page says to run the stage again. Bump it in any change that alters what a check finds or how a code is classified (CLAUDE.md,
-# documentation maintenance). History: 5 = phase 5 (scene pairs no longer compared, causes derived, advisory classes), 6 = phase 5b (tracks nested, `continues`, derived events forced).
-CHECKS_VERSION = 6
+# documentation maintenance). History: 5 = phase 5 (scene pairs no longer compared, causes derived, advisory classes), 6 = phase 5b (tracks nested, `continues`, derived events forced), 7 = phase 5e (plan against the book's target).
+CHECKS_VERSION = 7
 
 STRUCTURAL, WORDING, RATING, DECISION, ADVISORY, INFO = "structural", "wording", "rating", "decision", "advisory", "info"
 
@@ -78,7 +78,7 @@ def _specs() -> dict[str, FindingSpec]:
         ("scene_without_end_state", WORDING, "scenes"), ("scene_retells_event", WORDING, "scenes"), ("scene_text_misses_event", WORDING, "scenes"),
         ("scene_text_thin_on_event", WORDING, "scenes"), ("scene_repeats_scene", WORDING, "scenes"), ("action_pattern_repeated", ADVISORY, "scenes"),
         ("research_in_beats", WORDING, "scenes"), ("implausible_scene_count", RATING, "scenes"), ("chapter_overloaded", RATING, "scenes"),
-        ("story_day_backwards", STRUCTURAL, "scenes", "A1#7"), ("state_regression", STRUCTURAL, "scenes", "done", "the tool attaches the changing scene's purpose as the cause"), ("two_places_at_once", DECISION, "scenes", "", "two location tracks of one character that disagree; two scenes are never compared"), ("timeline_flat", RATING, "scenes"),
+        ("story_day_backwards", STRUCTURAL, "scenes", "A1#7"), ("state_regression", STRUCTURAL, "scenes", "done", "the tool attaches the changing scene's purpose as the cause"), ("two_places_at_once", DECISION, "scenes", "", "two location tracks of one character that disagree; two scenes are never compared"), ("timeline_flat", RATING, "scenes"), ("plan_short_of_target", RATING, "scenes"), ("ledger_short_of_target", RATING, "ledger"),
         # prose
         ("sentences_repeated", WORDING, "prose"), ("chapter_opens_with_previous_ending", WORDING, "prose"), ("wrap_up_ending", WORDING, "prose"),
         ("tic_word", WORDING, "prose"), ("prose_misses_event", WORDING, "prose"),

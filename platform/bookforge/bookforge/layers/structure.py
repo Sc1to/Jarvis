@@ -17,7 +17,7 @@ from ..bible import partition, store
 from ..bible.models import Act, Chapter, Constants, Track
 from ..bible.positions import parse_position
 from ..bible.store import dump_yaml, to_plain
-from .. import healing, review_notes, steering
+from .. import healing, review_notes, sizing, steering
 from ..bible.validate import (
     add_entities, count_range, merge_constants, merge_derived, parse_acts, parse_cast, parse_chapters, parse_scenes, validate_bible,
 )
@@ -544,7 +544,7 @@ def _book_scene_checks(project, chapters: list[Chapter], scenes_all: list, timel
         found = (ledger_checks.check_scenes_vs_chapters(sc, ch, ev) + ledger_checks.check_scene_texts(sc, ch, ev) + repeats.repeated_events(ch, sc, names, ev, stage="scenes")
                  + repeats.action_patterns(sc, ch, names) + research_leak.research_in_beats(sc, claims, story_texts)
                  + state_checks.track_regressions(tracks_plain) + state_checks.location_conflicts(sc, tl, tracks_plain) + state_checks.day_regressions(sc, tl)
-                 + state_checks.timeline_flat(tl)
+                 + state_checks.timeline_flat(tl) + ledger_checks.plan_vs_target(project, scenes_all)
                  + name_checks.pov_findings(sc, constants, "scenes", ("purpose",)) + name_checks.unknown_names(sc, constants, "scenes", ("purpose",)))
         return accepted.apply(project, confirm_repeats(ctx, found), "scenes")
 
@@ -634,6 +634,7 @@ def _build_scenes(ctx: StepContext, files: list[str]) -> str:
     research_files: list[str] = []
     ch_list = list(chapter_list)
     ledger = store.active_ledger(project)
+    budgets = sizing.chapter_budget(project, ch_list, [e.model_dump() for e in ledger.events]) if ledger is not None else {}  # words per chapter: the planner is told
 
     for idx, chapter in enumerate(ch_list):
         ch_num = parse_position(chapter.id).chapter
@@ -658,6 +659,7 @@ def _build_scenes(ctx: StepContext, files: list[str]) -> str:
                     other_tracks="\n".join(f"- {t.id} (owner {t.entity})" for t in others) or "none",
                     previous_time=prev_when, research_notes=notes_text(project, dump_yaml(to_plain(chapter))),
                     starting_events=", ".join(chapter.events_covered) or "none (this chapter only carries on an event from the chapter before)",
+                    length_guidance=sizing.length_guidance(budgets.get(chapter.id)),
                     first_scene=f"{chapter.id}.s1", **{k: v for k, v in stars.items() if k != "synopsis"})
             return _messages(
                 project, "scenes", chapter=dump_yaml(to_plain(chapter)),
