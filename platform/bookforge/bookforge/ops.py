@@ -168,10 +168,43 @@ def approve_checkpoint(project: Project, checkpoint: str) -> None:
         vcs.tag(project.root, f"{project.book}-{checkpoint}-approved", message)
 
 
-def list_needs(project: Project) -> list:
-    """Every need of the series and the open book: (scope, Need) pairs, series first."""
+def list_needs(project: Project, include_merged: bool = False) -> list:
+    """Every need of the series and the open book: (scope, Need) pairs, series first. Needs a consolidation replaced are left out unless asked for."""
     from .research.notes import stores_for
-    return [(scope, n) for scope, store in stores_for(project).items() for n in store.needs()]
+    return [(scope, n) for scope, store in stores_for(project).items() for n in (store.needs() if include_merged else store.live_needs())]
+
+
+def consolidate_needs(project: Project, llm: LLMClient | None, apply: bool = False) -> dict:
+    """Preview (default) or perform the merge of needs that are about one topic. The preview needs no model; the merge asks once per topic."""
+    from .research import consolidate
+    groups = consolidate.preview(project)
+    if not apply:
+        return {"groups": groups, "disagreements": consolidate.contradiction_items(project)}
+    if llm is None:
+        raise BookforgeError("merging needs asks the model: it is not available")
+    result = consolidate.consolidate(StepContext(project=project, layer="chapters", llm=llm))
+    result["settled"] = consolidate.settle_minor(project)
+    if project.config.git.commit_each_step:
+        vcs.commit(project.root, f"{project.book}: needs consolidated ({result['before']} -> {result['after']})")
+    return {**result, "groups": groups}
+
+
+def undo_consolidation(project: Project, merged_id: str) -> list[str]:
+    from .research import consolidate
+    try:
+        return consolidate.undo(project, merged_id)
+    except StopIteration:
+        raise BookforgeError(f"no merged need '{merged_id}'") from None
+
+
+def resolve_disagreement(project: Project, llm: LLMClient | None, a_id: str, b_id: str, choice: str) -> str:
+    from .research import consolidate
+    if choice == "merge" and llm is None:
+        raise BookforgeError("merging two rules asks the model: it is not available")
+    try:
+        return consolidate.resolve_contradiction(StepContext(project=project, layer="chapters", llm=llm), a_id, b_id, choice)
+    except StopIteration:
+        raise BookforgeError("unknown need") from None
 
 
 def decide_need(project: Project, need_id: str, approve: bool | None = None, stance: str | None = None, rule: str | None = None,

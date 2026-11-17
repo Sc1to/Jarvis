@@ -69,6 +69,9 @@ class Need:
     fact_ids: list[str] = field(default_factory=list)
     decided_by: str = ""  # "auto" for a lookup, "author" once you decided
     applies_to: list[str] = field(default_factory=list)  # chapter or scene ids it applies to; empty = the whole book (or series)
+    topic: str = ""  # short key of what the need is about (research/topics.py): one topic, one decision
+    merged_into: str = ""  # id of the need that replaced this one (a consolidation); "undone" for a merged need that was taken back
+    merged_from: list[str] = field(default_factory=list)  # a merged need: the ids it replaced
     canon: bool = False  # something the author invented in their own words: held like a fact, so a scene that contradicts it is revised, not just warned about
 
 
@@ -180,6 +183,10 @@ class ResearchStore:
         for n in _read_jsonl(self.needs_path, Need):
             latest[n.id] = n
         return list(latest.values())
+
+    def live_needs(self) -> list[Need]:
+        """Needs that still stand: not replaced by a consolidation and not a consolidation that was taken back."""
+        return [n for n in self.needs() if not n.merged_into]
 
     def next_need_id(self) -> str:
         numbers = [int(n.id.rsplit("-n", 1)[-1]) for n in self.needs() if n.id.startswith(self.prefix + "-n") and n.id.rsplit("-n", 1)[-1].isdigit()]
@@ -320,14 +327,16 @@ def approved_decisions(project: Project, scene_id: str | None = None) -> list[Ne
     """
     out: list[Need] = []
     for store in stores_for(project).values():
-        out += [n for n in store.needs() if n.status == "approved" and n.stance in ("invent", "extrapolate", "bend") and n.rule
+        out += [n for n in store.live_needs() if n.status == "approved" and n.stance in ("invent", "extrapolate", "bend") and n.rule
                 and applies_to_scene(n, scene_id)]
-    return out
+    from .topics import contradictions
+    open_pairs = {n.id for pair in contradictions([n for st in stores_for(project).values() for n in st.live_needs()]) for n in pair}
+    return [n for n in out if n.id not in open_pairs]  # two rules that disagree are not canon until you decide
 
 
 def waiting_decisions(project: Project) -> list[Need]:
     """Proposed rules, assumptions and deviations that wait for the author (a lookup needs no decision)."""
-    return [n for store in stores_for(project).values() for n in store.needs()
+    return [n for store in stores_for(project).values() for n in store.live_needs()
             if n.status == "proposed" and (n.rule or n.stance == "invent")]
 
 

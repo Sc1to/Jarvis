@@ -2,7 +2,7 @@ import { bookPath, post } from '../lib/api'
 import { useState } from 'react'
 import { useAction, useApi } from '../lib/hooks'
 import { href } from '../lib/route'
-import type { BookStatus, ChangeRequest, Need, Stance, StaleReport } from '../lib/types'
+import type { BookStatus, ChangeRequest, Need, NeedTopics, Stance, StaleReport } from '../lib/types'
 import { Button, Card, Empty, ErrorBanner, Loading, Markdown } from '../components/ui'
 import InboxItems from './InboxItems'
 
@@ -100,6 +100,8 @@ export default function Inbox({ series, book, status, reload }: { series: string
   const changes = useApi<ChangeRequest[]>(`${base}/changes`)
   const stale = useApi<StaleReport>(`${base}/stale`)
   const needs = useApi<Need[]>(`${base}/needs`)
+  const topics = useApi<NeedTopics>(`${base}/needs-topics`)
+  const merge = useAction()
   const fix = useAction()
   const locked = status.job?.status === 'running'
   const pending = changes.data?.filter((c) => c.status === 'pending') ?? []
@@ -107,12 +109,36 @@ export default function Inbox({ series, book, status, reload }: { series: string
   const staleAny = (stale.data?.scenes.length ?? 0) > 0
   const waiting = needs.data?.filter((n) => n.status === 'proposed' && (n.rule || n.stance === 'invent')) ?? []
   const decided = needs.data?.filter((n) => n.decided_by === 'author') ?? []
+  const byTool = needs.data?.filter((n) => n.decided_by === 'tool' && n.status === 'approved') ?? []
+  const groups = topics.data?.groups ?? []
+  const clash = topics.data?.disagreements ?? []
+  const afterAll = () => { needs.reload(); topics.reload(); reload() }
 
   return (
     <div className="space-y-3">
       <InboxItems series={series} book={book} status={status} reload={reload} />
       <Card title={`Decisions about the world (${waiting.length} waiting)`}>
         <p className="mb-2 text-xs text-slate-600">Rules, assumptions and deliberate changes the model proposes. Nothing here reaches the writer until you approve it.</p>
+        <ErrorBanner message={merge.error} onClose={merge.clear} />
+        {groups.length > 0 && (
+          <div className="mb-3 rounded-md border border-slate-200 p-2 text-sm">
+            <p>{groups.reduce((n, g) => n + g.ids.length, 0)} decisions are about {groups.length} topic{groups.length === 1 ? '' : 's'}: {groups.slice(0, 6).map((g) => `${g.topic} (${g.ids.length})`).join(', ')}{groups.length > 6 ? '…' : ''}.</p>
+            <div className="mt-2"><Button kind="primary" disabled={merge.busy || !!locked} title="One rule per topic; the earlier ones are kept and can be taken back"
+              onClick={async () => { if (window.confirm('Merge each topic into one rule? The earlier decisions are kept.') && await merge.run(() => post(`${base}/needs-consolidate`, { apply: true }))) afterAll() }}>Merge into {groups.length} topic{groups.length === 1 ? '' : 's'}</Button></div>
+          </div>
+        )}
+        {clash.map((d) => (
+          <div key={`${d.a.id}-${d.b.id}`} className="mb-3 rounded-md border border-amber-300 bg-amber-50 p-2 text-sm text-amber-900">
+            <p>{d.text}</p>
+            <p className="mt-1 text-xs">Neither is held as canon until you decide.</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {d.options.map((o) => (
+                <Button key={o.id} kind={o.recommended ? 'primary' : undefined} disabled={merge.busy || !!locked}
+                  onClick={async () => { if (await merge.run(() => post(`${base}/needs-disagreement`, { a: d.a.id, b: d.b.id, choice: o.id }))) afterAll() }}>{o.label}</Button>
+              ))}
+            </div>
+          </div>
+        ))}
         {needs.error && <ErrorBanner message={needs.error} />}
         {!needs.data && <Loading />}
         {needs.data && !waiting.length && <Empty>Nothing to decide.</Empty>}
@@ -122,6 +148,14 @@ export default function Inbox({ series, book, status, reload }: { series: string
               onDone={() => { needs.reload(); stale.reload(); reload() }} />
           ))}
         </div>
+        {byTool.length > 0 && (
+          <details className="mt-3 text-sm">
+            <summary className="cursor-pointer text-slate-600">Decided by the tool ({byTool.length})</summary>
+            <ul className="mt-2 space-y-2">
+              {byTool.map((n) => <li key={n.id} className="text-xs"><span className="font-medium">{n.stance}</span> · {n.question}{n.rule && <span className="block text-slate-600">{n.rule}</span>}</li>)}
+            </ul>
+          </details>
+        )}
         {decided.length > 0 && (
           <details className="mt-3 text-sm">
             <summary className="cursor-pointer text-slate-600">Decided by you ({decided.length})</summary>

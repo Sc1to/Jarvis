@@ -169,6 +169,16 @@ class NeedBody(BaseModel):
     applies_to: list[str] | None = None  # chapter or scene ids; [] = the whole book
 
 
+class DisagreementBody(BaseModel):
+    a: str
+    b: str
+    choice: str  # a | b | merge
+
+
+class ConsolidateBody(BaseModel):
+    apply: bool = False
+
+
 class CastBody(BaseModel):
     id: str | None = None  # only when adding
     kind: str | None = None
@@ -621,6 +631,38 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
     @router.get("/series/{series}/books/{book}/needs")
     def needs(series: str, book: str):
         return ok([{"scope": scope, **asdict(n)} for scope, n in ops.list_needs(open_project(series, book))])
+
+    @router.get("/series/{series}/books/{book}/needs-topics")
+    def needs_topics(series: str, book: str):
+        """What a consolidation would merge (groups of needs on one topic) and the pairs of rules that disagree. No model call."""
+        return ok(ops.consolidate_needs(open_project(series, book), None, apply=False))
+
+    @router.post("/series/{series}/books/{book}/needs-consolidate")
+    def needs_consolidate(series: str, book: str, body: ConsolidateBody):
+        project = open_project(series, book)
+        require_idle(series)
+        try:
+            return ok(ops.consolidate_needs(project, make_llm(project) if body.apply else None, apply=body.apply))
+        except BookforgeError as e:
+            raise HTTPException(422, str(e)) from None
+
+    @router.post("/series/{series}/books/{book}/needs-consolidate/{merged_id}/undo")
+    def needs_unmerge(series: str, book: str, merged_id: str):
+        project = open_project(series, book)
+        require_idle(series)
+        try:
+            return ok(ops.undo_consolidation(project, merged_id))
+        except BookforgeError as e:
+            raise HTTPException(422, str(e)) from None
+
+    @router.post("/series/{series}/books/{book}/needs-disagreement")
+    def needs_disagreement(series: str, book: str, body: DisagreementBody):
+        project = open_project(series, book)
+        require_idle(series)
+        try:
+            return ok({"kept": ops.resolve_disagreement(project, make_llm(project) if body.choice == "merge" else None, body.a, body.b, body.choice)})
+        except BookforgeError as e:
+            raise HTTPException(422, str(e)) from None
 
     # ── decisions (quick, change the files, need an idle series) ─────────────
 

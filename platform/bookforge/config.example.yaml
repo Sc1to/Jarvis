@@ -57,7 +57,7 @@ research:
   check_relevance: true                # drop facts that do not fit the question and the story's time and place
   notes_max_chars: 6000                # research notes included in a prompt
   page_max_chars: 12000                # page text given to the model (for a long page, the parts that mention the question)
-  scene_questions: 2                   # questions researched per chapter before its scenes are planned (0 = none)
+  scene_questions: 1                   # questions researched per chapter before its scenes are planned (0 = none)
 
 ledger:
   weight_per_chapter: 2.0              # story weight one chapter carries (events weigh 1 a beat inside a scene, 2 a scene-sized change, 3 a chapter-sized event: about two scenes of ordinary weight make a chapter)
