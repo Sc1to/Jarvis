@@ -175,14 +175,14 @@ export interface CarryOver { source: string; entities: CarryEntity[]; rules: num
 
 export interface InboxItem {
   id: string; kind: 'question' | 'finding' | 'healed'; series: string; book: string; stage: string; blocking: boolean; type: string
-  title: string; why: string; quotes: string[]; options: string[]; status: 'open' | 'answered' | 'applied' | 'dismissed' | 'resolved' | 'healed'
-  answer: string; dismiss_reason: string; items: string[]; fingerprint: string; proposal?: InboxProposal | null; actions?: string[]; repeated?: boolean; code?: string; group?: { count: number; members: { id: string; items: string[] }[] }
+  title: string; why: string; quotes: string[]; options: string[]; status: 'open' | 'answered' | 'applied' | 'dismissed' | 'resolved' | 'healed' | 'outdated'
+  answer: string; dismiss_reason: string; items: string[]; fingerprint: string; proposal?: InboxProposal | null; actions?: string[]; repeated?: boolean; warning?: boolean; code?: string; group?: { count: number; members: { id: string; items: string[] }[] }
 }
 export interface InboxProposal {
   outcome: string; answer: string; rationale: string; label: string; target: string; sources: { url: string; quote: string }[]
   size: string; confidence: string; decided_by: string; applied: boolean; mode: string; quote?: string
 }
-export interface InboxSummary { open: number; blocking: number; answered_waiting: number; resolved?: number; healed?: number; needs_run?: boolean; by_stage: Record<string, number> }
+export interface InboxSummary { open: number; blocking: number; answered_waiting: number; resolved?: number; healed?: number; outdated?: number; needs_run?: boolean; by_stage: Record<string, number> }
 export interface InboxLastRun {
   at?: string; kind?: 'audit' | 'extract' | 'revise'; revision?: number; applied?: string[]; events?: number
   added?: { id: string; text: string; source: string }[]; revised?: { id: string; before: string; after: string }[]; new_questions?: string[]

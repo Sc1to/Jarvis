@@ -8,12 +8,21 @@ command line uses. Nothing here changes a file.
 """
 
 from .bible import store
+from .remedies import registry
 from .layers import audit as audit_mod
 from .validators import accepted, store as findings_store
 
 STAGES = ("ledger", "acts", "chapters", "scenes", "prose")
 # the stages whose open items a checkpoint's approval would skip
 CHECKPOINT_STAGES = {"direction": (), "ledger": ("ledger",), "structure": ("acts", "chapters", "scenes"), "voice": ("prose",), "final": ("prose",)}
+
+
+def _older(saved: dict) -> bool:
+    """Were these findings saved by an older version of the checks (or before findings carried a version)?"""
+    try:
+        return int(saved.get("checks_version", 0)) < registry.CHECKS_VERSION
+    except (TypeError, ValueError):
+        return True
 
 
 def _question_status(q) -> str:
@@ -91,7 +100,9 @@ def collect(project, include_done: bool = True) -> list[dict]:
         if layer.status == "pending" and layer.note == REDO_NOTE:
             continue  # reset to be planned again: its saved findings describe the file that is being replaced
         seen: set[str] = set()
-        for f in findings_store.load(project, stage).get("findings", []):
+        saved = findings_store.load(project, stage)
+        older = _older(saved)  # found by an older version of the checks
+        for f in saved.get("findings", []):
             if f.get("severity") != "hard" and not f.get("accepted"):
                 continue
             fp = accepted.fingerprint(stage, f["code"], f.get("items", []))
@@ -100,7 +111,15 @@ def collect(project, include_done: bool = True) -> list[dict]:
             seen.add(fp)
             status = "dismissed" if fp in known else "open"
             if status == "open" or include_done:
-                items.append(_finding_item(project, stage, f, known, status))
+                item = _finding_item(project, stage, f, known, status)
+                if status == "open":
+                    if older or registry.retired(f["code"], f.get("items", [])):
+                        item["status"], item["blocking"] = "outdated", False
+                        item["why"] = ("Found by an older version of the checks, which no longer finds it this way. Run the stage again: this clears, or comes back "
+                                       "if it still holds. Nothing to answer.")
+                    elif not registry.stops_a_stage(f["code"], stage):
+                        item["blocking"], item["warning"] = False, True  # a wording, rating or advisory finding never stops a stage: a warning to read
+                items.append(item)
     from . import resolve
     suggestions = resolve.load(project)
     told = load_answered(project)
@@ -137,8 +156,8 @@ def _group(items: list[dict]) -> list[dict]:
     already handled, the stale-acts item and questions are left alone."""
     buckets: dict[tuple, list[dict]] = {}
     for it in items:
-        if it["kind"] == "finding" and it["status"] == "open" and it.get("items") and it.get("code") not in ("acts_stale",):
-            buckets.setdefault((it["stage"], it["code"], it["items"][0]), []).append(it)
+        if it["kind"] == "finding" and it["status"] in ("open", "outdated") and it.get("items") and it.get("code") not in ("acts_stale",):
+            buckets.setdefault((it["stage"], it["code"], it["items"][0], it["status"]), []).append(it)
     drop: set[int] = set()
     for members in buckets.values():
         if len(members) < GROUP_MIN:
@@ -193,20 +212,21 @@ def summary(project) -> dict:
     waiting = sum(1 for it in everything if it["status"] == "answered")  # questions and findings you answered that the next run has not read yet
     resolved = sum(1 for it in everything if it["status"] == "resolved")
     healed = sum(1 for it in everything if it["kind"] == "healed" and it["status"] == "healed")
+    outdated = sum(1 for it in everything if it["status"] == "outdated")
     blocking = sum(it["blocking"] for it in items)
     flagged = [n for n in ("ledger", "acts", "chapters", "scenes") if project.state.layers[n].status in ("flagged", "failed")]
     empty_ledger = bool(ledger is not None and not ledger.events and project.state.layers["ledger"].status != "accepted")
     from .constants import REDO_NOTE
     redoing = any(project.state.layers[n].status == "pending" and project.state.layers[n].note == REDO_NOTE for n in ("acts", "chapters", "scenes"))  # reset, waiting to be planned again
-    needs_run = blocking == 0 and bool(waiting or flagged or empty_ledger or redoing)  # a stage that failed, or an audit that is now answered, has to run again
-    return {"open": len(items), "blocking": blocking, "answered_waiting": waiting, "resolved": resolved, "healed": healed, "needs_run": needs_run,
+    needs_run = blocking == 0 and bool(waiting or outdated or flagged or empty_ledger or redoing)  # a stage that failed, or an audit that is now answered, has to run again
+    return {"open": len(items), "blocking": blocking, "answered_waiting": waiting, "resolved": resolved, "healed": healed, "outdated": outdated, "needs_run": needs_run,
             "by_stage": {s: sum(it["stage"] == s for it in items) for s in STAGES if any(it["stage"] == s for it in items)}}
 
 
 def blocking_for_checkpoint(project, checkpoint: str) -> list[dict]:
     """The open items that approving this checkpoint as it is would skip."""
     stages = CHECKPOINT_STAGES.get(checkpoint, ())
-    return [it for it in collect(project, include_done=False) if it["stage"] in stages and it["kind"] != "healed"]
+    return [it for it in collect(project, include_done=False) if it["stage"] in stages and it["kind"] != "healed" and not it.get("warning")]  # a warning (a wording or rating finding) never has to be skipped
 
 
 def dismissal_stats(project) -> dict[str, dict]:

@@ -16,7 +16,13 @@ The class says what kind of problem it is, and so who deals with it:
 (tests/test_registry.py) fails when the source raises a code this table does not know, so a new finding cannot appear without a class.
 """
 
+import re
 from dataclasses import dataclass
+
+# The version of the checks. Findings are saved with it (validators/store.py), and the Inbox treats findings saved by an OLDER version as outdated: they are
+# never blocking, and the page says to run the stage again. Bump it in any change that alters what a check finds or how a code is classified (CLAUDE.md,
+# documentation maintenance). History: 5 = phase 5 (scene pairs no longer compared, causes derived, advisory classes).
+CHECKS_VERSION = 5
 
 STRUCTURAL, WORDING, RATING, DECISION, ADVISORY, INFO = "structural", "wording", "rating", "decision", "advisory", "info"
 
@@ -115,3 +121,12 @@ def stops_a_stage(code: str, stage: str) -> bool:
     if k is None or k == STRUCTURAL:
         return True
     return k == DECISION and stage == "ledger"
+
+
+_SCENE_ID = re.compile(r"\.s\d+$")
+
+
+def retired(code: str, items: list[str]) -> bool:
+    """A finding no check raises any more, whatever version saved it: `two_places_at_once` between two scenes (its items are scene ids; the one that is
+    still raised names a character and a position)."""
+    return code == "two_places_at_once" and bool(items) and all(_SCENE_ID.search(str(x)) for x in items)

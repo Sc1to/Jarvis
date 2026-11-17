@@ -11,10 +11,10 @@ const STAGE_ORDER = ['ledger', 'acts', 'chapters', 'scenes', 'prose']
 export const CHECKPOINT_STAGES: Record<string, string[]> = { ledger: ['ledger'], structure: ['acts', 'chapters', 'scenes'], voice: ['prose'], final: ['prose'] }
 
 const STATUS_STYLE: Record<string, string> = {
-  resolved: 'bg-violet-100 text-violet-900', healed: 'bg-slate-100 text-slate-600',
+  resolved: 'bg-violet-100 text-violet-900', healed: 'bg-slate-100 text-slate-600', outdated: 'bg-slate-100 text-slate-600',
   open: 'bg-amber-100 text-amber-900', answered: 'bg-sky-100 text-sky-800', applied: 'bg-emerald-100 text-emerald-800', dismissed: 'bg-slate-100 text-slate-600',
 }
-const STATUS_LABEL: Record<string, string> = { healed: 'fixed automatically', resolved: 'decided by the tool', open: 'open', answered: 'answered, waits for the next run', applied: 'applied', dismissed: 'dismissed' }
+const STATUS_LABEL: Record<string, string> = { outdated: 'older checks: clears when the stage runs again', healed: 'fixed automatically', resolved: 'decided by the tool', open: 'open', answered: 'answered, waits for the next run', applied: 'applied', dismissed: 'dismissed' }
 
 /** A slip the tool corrected by itself: one grey line, nothing to do. One that came back in the next run is amber (the model keeps making it), still never blocking. */
 function HealedCard({ item }: { item: InboxItem }) {
@@ -56,6 +56,7 @@ function ItemCard({ item, base, locked, onDone }: { item: InboxItem; base: strin
     <li className={`space-y-2 rounded-md border p-3 ${item.blocking ? 'border-red-300 bg-red-50/40' : 'border-slate-200'}`}>
       <div className="flex flex-wrap items-center gap-1.5 text-xs">
         {item.blocking && <span className="rounded-full bg-red-600 px-2 py-0.5 font-medium text-white">blocking</span>}
+        {item.warning && <span className="rounded-full bg-amber-100 px-2 py-0.5 font-medium text-amber-900">warning: does not stop the run</span>}
         <span className={`rounded-full px-2 py-0.5 ${STATUS_STYLE[item.status]}`}>{STATUS_LABEL[item.status]}</span>
         <span className="text-slate-500">{item.type.replace(/_/g, ' ')}{item.kind === 'finding' ? ' · check' : ''}</span>
       </div>
@@ -155,7 +156,7 @@ export default function InboxItems({ series, book, status, reload }: { series: s
   const real = items.filter((i) => i.kind !== 'healed')
   const active = real.filter((i) => i.status === 'open' || i.status === 'answered')
   const needs = active.filter((i) => i.status === 'open')
-  const waiting = active.filter((i) => i.status === 'answered') // your answer or the tool's fix is waiting for the next run: nothing to do but run
+  const waiting = real.filter((i) => i.status === 'answered' || i.status === 'outdated') // your answer, the tool's fix, or findings of older checks wait for the next run: nothing to do but run
   const healedItems = items.filter((i) => i.kind === 'healed' && i.status === 'healed')
   const cameBack = items.filter((i) => i.kind === 'healed' && i.status === 'open')
   const handled = real.filter((i) => i.status === 'applied' || i.status === 'dismissed')
@@ -303,7 +304,7 @@ export default function InboxItems({ series, book, status, reload }: { series: s
       )}
       {waiting.length > 0 && (
         <details className="mt-3 text-sm" open>
-          <summary className="min-h-11 cursor-pointer py-2 text-slate-600">Will clear on its own ({waiting.length}) — nothing to do, just run again</summary>
+          <summary className="min-h-11 cursor-pointer py-2 text-slate-600">Will clear on its own ({waiting.length}) — nothing to answer, run the stage again</summary>
           <ul className="space-y-3">{waiting.map((it) => <ItemCard key={`${it.id}:${it.status}:${it.answer}`} item={it} base={base} locked={!!locked} onDone={done} />)}</ul>
         </details>
       )}

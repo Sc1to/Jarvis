@@ -11,6 +11,7 @@ from bookforge import cli, inbox, ops
 from bookforge.bible import store
 from bookforge.bible.models import AuthorQuestion, Ledger
 from bookforge.project import Project
+from bookforge.remedies.registry import CHECKS_VERSION
 from test_api import B, client, data, data_dir, error, finish  # noqa: F401  (data_dir is an autouse fixture)
 from test_prose_qc import book  # noqa: F401
 
@@ -30,7 +31,7 @@ def finding(stage, code, items, message="a hard finding", evidence=("a quoted li
 
 def put_findings(project, stage, findings):
     (project.book_dir / "validation").mkdir(parents=True, exist_ok=True)
-    (project.book_dir / "validation" / f"{stage}.json").write_text(json.dumps({"stage": stage, "summary": {}, "findings": findings}), encoding="utf-8")
+    (project.book_dir / "validation" / f"{stage}.json").write_text(json.dumps({"stage": stage, "checks_version": CHECKS_VERSION, "summary": {}, "findings": findings}), encoding="utf-8")
 
 
 def test_the_inbox_lists_every_open_question_and_hard_finding_blocking_first_labelled_by_series_book_and_stage(book):
@@ -75,7 +76,7 @@ def test_a_dismissal_keeps_its_reason_and_counts_toward_the_rate_of_its_type(boo
 
 def test_a_hard_finding_of_any_stage_is_answered_with_an_instruction_or_dismissed_as_a_false_alarm(book):
     put_findings(book, "acts", [finding("acts", "sizing_reason_mismatch", ["b2.act1"])])
-    put_findings(book, "scenes", [finding("scenes", "pov_not_in_text", ["b2.ch06.s1", "silas-thorne"])])
+    put_findings(book, "scenes", [finding("scenes", "scene_event_not_in_chapter", ["b2.ch06.s1", "e4"])])
     items = data(client.get(f"{B}/inbox"))["items"]
     assert [i["stage"] for i in items] == ["acts", "scenes"] and all(i["kind"] == "finding" and i["blocking"] for i in items)
     data(client.post(f"{B}/inbox/answer", json={"id": items[0]["id"], "answer": "the count is right; fix the text"}))
@@ -83,7 +84,7 @@ def test_a_hard_finding_of_any_stage_is_answered_with_an_instruction_or_dismisse
     assert "sizing_reason_mismatch [b2.act1]: the count is right; fix the text" in note  # the next run of the stage reads it
     got = data(client.post(f"{B}/inbox/dismiss", json={"id": items[1]["id"], "reason": "she is the viewpoint, named by pronoun"}))
     assert [(i["stage"], i["status"]) for i in got["items"]] == [("acts", "answered"), ("scenes", "dismissed")] and got["summary"]["blocking"] == 0 and got["summary"]["needs_run"]  # your instruction waits for the next run: not blocking, and a run is due
-    assert got["stats"]["pov_not_in_text"]["reasons"] == ["she is the viewpoint, named by pronoun"] and got["items"][1]["dismiss_reason"]
+    assert got["stats"]["scene_event_not_in_chapter"]["reasons"] == ["she is the viewpoint, named by pronoun"] and got["items"][1]["dismiss_reason"]
     error(client.post(f"{B}/inbox/answer", json={"id": "finding:nope", "answer": "x"}), 404)
     error(client.post(f"{B}/inbox/answer", json={"id": "nonsense", "answer": "x"}), 422)
 
@@ -109,7 +110,7 @@ def test_a_checkpoint_with_nothing_open_for_its_stages_approves_without_ceremony
 def test_the_inbox_page_runs_again_with_the_ordinary_run_and_answered_items_wait_for_it(book):
     seed(book, CONTRADICTION)
     data(client.post(f"{B}/inbox/answer", json={"id": "question:q1", "answer": "Keep A"}))
-    assert data(client.get(f"{B}/inbox"))["summary"] == {"open": 0, "blocking": 0, "answered_waiting": 1, "resolved": 0, "healed": 0, "needs_run": True, "by_stage": {}}
+    assert data(client.get(f"{B}/inbox"))["summary"] == {"open": 0, "blocking": 0, "answered_waiting": 1, "resolved": 0, "healed": 0, "outdated": 0, "needs_run": True, "by_stage": {}}
     job = data(client.post(f"{B}/run", json={"until": "ledger"}), 202)  # the button posts this: the same call as `run` on the command line
     assert finish(job)["status"] in ("done", "failed")
 
@@ -138,7 +139,7 @@ def test_a_run_that_stops_for_your_answers_sends_a_notification_that_counts_them
     monkeypatch.setattr(api, "push_sender", lambda **kw: sent.append(kw))
     client.post("/api/push/subscribe", json={"endpoint": "https://push.example/x", "keys": {"p256dh": "k", "auth": "a"}})
     seed(book, CONTRADICTION, NAME)
-    put_findings(book, "chapters", [finding("chapters", "end_state_overreach", ["b2.ch10"])])
+    put_findings(book, "chapters", [finding("chapters", "event_not_covered", ["e10"])])
     from bookforge.jobs import Job
     api.jobs.on_finish(Job(id="1", series="series", book="b1", kind="run", status="done", result={"stopped": "checkpoint", "detail": "reached the 'ledger' checkpoint"}))
     p = json.loads(sent[0]["data"])
@@ -393,3 +394,56 @@ def test_thirty_six_findings_of_one_cause_are_one_item_that_answering_or_dismiss
     data(client.post(f"{B}/inbox/dismiss", json={"id": lead["id"], "reason": "the seal is breached and hardened on purpose"}))
     after = data(client.get(f"{B}/inbox"))
     assert [i["status"] for i in after["items"] if i["status"] == "open"] == ["open"]  # only the other track's item is left
+
+
+def put_unversioned(project, stage, findings):
+    """Findings as an older run saved them: no checks_version."""
+    (project.book_dir / "validation").mkdir(parents=True, exist_ok=True)
+    (project.book_dir / "validation" / f"{stage}.json").write_text(json.dumps({"stage": stage, "summary": {}, "findings": findings}), encoding="utf-8")
+
+
+def b2_flood():
+    two = [finding("scenes", "two_places_at_once", [f"b2.ch01.s1", f"b2.ch{i:02d}.s1"]) for i in range(2, 22)]
+    regress = [finding("scenes", "state_regression", ["containment-seal-status", f"b2.ch{i:02d}.s1"]) for i in (12, 14, 16)] + [finding("scenes", "state_regression", ["data-drive-status", "b2.ch15.s1"])]
+    patterns = [finding("scenes", "action_pattern_repeated", [f"b2.ch{i:02d}" for i in (2, 5, 6)]), finding("scenes", "event_repeated", ["b2.ch15", "b2.ch18", "b2.ch20"])]
+    return two + regress + patterns
+
+
+def test_findings_an_older_version_of_the_checks_saved_never_block_and_the_page_offers_run_again(book):
+    seed(book)
+    put_unversioned(book, "scenes", b2_flood())  # the b2 Inbox after pulling phase 5 without running the stage again
+    got = data(client.get(f"{B}/inbox"))
+    items = got["items"]
+    assert items and all(i["status"] == "outdated" and not i["blocking"] for i in items)
+    assert got["summary"]["blocking"] == 0 and got["summary"]["open"] == 0 and got["summary"]["needs_run"] is True and got["summary"]["outdated"] >= 1
+    lead = next(i for i in items if i["type"] == "two_places_at_once")
+    assert lead["group"]["count"] == 20 and "older version of the checks" in lead["why"]  # 20 scene pairs of one cause: one item
+    assert inbox.blocking_for_checkpoint(book, "structure") == []
+
+
+def test_the_same_findings_saved_by_the_current_checks_keep_structural_ones_blocking_and_show_the_rest_as_warnings(book):
+    seed(book)
+    put_findings(book, "scenes", [finding("scenes", "chapter_event_not_in_scenes", ["b2.ch03", "e5"]), finding("scenes", "action_pattern_repeated", ["b2.ch02", "b2.ch05"]),
+                                  finding("scenes", "pov_not_in_text", ["b2.ch06.s1", "silas-thorne"])])
+    items = {i["type"]: i for i in data(client.get(f"{B}/inbox"))["items"]}
+    assert items["chapter_event_not_in_scenes"]["blocking"] and not items["chapter_event_not_in_scenes"].get("warning")
+    assert not items["action_pattern_repeated"]["blocking"] and items["action_pattern_repeated"]["warning"]
+    assert not items["pov_not_in_text"]["blocking"] and items["pov_not_in_text"]["warning"]
+    summary = data(client.get(f"{B}/inbox"))["summary"]
+    assert summary["blocking"] == 1
+    assert [i["type"] for i in inbox.blocking_for_checkpoint(book, "structure")] == ["chapter_event_not_in_scenes"]  # a warning never has to be skipped
+
+
+def test_a_scene_pair_two_places_finding_is_retired_even_when_saved_by_the_current_version_and_a_track_one_is_not(book):
+    seed(book)
+    put_findings(book, "scenes", [finding("scenes", "two_places_at_once", ["b2.ch01.s1", "b2.ch04.s1"]), finding("scenes", "two_places_at_once", ["eli-vance", "b2.ch01.s1"])])
+    by_items = {tuple(i["items"]): i for i in data(client.get(f"{B}/inbox"))["items"]}
+    assert by_items[("b2.ch01.s1", "b2.ch04.s1")]["status"] == "outdated"
+    assert by_items[("eli-vance", "b2.ch01.s1")]["status"] == "open"  # a track contradiction: still a decision (a warning below the ledger stage)
+
+
+def test_a_stage_run_stamps_the_findings_with_the_current_checks_version(project):
+    from bookforge.remedies.registry import CHECKS_VERSION
+    from bookforge.validators import findings as F, store as findings_store
+    findings_store.save(project, "scenes", [F.soft("scenes", "tic_word", "x", [])])
+    assert findings_store.load(project, "scenes")["checks_version"] == CHECKS_VERSION and isinstance(CHECKS_VERSION, int)

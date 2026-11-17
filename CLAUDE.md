@@ -101,6 +101,7 @@ Last completed:    Phase 13.19 — Paper trading validation tooling; Phase DEV �
                    Bookforge findings plan, phase 3 (2026-11-17) — need-to-know prompts: chapters, scenes and the prose briefing never show the text of later events (`status_text(future="hidden")`, a leak test in `tests/test_need_to_know.py`); scene-level retell/repeat findings get the same narrow rewrite and fix-or-warn as chapters (`fix_scene_retells`)
                    Bookforge findings plan, phase 4 (2026-11-17) — acts name `starts_with` and the tool derives events, ids, turning points, chapter counts and sizing (`assign_acts`, `derive_act_numbers`); 13 acts finding codes are now impossible by construction; older replies and adopted files still parse
                    Bookforge findings plan, phase 5 (2026-11-17) — the b2 scenes flood (46 blocking items): scenes are never compared for `two_places_at_once` (only two location tracks of one person), returning track values get the scene's purpose as their cause, `action_pattern_repeated` is advisory (soft), flat timelines are re-dated by one narrow call (`timeline_flat`, `qc.fix_timeline`), scene-level `event_repeated` gets the narrow rewrite, and after the fixes only STRUCTURAL findings stop a chapters/scenes stage (`demote_unfixable` by registry class); the Inbox groups findings of one cause into one item
+                   Bookforge findings plan, phase 5a (2026-11-17) — findings carry the version of the checks that saved them (`CHECKS_VERSION`, bump it whenever a check or a code's class changes); findings from older checks are `outdated` (never blocking, grey group, Run again offered), and only findings whose class stops a stage are blocking at display time, the rest are warnings
 Currently working: Phase 13.20 — Live trading activation (manual user decision); Phase 14 — Bookforge (14.0–14.13 done; Phase 14 complete, awaiting a real-model run)
 Blocked on:        Infra phases (1, 2) are hardware setup; 3-6 months paper trading runtime
 Remaining:         Phase 13.20 (manual user decision)
@@ -359,6 +360,8 @@ comment and a reference to the phase that will provide it.
 ---
 
 ## DOCUMENTATION MAINTENANCE
+
+Bookforge: bump `CHECKS_VERSION` in `platform/bookforge/bookforge/remedies/registry.py` whenever a check or a finding code's class changes.
 
 Run `docs/MAINTENANCE_PROMPT.md` at the end of every Claude Code session.
 This is mandatory, not optional.
