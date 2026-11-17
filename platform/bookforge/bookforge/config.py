@@ -205,6 +205,7 @@ class GitSettings(_Strict):
 class LedgerSettings(_Strict):
     """How the story-event ledger decides a synopsis is too thin for a novel. Defaults are starting points; nothing needs setting."""
     weight_per_chapter: float = Field(2.0, gt=0)  # story weight one chapter carries (events weigh 1 minor, 2 ordinary, 3 major)
+    words_per_weight: float = Field(1800.0, gt=0)  # words of finished story one point of event weight is worth: the story's estimated length, compared with book.target_words
     min_chapters: int = Field(12, ge=1)  # fewer chapters' worth of story than this is "thin": ask the author, never pad
     count_tolerance: float = Field(0.2, gt=0, lt=1)  # how far the acts' chapters may stray from the ledger's estimate before a reason is demanded
     audit: bool = True  # read the synopsis for contradictions, missing prerequisites and cast conflicts before extracting events

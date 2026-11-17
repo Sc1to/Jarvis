@@ -40,7 +40,7 @@ from .runner import StepContext, StepResult
 log = logging.getLogger("platform_bookforge.layers")
 
 
-def capacity(events: list[dict], weight_per_chapter: float, min_chapters: int) -> dict:
+def capacity(events: list[dict], weight_per_chapter: float, min_chapters: int, words_per_weight: float = 1800.0) -> dict:
     """How much novel the synopsis carries. Only events of the synopsis (and the author's) count: complications the planner
     derives later never rescue a thin synopsis."""
     counted = [e for e in events if e.get("source", "synopsis") != "derived" and not e.get("carried_in")]
@@ -50,6 +50,7 @@ def capacity(events: list[dict], weight_per_chapter: float, min_chapters: int) -
         "formula": "estimated_chapters = total_weight / weight_per_chapter; thin when estimated_chapters < minimum_chapters",
         "events": len(counted), "total_weight": weight, "weight_per_chapter": weight_per_chapter,
         "estimated_chapters": round(estimated, 1), "minimum_chapters": min_chapters, "thin": estimated < min_chapters,
+        "estimated_words": round(weight * words_per_weight, -2),
     }
 
 
@@ -144,7 +145,11 @@ def parse_ledger(text: str, synopsis: str, project, prior: Ledger | None = None)
                 next_n += 1
 
     cfg = project.config.ledger
-    cap = capacity(plain, cfg.weight_per_chapter, cfg.min_chapters)
+    cap = capacity(plain, cfg.weight_per_chapter, cfg.min_chapters, cfg.words_per_weight)
+    target = project.config.book.target_words
+    if target > 0 and cap["estimated_words"] < 0.6 * target:  # not thin enough to stop (the story may be a shorter book), but you should know now
+        findings.append(soft_finding("ledger_short_of_target", f"the story's events carry about {cap['estimated_words']:.0f} words (total weight {cap['total_weight']} x {cfg.words_per_weight:g}); "
+                                     f"the book's target is {target}. Add material (the synopsis or the events), or lower `book.target_words`. Nothing is padded for you"))
     open_q = [q for q in questions if q.status == "open"] + ([q for q in prior.questions if q.status == "open"] if prior else [])
     if cap["thin"] and not open_q:
         problems.append(f"the synopsis carries about {cap['estimated_chapters']} chapters of story ({cap['formula']}; minimum {cap['minimum_chapters']}). "
@@ -367,7 +372,7 @@ def ledger(ctx: StepContext) -> StepResult:
         problems = [f.line() for f in findings if f.severity == HARD]
         if problems:
             raise LayerError("the existing ledger.yaml is not acceptable: " + "; ".join(problems[:6]) + " (fix the file, or delete it to have it regenerated)")
-        led.capacity = capacity(plain, project.config.ledger.weight_per_chapter, project.config.ledger.min_chapters)
+        led.capacity = capacity(plain, project.config.ledger.weight_per_chapter, project.config.ledger.min_chapters, project.config.ledger.words_per_weight)
         led.thin = led.capacity["thin"]
         note = "adopted existing file"
 

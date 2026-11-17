@@ -50,7 +50,7 @@ Plan the SCENES of one chapter, when they happen, and how they pin down the stat
 
 ## Task
 
-Plan the scenes of this chapter, {first_scene} onward: as many as the chapter's events need, from 1 to 4, and no more. A chapter with little to tell gets one or two scenes; never stretch it. Each scene has:
+Plan the scenes of this chapter, {first_scene} onward: as many as the chapter's events need, from 1 to 4, and no more. {length_guidance} Each scene has:
 - a purpose: what changes in this scene and why it is needed;
 - a point-of-view character, a setting (a place from the cast) and the characters present (ids from the cast);
 - `starts_with`: the id of the FIRST event of this chapter that this scene tells. Use ONLY these ids, in this order (the events of this chapter): {starting_events}. The scenes are consecutive stretches of the chapter's events: a scene tells everything from its `starts_with` event up to, but not including, the event the next scene starts with, and the last scene runs to the chapter's last event. The first scene starts with the chapter's first event. A scene that only goes on with what the scene before it told (a second scene for the same event) has no `starts_with`. You do not list the other events: every event of the chapter is thereby shown in exactly one scene. An event listed under CONTINUING FROM THE CHAPTER BEFORE is carried on in the first scene: take it up where the chapter before left it, and never start it again;

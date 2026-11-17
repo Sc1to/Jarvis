@@ -895,6 +895,24 @@ def scene_count_plausibility(chapter: dict, scenes: list[dict], events: list[dic
     return []
 
 
+def plan_vs_target(project, scenes: list, stage: str = "scenes") -> list[Finding]:
+    """The words the plan comes to (from every scene's beats) against the book's target. Never stops a stage: it says, once, where you decide, that the material
+    and the ambition disagree, and what you can do. Nothing is padded to close the gap."""
+    from ..sizing import plan_vs_target as measure
+    if not scenes:
+        return []
+    lo, hi, target = measure(project, scenes)
+    if not target:
+        return []
+    mid = (lo + hi) / 2
+    if 0.7 * target <= mid <= 1.3 * target:
+        return []
+    kind = "short of" if mid < target else "over"
+    return [soft(stage, "plan_short_of_target", f"the plan comes to about {lo} to {hi} words ({len(scenes)} scenes); the book's target is {target}: {kind} the target. "
+                 "Either plan the scenes again so each chapter is shown in more depth (the planner is told each chapter's word budget), set the target to what the plan carries "
+                 f"(`book.target_words: {round(mid, -3):.0f}`), or accept it as it is. Nothing is padded for you", ["book"])]
+
+
 # ── the shape of the acts ────────────────────────────────────────────────────
 
 def turning_point_positions(acts: list[dict], events: list[dict], stage: str = "acts") -> list[Finding]:

@@ -136,7 +136,7 @@ def build_report(project: Project, since: str | None = None, today: str | None =
         out.append(f"- Scenes: {len(scenes)} planned: " + ", ".join(parts + ([f"{n_pending} pending"] if n_pending else [])))
         from .sizing import planned_words
         lo, hi = planned_words(project, scenes)
-        out.append(f"- Words in accepted scenes: {accepted_words}. The plan comes to about {lo} to {hi} words (from the beats of {len(scenes)} scenes; a result, not a target)")
+        out.append(f"- Words in accepted scenes: {accepted_words}. The plan comes to about {lo} to {hi} words (from the beats of {len(scenes)} scenes)" + (f"; the book's target is {project.config.book.target_words}" if project.config.book.target_words and not project.config.layers["prose"].words else ""))
     t = call_totals(project, since)
     out.append(f"- {'This run' if since else 'So far'}: {t['calls']} model calls ({t['failed']} failed), {_duration(t['seconds'])} of model time, "
                f"{t['prompt_tokens'] + t['completion_tokens']} tokens ({t['prompt_tokens']} in, {t['completion_tokens']} out)"
