@@ -29,13 +29,17 @@ function RewritePanel({ base, onDone, onClose, locked }: { base: string; onDone:
   const [force, setForce] = useState(false)
   const [voice, setVoice] = useState(false)
   const act = useAction()
+  const [confirming, setConfirming] = useState(false)
+  const [result, setResult] = useState<string | null>(null)
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => { ref.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }) }, [])
   const plan = useApi<{ reset: string[]; kept: string[]; by_status: Record<string, number> }>(`${base}/rewrite-plan?targets=${encodeURIComponent(scope)}&force=${force}`)
   const chapters = [...new Set((scenes.data ?? []).map((s) => s.chapter))]
   const touchesFirst = scope === 'all' || scope === chapters[0]
   const counts = plan.data ? Object.entries(plan.data.by_status).map(([k, n]) => `${n} ${k}`).join(', ') : ''
   const n = plan.data?.reset.length ?? 0
   return (
-    <div className="mt-2 space-y-2 rounded-md border border-slate-200 bg-slate-50 p-3">
+    <div ref={ref} className="mt-2 space-y-2 rounded-md border border-slate-200 bg-slate-50 p-3">
       <p className="text-sm text-slate-700">Write scenes again. Their text, summaries, checks and findings are removed so the next Run writes them from scratch; everything already written stays in the series history.</p>
       <label className="block text-xs font-medium text-slate-700">Which scenes
         <select value={scope} onChange={(e) => { setScope(e.target.value); setVoice(false) }} disabled={act.busy || locked}
@@ -58,13 +62,15 @@ function RewritePanel({ base, onDone, onClose, locked }: { base: string; onDone:
       )}
       <ErrorBanner message={act.error} onClose={act.clear} />
       <div className="flex flex-wrap gap-2">
-        <Button kind="danger" disabled={act.busy || locked || !plan.data || n === 0}
+        <Button kind="danger" disabled={act.busy || locked || !plan.data || n === 0 || !!result}
           onClick={async () => {
-            if (!window.confirm(`Write ${n} scene(s) again? The current text is removed from the working folder (it stays in the series history).`)) return
-            if (await act.run(() => post(`${base}/rewrite`, { targets: [scope], force, reset_voice: voice }))) { onDone(); onClose() }
-          }}>Reset them, then press Run</Button>
-        <Button disabled={act.busy} onClick={onClose}>Cancel</Button>
+            if (!confirming) { setConfirming(true); return }
+            setConfirming(false)
+            if (await act.run(() => post(`${base}/rewrite`, { targets: [scope], force, reset_voice: voice }))) { setResult(`${n} scene(s) reset. Press Run to write them again.`); onDone() }
+          }}>{confirming ? `Yes, reset ${n} scene(s)` : 'Reset them, then press Run'}</Button>
+        <Button disabled={act.busy} onClick={onClose}>{result ? 'Close' : 'Cancel'}</Button>
       </div>
+      {result && <p className="rounded-md border border-emerald-300 bg-emerald-50 p-2 text-sm text-emerald-900">{result}</p>}
     </div>
   )
 }

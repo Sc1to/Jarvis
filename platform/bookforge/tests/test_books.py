@@ -139,7 +139,7 @@ def test_redo_resets_the_layer_its_checkpoint_and_asks_for_a_cascade(project):
         ops.redo_layer(project, "book_north_star", "darker")
     out = ops.redo_layer(project, "book_north_star", "darker", cascade=True)
     assert out == {"layer": "book_north_star", "reset": ["book_north_star", "synopsis"], "note": True,
-                   "archived": {"questions": 0, "facts": 0, "needs": 0}}
+                   "archived": {"questions": 0, "facts": 0, "needs": 0}, "scenes_discarded": 0}
     assert project.state.layers["book_north_star"].status == "pending" and project.state.layers["synopsis"].status == "pending"
     assert project.state.layers["series_north_star"].status == "accepted"  # not built on the book north star
     assert project.state.checkpoints["direction"].status == "pending"
@@ -187,6 +187,35 @@ def test_redo_only_for_planning_layers_and_never_over_written_scenes(project):
     with pytest.raises(BookforgeError, match="already been written"):
         ops.redo_layer(project, "synopsis")
     assert project.state.layers["synopsis"].status == "accepted"  # nothing was touched
+
+
+def written_scene(project, text="Written prose."):
+    scene = project.book_dir / "scenes" / "ch01" / "s1"
+    scene.mkdir(parents=True)
+    (scene / "final.md").write_text(text)
+    return scene
+
+
+def test_redo_can_discard_the_written_scenes_in_one_action_and_the_text_stays_in_history(project):
+    direction_done(project)
+    scene = written_scene(project)
+    project.state.layers["prose"].status = "drafted"
+    assert ops.prose_written(project)["scenes"] == 1
+    with pytest.raises(BookforgeError, match="Also discard the written scenes"):
+        ops.redo_layer(project, "synopsis")
+    out = ops.redo_layer(project, "synopsis", discard_prose=True)
+    assert out["layer"] == "synopsis" and not (scene / "final.md").exists()
+    assert project.state.layers["prose"].status == "pending" and project.state.layers["synopsis"].status == "pending"
+    assert "before discarding 1 written scene(s)" in git(project, "log", "--format=%s")
+    assert "Written prose." in git(project, "show", "HEAD~2:books/b1/scenes/ch01/s1/final.md") or "Written prose." in git(project, "log", "-p", "--all", "--format=")
+    assert ops.prose_written(project)["scenes"] == 0
+
+
+def test_a_prose_layer_left_drafted_with_no_text_does_not_block_a_redo(project):
+    direction_done(project)
+    project.state.layers["prose"].status = "drafted"
+    ops.redo_layer(project, "synopsis")  # used to be refused although nothing was written
+    assert project.state.layers["prose"].status == "pending"
 
 
 def test_the_notes_of_a_layer_not_being_redone_are_not_used(project):

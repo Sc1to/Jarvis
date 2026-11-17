@@ -384,12 +384,14 @@ def redo_cmd(
     layer: str = typer.Argument(..., help=f"The planning layer to write again, one of: {', '.join(ops.REDOABLE)}"),
     note: str = typer.Option("", "--note", help="What to change, in your words; the model sees it with the previous version"),
     cascade: bool = typer.Option(False, "--cascade", help="Also reset the later layers that were built on it"),
+    discard_prose: bool = typer.Option(False, "--discard-prose", help="Also reset the scenes that were written (their text stays in the series history)"),
+    force: bool = typer.Option(False, "--force", help="With --discard-prose: include text you wrote yourself"),
     book: str = BookOpt,
 ) -> None:
     """Have a planning layer written again (then `run`). Nothing is deleted: the current files are committed first."""
     try:
         project = Project.open(path, book)
-        out = ops.redo_layer(project, layer, note, cascade)
+        out = ops.redo_layer(project, layer, note, cascade, discard_prose, force)
     except BookforgeError as e:
         _fail(e)
     a = out["archived"]

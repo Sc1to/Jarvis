@@ -598,6 +598,7 @@ def test_a_series_can_be_renamed():
 def test_redo_shows_what_it_resets_and_does_it():
     plan = data(client.get(f"{B}/redo/book_north_star"))
     assert plan["layer"] == "book_north_star" and isinstance(plan["also_resets"], list)
+    assert plan["prose_written"] == {"scenes": 0, "own": 0}  # what a redo would have to discard, shown before the click
     error(client.get(f"{B}/redo/prose"), 400)
     out = data(client.post(f"{B}/redo", json={"layer": "scenes", "note": "more action"}))
     assert out["layer"] == "scenes" and out["note"] is True
