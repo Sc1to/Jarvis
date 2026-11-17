@@ -51,7 +51,7 @@ def assign(raw: list, order: list[str]) -> list[str]:
         label = f"chapters[{k}]"
         sw = c.pop("starts_with", None)
         c.pop("events_covered", None)  # the tool's to fill in, whatever the model wrote
-        continued = c.get("events_continued") or []
+        continued = c.get("events_continued") or c.get("continues") or []
         if sw in (None, "", []):
             if not continued:
                 problems.append(f"{label} has neither `starts_with` (the first event it tells) nor `events_continued`: every chapter has an event of its own")
@@ -181,3 +181,32 @@ def assign_acts(raw: list, event_ids: list[str], ending_ids: list[str], book: st
     for k, a in enumerate(acts):
         a["events"] = event_ids[starts[k]:starts[k + 1] if k + 1 < len(starts) else len(event_ids)]
     return [], notes
+
+
+def apply_continues(raw: list, weights: dict[str, int], previous_last: str | None, previous_continued: list[str] | None = None) -> tuple[list[str], list[str]]:
+    """`continues: true` on a chapter means it carries on the heavy event the chapter before ended with: the tool fills in `events_continued` from that
+    chapter's last event (for the first chapter of an act, `previous_last`, the last event of the act before). Only a weight 3 event not already carried
+    on can continue; anything else goes back to the model as the one problem. Returns (problems, notes). A chapter with `events_continued` of its own is
+    left as written (older replies)."""
+    chapters = [c for c in raw if isinstance(c, dict)]
+    problems: list[str] = []
+    notes: list[str] = []
+    for k, c in enumerate(chapters):
+        flag = c.pop("continues", None)
+        if not flag or c.get("events_continued"):
+            continue
+        if k > 0:
+            prev = chapters[k - 1]
+            last = (prev.get("events_covered") or prev.get("events_continued") or [None])[-1]
+            carried = list(prev.get("events_continued") or [])
+        else:
+            last, carried = previous_last, list(previous_continued or [])
+        if not last:
+            problems.append(f"chapters[{k}] says it continues the chapter before, but there is none: remove `continues`")
+        elif weights.get(last, 1) < 3 or last in carried:
+            problems.append(f"chapters[{k}] says it continues the chapter before, but that chapter ends with {last}, which is not a heavy (weight 3) event "
+                            "that began there: give this chapter its own `starts_with` instead of `continues`")
+        else:
+            c["events_continued"] = [last]
+            notes.append(f"chapters[{k}] carries on {last} from the chapter before")
+    return problems, notes

@@ -375,7 +375,12 @@ def parse_chapters(
     entities = entity_map(constants)
     new_places = adopt_places(raw, entities, act.id)
     new_shape = ledger is not None and partition.uses_starts([c for c in raw if isinstance(c, dict)])  # the tool cut the events (not the model's lists)
-    raw, repairs, bad_starts = normalize.normalize_chapters(project, data, raw, act, ledger, first_number)
+    normalize.pivot_states(data, raw, [chapter_id(project.book, first_number + i) for i in range(len(raw))])  # states nested in a chapter become tracks, `from` = that chapter
+    last_before = (chapters_before or [None])[-1]
+    raw, repairs, bad_starts = normalize.normalize_chapters(
+        project, data, raw, act, ledger, first_number,
+        previous_last=(list(last_before.events_covered) or list(last_before.events_continued) or [None])[-1] if last_before else None,
+        previous_continued=list(last_before.events_continued) if last_before else None)
     if bad_starts:  # nothing else is checked: chapters without events would only add a wall of follow-on errors that tell the model to list events itself
         return None, problems + bad_starts
     limit = (max_chapters or act.chapter_count) if ledger is not None else act.chapter_count
@@ -439,11 +444,9 @@ def normalize_derived(raw, per_parent: dict[str, int]) -> dict:
         if not ident:
             per_parent[parent] = per_parent.get(parent, 0) + 1
             raw["id"] = f"{parent}.{per_parent[parent]}"
-        raw.setdefault("after", [parent])
-        if not raw.get("after"):
-            raw["after"] = [parent]
-    raw.setdefault("weight", 1)
-    raw.setdefault("kind", "event")
+        raw["after"] = [parent]  # always right after its parent: the tool's to set, whatever was written
+    raw["weight"] = 1  # a complication is minor by definition
+    raw["kind"] = "event"
     return raw
 
 
@@ -532,15 +535,22 @@ def parse_scenes(
     entities = entity_map(constants)
     new_places = adopt_places(raw, entities, chapter.id)
     scenes_new_shape = ledger is not None and any(isinstance(x, dict) and "starts_with" in x for x in raw)
+    ch_num = parse_position(chapter.id).chapter
+    nested = normalize.states_shape(raw) or (scenes_new_shape and isinstance(data, dict) and not data.get("tracks"))  # states live inside the scenes: the tool makes the tracks
+    if nested:
+        normalize.pivot_states(data, raw, [scene_id(project.book, ch_num, i + 1) for i in range(len(raw))])
+        if isinstance(data, dict):
+            data.setdefault("tracks", [])
     _, bad_starts = normalize.normalize_scenes(project, data, raw, chapter, ledger)  # events cut at each starts_with; slips (an id's number, an event twice or nowhere) put right
     if bad_starts:  # nothing else is checked: scenes without events would only add a wall of follow-on errors
         return None, problems + bad_starts
     if ledger is not None:
         normalize.derive_days(raw, prev_day)  # story days from `days_later`: they cannot run backwards
+    if nested:
+        normalize.claim_chapter_states(data, raw, [scene_id(project.book, ch_num, i + 1) for i in range(len(raw))], chapter.id, tracks_so_far, entities)
     lo, hi = count_range(project, "scenes")
     if raw and not lo <= len(raw) <= hi:
         problems.append(f"{chapter.id} needs {lo} to {hi} scenes, got {len(raw)}")
-    ch_num = parse_position(chapter.id).chapter
     scenes: list[Scene] = []
     timeline: list[TimelineEntry] = []
     main_day = prev_day

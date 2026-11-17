@@ -83,7 +83,8 @@ def test_derived_complications_join_the_ledger_and_obey_the_rules(project):
     major["derived_events"][0]["weight"] = 3
     p2 = project_ready(__import__("conftest").Project.create(p.root.parent / "second", "x\n"))
     s2 = run(p2, RuleLLM([("Plan the chapters this act's events need, b1.ch01 onward", dump(major))] + rules()), HANDLERS, until="chapters")
-    assert s2.stopped == "failed" and "derived_not_minor" in s2.detail
+    assert s2.ran == ["acts", "chapters"], s2.detail  # a complication is minor by construction: the weight the model wrote is replaced
+    assert next(e for e in store.load_ledger(p2).events if e.id == "e1.1").weight == 1
 
 
 def test_a_derived_complication_no_chapter_tells_is_left_out_not_a_failure(project):

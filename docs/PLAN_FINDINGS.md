@@ -163,3 +163,36 @@ Retire the hard/soft split for wording, rating and repeat codes: they are `conte
 
 **Verification:** full suite; on the mini PC press Consolidate on b2 and compare the card (67 becomes about 10 topics, the contradictions listed once), then re-plan one chapter and confirm no new need appears for a topic that exists.
 
+
+---
+
+## Phase 5b detail: tracks nested, chapters `continue`, derived events fully derived (phases 1 to 5a and 5c are merged; 5c is PR #147)
+
+**What goes wrong today.** A track is a list of states with a `from` position written by the model: a chapter id in the chapters reply, a scene id in the scenes reply, and the scenes reply must restate EVERY chapter-level state of that chapter ("keep every state and every must_show flag", `_apply_refinement` refuses a drop). Each of those is a way to slip: a `from` that is spelled wrong, not in this act or chapter, used twice, a restated state dropped, a must_show lost. Today each is caught by a check and sent back as a wall of errors (`bible/validate.py::_parse_tracks`, `_apply_refinement`, `repair._remap_tracks`). The model writes a position the tool already knows: the state is mentioned INSIDE the chapter or scene it belongs to.
+
+**What the model writes after this phase**
+- Chapter: `states: [{track, value, must_show, cause?}]` nested in the chapter. A track's first use also gives `entity` and `kind` (`{track: anna-shoulder-wound, entity: anna, kind: physical, value: ...}`); later uses give only the id.
+- Scene: `states: [{track, value, must_show, cause?}]` nested in the scene, only for what changes or shows there.
+- Chapter: `continues: true` instead of `events_continued: [eN]`.
+- Derived events: `text` and `parent` (an event of that chapter) only.
+
+**What the tool derives** (`bible/normalize.py`, new `pivot_states(chapter_or_scene, raw)` next to `normalize_chapters` / `normalize_scenes`)
+1. `from` is the id of the chapter or scene the state sits in; positions are never written, so every `from` problem is impossible (spelling, outside this act or chapter, used twice).
+2. Scene level: a chapter-level state that no scene of that chapter restates is kept and attached to the first scene (the one whose `starts_with` is nearest the state's chapter), unless a scene gives the same track, in which case the scene's wording replaces it. A `must_show` flag is never lost: the scene that restates a must_show track inherits the flag when it does not give one, and a must_show state no scene claims goes to the scene whose beats mention the track's entity most (stem overlap, `validators/text.py`), else the first. `_apply_refinement`'s "do not drop states" guard becomes true by construction.
+3. A track id the model never declared and has no entity/kind: resolved to the closest existing track by stems (the same resolver phase 6 builds for cast ids); otherwise a `track_unknown` DECISION item with "Create it" recommended, never a blocking structural finding.
+4. `continues: true`: `events_continued` is the previous chapter's last event, only if it has weight 3 and was begun there; otherwise the flag is ignored with a note. `continued_event_not_begun` and the other-act case cannot be written.
+5. Derived events: id `<parent>.<n>`, `after: [parent]`, `weight: 1`, `kind: event` are set after the model's reply whatever it wrote (today `normalize_derived` only fills gaps and `derived_not_minor` / `derived_not_after_parent` can still fire).
+
+**Compatibility.** A reply with no `states` anywhere and a top-level `tracks:` with `from` (older pieces, hand-edited files, adopted files) is read exactly as today. A reply with both is read by `states` alone, like `starts_with`. Saved `tracks.yaml` keeps its present format (the pivot only changes what the model writes), so no b2 file needs converting; the state-at lookups, deps fingerprints and the dashboard are untouched.
+
+**Prompts.** `prompts/chapters_ledger.md` and `prompts/scenes_ledger.md`: drop the `tracks:` block with `from`, the "restate every state at scene level" paragraph and `events_continued`; add `states` (nested) and `continues`. The scenes prompt keeps showing "State tracks with planned states in this chapter" so the model can sharpen wording, but only where a scene changes it. The leak test (`test_need_to_know.py`) must stay green: track ids shown are past and present only.
+
+**Registry (`remedies/registry.py`):** mark done: all `from` spelling / not-allowed / used-twice kinds, `track_state_dropped`, `must_show_lost`, `continued_event_not_begun`, `derived_not_minor`, `derived_not_after_parent`, `derived_without_parent` (when the parent is given); `track_unknown` is a DECISION with the recommended "Create it". Bump `CHECKS_VERSION` to 6 (CLAUDE.md rule). Diagnostics bundles only for new-shape replies.
+
+**Files:** `bible/normalize.py` (`pivot_states`, derived forcing), `bible/validate.py` (`_parse_tracks`, `_apply_refinement` guards become a backstop that raises a diagnostics bundle, parse of `states` / `continues`), `bible/repair.py` (`_remap_tracks` only for old-shape replies), `bible/partition.py` (`continues`), `layers/structure.py` (slots, chapters and scenes normalise closures), `prompts/chapters_ledger.md`, `prompts/scenes_ledger.md`, `remedies/registry.py`, `tests/test_partition.py`, `tests/test_contracts.py`, `tests/structure_fakes.py`, `tests/ledger_structure_fakes.py`, docs and BUILD_STATUS.
+
+**Tests:** unit tests for `pivot_states` (positions set from the host, first-use declaration of entity and kind, unclaimed chapter state attached to the first scene, must_show inherited and never lost, unknown track resolved or turned into a DECISION, old shape untouched, both shapes present read by `states`); `continues` takes the right event and is ignored with a note when the previous chapter did not begin a weight 3 event; derived events forced to weight 1 / event / `after: [parent]`; a whole book planned through `run(...)` with the new shape, with the b2 track "containment-seal-status" going breached, hardened, breached and receiving its return `cause`; registry and diagnostics tests; full suite; contract tests pin `states` and `continues`.
+
+**Verification:** `cd platform/bookforge && venv/bin/pytest -q`; `python -m bookforge suite`; frontend untouched (no build needed beyond the existing one); on the mini PC re-plan b2's chapters and scenes and check `books/b2/diagnostics/` stays empty and that no `from`-related message appears.
+
+---

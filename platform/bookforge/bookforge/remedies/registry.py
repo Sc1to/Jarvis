@@ -21,8 +21,8 @@ from dataclasses import dataclass
 
 # The version of the checks. Findings are saved with it (validators/store.py), and the Inbox treats findings saved by an OLDER version as outdated: they are
 # never blocking, and the page says to run the stage again. Bump it in any change that alters what a check finds or how a code is classified (CLAUDE.md,
-# documentation maintenance). History: 5 = phase 5 (scene pairs no longer compared, causes derived, advisory classes).
-CHECKS_VERSION = 5
+# documentation maintenance). History: 5 = phase 5 (scene pairs no longer compared, causes derived, advisory classes), 6 = phase 5b (tracks nested, `continues`, derived events forced).
+CHECKS_VERSION = 6
 
 STRUCTURAL, WORDING, RATING, DECISION, ADVISORY, INFO = "structural", "wording", "rating", "decision", "advisory", "info"
 
@@ -51,8 +51,8 @@ def _specs() -> dict[str, FindingSpec]:
         ("synopsis_not_covered", DECISION, "ledger"), ("sentence_not_covered", DECISION, "ledger", "", "housekeeping outcomes (widen, attach, waive) are applied by the tool"),
         ("resolution_not_final_paragraph", DECISION, "ledger"), ("synopsis_not_in_acts", INFO, "ledger", "", "only used by the suite"),
         ("auto_repaired", INFO, "ledger"), ("synopsis_audit", INFO, "ledger"),
-        ("derived_without_parent", STRUCTURAL, "chapters", "A1#6"), ("derived_not_minor", STRUCTURAL, "chapters", "A1#6"),
-        ("derived_not_after_parent", STRUCTURAL, "chapters", "A1#6"), ("too_many_derived", STRUCTURAL, "chapters", "A1#6"),
+        ("derived_without_parent", STRUCTURAL, "chapters", "A1#6"), ("derived_not_minor", STRUCTURAL, "chapters", "done"),
+        ("derived_not_after_parent", STRUCTURAL, "chapters", "done"), ("too_many_derived", STRUCTURAL, "chapters", "A1#6"),
         # acts
         ("event_in_two_acts", STRUCTURAL, "acts", "done"), ("event_in_no_act", STRUCTURAL, "acts", "done"), ("acts_out_of_order", STRUCTURAL, "acts", "done"),
         ("turning_point_without_event", STRUCTURAL, "acts", "done"), ("turning_point_not_in_act", STRUCTURAL, "acts", "done"),
@@ -63,7 +63,7 @@ def _specs() -> dict[str, FindingSpec]:
         ("lopsided_acts", RATING, "acts"), ("turning_point_text_differs", WORDING, "acts"), ("act_summary_omits_resolution", WORDING, "acts"),
         ("act_retells_event", WORDING, "acts"),
         # chapters
-        ("chapter_without_events", STRUCTURAL, "chapters", "done"), ("continued_event_not_begun", STRUCTURAL, "chapters", "A1#5"),
+        ("chapter_without_events", STRUCTURAL, "chapters", "done"), ("continued_event_not_begun", STRUCTURAL, "chapters", "done"),
         ("only_major_events_continue", STRUCTURAL, "chapters", "A1#5"), ("event_spans_too_many_chapters", STRUCTURAL, "chapters", "A1#5"),
         ("event_from_other_act", STRUCTURAL, "chapters", "done"), ("once_only_repeated", STRUCTURAL, "chapters", "done", "chapters by starts_with, scenes by starts_with", ("scenes",)),
         ("event_before_cause", STRUCTURAL, "chapters", "done"), ("chapters_out_of_order", STRUCTURAL, "chapters", "done"),
