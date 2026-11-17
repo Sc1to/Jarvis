@@ -13,6 +13,7 @@ from bookforge.bible import store
 from bookforge.errors import BookforgeError
 from bookforge.layers import HANDLERS
 from bookforge.layers.runner import run
+from bookforge.remedies.registry import CHECKS_VERSION
 
 
 def planned(project):
@@ -117,8 +118,8 @@ def test_acts_planned_for_an_earlier_ledger_are_one_inbox_item_not_five_and_plan
         ("resolution_not_in_last_act", "the last act must contain the resolution", ["b1.act2", "e6"]), ("acts_differ_from_capacity", "the acts plan 4 chapters but the estimate is 6", ["b1.act1"]),
         ("sizing_reason_mismatch", "act 2 says weight 16", ["b1.act2"]), ("pov_not_in_text", "a chapter finding of another stage", ["b1.ch02"])]]
     (p.book_dir / "validation").mkdir(parents=True, exist_ok=True)
-    (p.book_dir / "validation" / "acts.json").write_text(json.dumps({"stage": "acts", "summary": {}, "findings": findings[:5]}), encoding="utf-8")
-    (p.book_dir / "validation" / "chapters.json").write_text(json.dumps({"stage": "chapters", "summary": {}, "findings": [dict(findings[5], stage="chapters")]}), encoding="utf-8")
+    (p.book_dir / "validation" / "acts.json").write_text(json.dumps({"stage": "acts", "checks_version": CHECKS_VERSION, "summary": {}, "findings": findings[:5]}), encoding="utf-8")
+    (p.book_dir / "validation" / "chapters.json").write_text(json.dumps({"stage": "chapters", "checks_version": CHECKS_VERSION, "summary": {}, "findings": [dict(findings[5], stage="chapters")]}), encoding="utf-8")
     items = inbox.collect(p, include_done=False)
     stale = [i for i in items if i["type"] == "acts_stale"]
     assert len(stale) == 1 and stale[0]["blocking"] and stale[0]["actions"] == ["redo_acts"] and "e5, e6" in stale[0]["title"] and "all 5 checks" in stale[0]["why"]

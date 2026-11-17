@@ -13,7 +13,8 @@ def path(project, stage: str) -> Path:
 def save(project, stage: str, findings: list[Finding], extra: dict | None = None) -> str:
     p = path(project, stage)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({"stage": stage, "summary": summarize(findings), "findings": [f.to_dict() for f in findings], **(extra or {})},
+    from ..remedies.registry import CHECKS_VERSION
+    p.write_text(json.dumps({"stage": stage, "checks_version": CHECKS_VERSION, "summary": summarize(findings), "findings": [f.to_dict() for f in findings], **(extra or {})},
                             indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return str(p.relative_to(project.root))
 
