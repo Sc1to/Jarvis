@@ -209,6 +209,8 @@ class RedoBody(BaseModel):
     layer: str
     note: str = ""
     cascade: bool = False
+    discard_prose: bool = False  # also reset the scenes that were written (their text stays in the series history)
+    force: bool = False  # ... including text the author wrote themselves
 
 
 class AcceptBody(BaseModel):
@@ -458,13 +460,13 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
     @router.get("/series/{series}/books/{book}/redo/{layer}")
     def redo_plan(series: str, book: str, layer: str):
         project = open_project(series, book)
-        return ok({"layer": layer, "also_resets": ops.redo_plan(project, layer)})
+        return ok({"layer": layer, "also_resets": ops.redo_plan(project, layer), "prose_written": ops.prose_written(project)})
 
     @router.post("/series/{series}/books/{book}/redo")
     def redo(series: str, book: str, body: RedoBody):
         project = open_project(series, book)
         require_idle(series)
-        return ok(ops.redo_layer(project, body.layer, body.note, body.cascade))
+        return ok(ops.redo_layer(project, body.layer, body.note, body.cascade, body.discard_prose, body.force))
 
     @router.get("/series/{series}/books/{book}/status")
     def book_status(series: str, book: str):

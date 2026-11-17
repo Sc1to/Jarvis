@@ -359,6 +359,20 @@ def _prose_exists(project: Project) -> bool:
     return any(project.book_dir.glob("scenes/*/*/final.md")) or any(project.book_dir.glob("scenes/*/*/revised.md"))
 
 
+def prose_written(project: Project) -> dict:
+    """What a plan redo would have to throw away: {"scenes": scenes with written text or a finished state, "own": of those, the ones with text you wrote yourself}."""
+    from . import scenefiles
+    ids: list[str] = []
+    if bible_store.scenes_path(project).exists():
+        for s in bible_store.load_scenes(project):
+            has_text = scenefiles.final_path(project, s.id).exists() or (scenefiles.scene_dir(project, s.id) / "revised.md").exists()
+            if has_text or (s.id in project.state.items and project.state.items[s.id].status != "pending"):
+                ids.append(s.id)
+    n = len(ids) or (len(list(project.book_dir.glob("scenes/*/*/final.md"))) + len(list(project.book_dir.glob("scenes/*/*/revised.md"))))
+    plan = rewrite_plan(project, ["all"], force=False) if ids else {"kept": []}
+    return {"scenes": n, "own": len(plan["kept"])}
+
+
 def redo_plan(project: Project, layer: str) -> list[str]:
     """The layers `redo` would reset along with this one: those after it that are not still pending."""
     if layer not in REDOABLE:
@@ -369,23 +383,40 @@ def redo_plan(project: Project, layer: str) -> list[str]:
     return [l for l in LAYER_ORDER[LAYER_ORDER.index(layer) + 1:] if l != "prose" and project.state.layers[l].status != "pending" and not unused(l)]
 
 
-def redo_layer(project: Project, layer: str, note: str = "", cascade: bool = False) -> dict:
+def redo_layer(project: Project, layer: str, note: str = "", cascade: bool = False, discard_prose: bool = False, force: bool = False) -> dict:
     """Have a planning layer written again, optionally steered by a note, and everything built on it.
 
     The layers after it that already ran were built on the old version; they are reset too, but only if `cascade` says
     so. Nothing is deleted: what is on disk now is committed first (so hand edits survive in Git history) and is
     overwritten when the layer runs again; a layer that is one document shows its previous version to the model with
-    your note. Refused once scenes have been written (use `rewrite`), because re-planning would orphan them.
+    your note. Refused once scenes have been written, because re-planning would orphan them, unless `discard_prose` says to reset the written scenes
+    first (their text stays in Git history; text you wrote yourself only goes with `force`).
     The checkpoints these layers belong to go back to pending, so you review the new version. The research those layers made
     (questions, facts, undecided needs, notes) is moved to `research/archive/` so they research from scratch; decisions you
     made yourself stay (see `archive_layers`).
     """
     from .layers.structure import _clean_work
     downstream = redo_plan(project, layer)
-    if _prose_exists(project) or project.state.layers["prose"].status != "pending":
-        raise BookforgeError("scenes have already been written; redoing the plan would orphan them. Rewrite or delete those scenes first (`rewrite`)")
+    written = prose_written(project)
+    if written["scenes"] and not discard_prose:
+        raise BookforgeError(f"{written['scenes']} scene(s) have already been written; redoing the plan would orphan them. Tick 'Also discard the written scenes' "
+                             "(command line: --discard-prose), or write them again first (`rewrite`). Their text stays in the series history")
+    if written["scenes"] and written["own"] and not force:
+        raise BookforgeError(f"{written['own']} scene(s) contain text you wrote yourself. Tick 'Also discard text I wrote myself' (command line: --force) to include them")
     if downstream and not cascade:
         raise BookforgeError(f"redoing '{layer}' also resets {', '.join(downstream)}, which were built on it. Confirm that (--cascade) or redo a later layer instead")
+    discarded = 0
+    if written["scenes"]:  # one action: reset the written scenes (committed first, so the text stays in history), then redo the plan
+        if project.config.git.commit_each_step:
+            vcs.commit(project.root, f"{project.book}: before discarding {written['scenes']} written scene(s) (everything as it was)")
+        if bible_store.scenes_path(project).exists():
+            discarded = len(rewrite_scenes(project, ["all"], force=force)["reset"])
+        for d in project.book_dir.glob("scenes/*/*"):  # text left over from a plan that no longer lists these scenes
+            if d.is_dir():
+                for f in list(d.glob("draft-*.md")) + [d / n for n in SCENE_FILES]:
+                    f.unlink(missing_ok=True)
+    if project.state.layers["prose"].status != "pending":
+        project.state.set_layer_status("prose", "pending", None)  # nothing is left written: the prose layer starts over with the new plan
     reset = [layer] + downstream
     from . import versions
     versions.keep(project, [f for l in reset for f in versions.layer_files(project, l)], f"before-redo-{layer}")  # a copy you can restore from the dashboard
@@ -407,7 +438,7 @@ def redo_layer(project: Project, layer: str, note: str = "", cascade: bool = Fal
     project.save_state()
     if project.config.git.commit_each_step:
         vcs.commit(project.root, f"{project.book}: redo {layer}" + (" with a note" if note.strip() else ""))
-    return {"layer": layer, "reset": reset, "note": bool(note.strip()), "archived": archived}
+    return {"layer": layer, "reset": reset, "note": bool(note.strip()), "archived": archived, "scenes_discarded": discarded}
 
 
 def decide_change(project: Project, cr_id: str, approve: bool | None, dismiss: bool = False) -> change_requests.ChangeRequest:
@@ -488,6 +519,8 @@ def rewrite_scenes(project: Project, targets: list[str], force: bool = False, re
         bible_store.save_tracks(project, tracks)
         if project.state.layers["prose"].status == "accepted":
             project.state.layers["prose"].status = "drafted"
+        if all(project.state.items.get(s.id, Item()).status == "pending" for s in bible_store.load_scenes(project)):
+            project.state.layers["prose"].status = "pending"  # nothing is written any more
         chapters = bible_store.load_chapters(project) if bible_store.chapters_path(project).exists() else []
         first = chapters[0].id if chapters else None
         first_scenes = {s.id for s in bible_store.load_scenes(project) if s.chapter == first}
