@@ -77,7 +77,7 @@ scenes:
       - She reads her own name and runs.
     end_state: Anna has the ledger and is on the street; Jonas does not know she has seen it.
     research: []
-    days_later: 0
+    days_later: <0 if it follows the scene before it on the same day, 1 for the next day, and so on>
     time: evening
     date: ""            # optional
     flashback: false    # optional

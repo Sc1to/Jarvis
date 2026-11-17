@@ -375,3 +375,21 @@ def test_the_suggestion_job_says_which_open_items_it_has_nothing_to_suggest_for(
     put_findings(book, "chapters", [finding("chapters", "end_state_overreach", ["b2.ch16", "e22"])])
     job = finish(data(client.post(f"{B}/inbox/propose"), 202))
     assert job["status"] == "done" and job["result"]["proposals"] == 0 and job["result"]["no_suggestion"] == {"end_state_overreach": 1}
+
+
+def test_thirty_six_findings_of_one_cause_are_one_item_that_answering_or_dismissing_settles_together(book):
+    seed(book)
+    many = [finding("scenes", "pov_not_in_text", [f"b2.ch{i:02d}.s1", "eli"], message="pov slip") for i in range(1, 7)] + [finding("scenes", "state_regression", ["other-track", "b2.ch03.s1"])]
+    put_findings(book, "scenes", many)
+    got = data(client.get(f"{B}/inbox"))
+    items = [i for i in got["items"] if i["stage"] == "scenes"]
+    assert len(items) == 7  # six different scenes: nothing in common to group by
+    same = [finding("scenes", "state_regression", ["containment-seal-status", f"b2.ch{i:02d}.s1"], message="goes back") for i in range(11, 15)] + [finding("scenes", "state_regression", ["data-drive", "b2.ch15.s1"])]
+    put_findings(book, "scenes", same)
+    got = data(client.get(f"{B}/inbox"))
+    items = got["items"]
+    lead = next(i for i in items if i.get("group"))
+    assert lead["group"]["count"] == 4 and "and 3 more like it" in lead["title"] and len(items) == 2 and got["summary"]["open"] == 2
+    data(client.post(f"{B}/inbox/dismiss", json={"id": lead["id"], "reason": "the seal is breached and hardened on purpose"}))
+    after = data(client.get(f"{B}/inbox"))
+    assert [i["status"] for i in after["items"] if i["status"] == "open"] == ["open"]  # only the other track's item is left

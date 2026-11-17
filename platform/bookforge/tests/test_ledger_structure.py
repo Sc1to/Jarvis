@@ -222,7 +222,7 @@ def test_a_whole_book_scene_failure_plans_only_the_chapters_it_names_again(proje
 
     def action_once(scenes, chapters, names=frozenset(), stage="scenes"):
         state["n"] += 1
-        return [F.hard("scenes", "action_pattern_repeated", "the same action recurs", ["b1.ch02", "b1.ch03.s1"])] if state["n"] == 1 else []
+        return [F.hard("scenes", "chapter_event_not_in_scenes", "an event is shown in no scene", ["b1.ch02", "b1.ch03.s1"])] if state["n"] == 1 else []
 
     monkeypatch.setattr(repeats, "action_patterns", action_once)
     first = run(p, RuleLLM(rules()), HANDLERS, until="scenes")
@@ -382,3 +382,21 @@ def test_a_flat_stretch_is_fixed_by_the_whole_book_check_or_kept_as_a_warning_wh
     warn = [f for f in saved["findings"] if f["code"] == "flat_tension"]
     assert warn and all(f["severity"] == "soft" and "kept as a warning" in f["message"] for f in warn)
     assert [c.tension for c in flat2] == [9, 9, 9, 9]  # the saved ratings were not touched
+
+
+def test_the_b2_shape_all_scenes_on_day_one_in_different_places_no_longer_stops_the_scenes_stage(project):
+    """46 blocking items came from this: every scene on day 1, morning, in different settings, and a track that goes back to an earlier state."""
+    from bookforge.layers.runner import StepContext
+    from bookforge.layers.structure import _book_scene_checks
+    p = project_ready(project)
+    run(p, RuleLLM(rules()), HANDLERS, until="scenes")
+    chapters_, scenes_, tracks_ = store.load_chapters(p), store.load_scenes(p), store.load_tracks(p)
+    timeline = [t.model_copy(update={"day": 1, "time": "morning"}) for t in store.load_timeline(p)]
+    for i, s in enumerate(scenes_):
+        s.setting = ["harbor", "vestry", "quay", "cockpit"][i % 4]
+    rel = _book_scene_checks(p, chapters_, scenes_, timeline, tracks_, store.load_constants(p), store.load_ledger(p), StepContext(project=p, layer="scenes", llm=RuleLLM([])))
+    saved = json.loads((p.root / rel).read_text())["findings"]
+    assert not any(f["code"] == "two_places_at_once" for f in saved)  # scenes are a sequence: no conflict between them
+    flat = [f for f in saved if f["code"] == "timeline_flat"]
+    assert flat and all(f["severity"] == "soft" and "kept as a warning" in f["message"] for f in flat)  # reported, and the run goes on
+    assert not any(f["severity"] == "hard" for f in saved)

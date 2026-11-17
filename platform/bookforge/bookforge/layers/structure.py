@@ -486,8 +486,9 @@ def _book_chapter_checks(project, chapters: list[Chapter], ledger, ctx=None) -> 
                 healing.note(project, "chapters", key, notes)
         if fixed or fixed_retold or fixed_flat:
             findings = compute()
-        if ctx.llm is not None and project.config.qc.warn_unfixable:  # tried, and still there: a warning in the stage checks, not a stop
-            findings = overreach_fix.demote_unfixable(findings)
+    if ctx is not None and ctx.llm is not None and project.config.qc.warn_unfixable:  # tried (or nothing to try), and still there: only a structural finding stops
+        from ..qc import overreach_fix
+        findings = overreach_fix.demote_unfixable(findings)
     rel = findings_store.save(project, "chapters", findings)
     hard_left = [f.line() for f in findings if f.severity == HARD]
     if hard_left:
@@ -526,32 +527,42 @@ def _book_scene_checks(project, chapters: list[Chapter], scenes_all: list, timel
     from ..validators import HARD, accepted, ledger as ledger_checks, names as name_checks, repeats, research_leak, state as state_checks, store as findings_store
     from ..qc.repeat_confirm import confirm_repeats
     ch = [c.model_dump() for c in chapters]
-    tl = [t.model_dump() for t in timeline]
     ev = [e.model_dump() for e in ledger.events]
     names = {e.id for e in constants.entities} | {w.lower() for e in constants.entities if e.kind == "character" for w in e.name.split()}
     claims = [f.claim for s in stores_for(project).values() for f in s.facts()]
     story_texts = [_read(project, f"books/{project.book}/synopsis.md"), _read(project, "north-star.md"), _read(project, f"books/{project.book}/north-star.md"),
                    " ".join(e.text for e in ledger.events), " ".join(" ".join(e.facts) + " " + e.name for e in constants.entities)]
+    from ..bible import normalize as _normalize
+    caused = _normalize.attach_return_causes(tracks, scenes_all, chapters)  # a track that goes back to an earlier value gets the scene's purpose as its cause
+    if caused:
+        healing.note(project, "scenes", "causes", caused)
     tracks_plain = [to_plain(t) for t in tracks]
 
     def compute() -> list:
         sc = [s.model_dump() for s in scenes_all]
+        tl = [t.model_dump() for t in timeline]
         found = (ledger_checks.check_scenes_vs_chapters(sc, ch, ev) + ledger_checks.check_scene_texts(sc, ch, ev) + repeats.repeated_events(ch, sc, names, ev, stage="scenes")
                  + repeats.action_patterns(sc, ch, names) + research_leak.research_in_beats(sc, claims, story_texts)
                  + state_checks.track_regressions(tracks_plain) + state_checks.location_conflicts(sc, tl, tracks_plain) + state_checks.day_regressions(sc, tl)
+                 + state_checks.timeline_flat(tl)
                  + name_checks.pov_findings(sc, constants, "scenes", ("purpose",)) + name_checks.unknown_names(sc, constants, "scenes", ("purpose",)))
         return accepted.apply(project, confirm_repeats(ctx, found), "scenes")
 
     findings = compute()
-    retold = [f for f in findings if f.code in ("scene_retells_event", "scene_repeats_scene") and f.severity == HARD and not f.accepted]
-    if retold and ctx is not None:  # a scene that retells what is told elsewhere: its wording is corrected, once, in a narrow call, instead of asking you
+    retold = [f for f in findings if f.code in ("scene_retells_event", "scene_repeats_scene", "event_repeated") and f.severity == HARD and not f.accepted]
+    flat = [f for f in findings if f.code == "timeline_flat" and f.severity == HARD and not f.accepted]
+    if (retold or flat) and ctx is not None:  # a scene that retells what is told elsewhere, or a timeline with no time in it: corrected, once, in a narrow call
         from ..qc import overreach_fix
-        fixed = overreach_fix.fix_scene_retells(ctx, scenes_all, chapters, ev, retold)
-        if fixed:
-            healing.note(project, "scenes", "retold", fixed)
+        fixed = overreach_fix.fix_scene_retells(ctx, scenes_all, chapters, ev, retold) if retold else []
+        fixed_days = overreach_fix.fix_timeline(ctx, scenes_all, timeline, flat) if flat else []
+        for key, notes in (("retold", fixed), ("timeline", fixed_days)):
+            if notes:
+                healing.note(project, "scenes", key, notes)
+        if fixed or fixed_days:
             findings = compute()
-        if ctx.llm is not None and project.config.qc.warn_unfixable:  # tried, and still there: a warning in the stage checks, not a stop
-            findings = overreach_fix.demote_unfixable(findings)
+    if ctx is not None and ctx.llm is not None and project.config.qc.warn_unfixable:  # tried (or nothing to try), and still there: only a structural finding stops
+        from ..qc import overreach_fix
+        findings = overreach_fix.demote_unfixable(findings)
     rel = findings_store.save(project, "scenes", findings)
     hard_left = [f.line() for f in findings if f.severity == HARD]
     if hard_left:

@@ -120,11 +120,43 @@ def collect(project, include_done: bool = True) -> list[dict]:
         group = [it for it in items if it["stage"] == "acts" and it["kind"] == "finding" and it["status"] == "open" and it.get("code") in STALE_ACTS_CODES]
         items = [it for it in items if it not in group]
         items.insert(0, _stale_acts_item(project, stale, group))
+    items = _group(items)  # one cause is one item, not thirty-six
     if not include_done:
         items = [it for it in items if it["status"] == "open"]
     order = {s: i for i, s in enumerate(STAGES)}
     items.sort(key=lambda it: (not it["blocking"], it["status"] != "open", order.get(it["stage"], 9), it["id"]))
     return items
+
+
+GROUP_MIN = 3
+
+
+def _group(items: list[dict]) -> list[dict]:
+    """Open findings of one code about one subject (the same scene, track or chapter first in their items) are ONE item: the first stays, carrying
+    `group` (how many, and the items of each, so answering or dismissing it settles them all), the others are not listed. Findings that are
+    already handled, the stale-acts item and questions are left alone."""
+    buckets: dict[tuple, list[dict]] = {}
+    for it in items:
+        if it["kind"] == "finding" and it["status"] == "open" and it.get("items") and it.get("code") not in ("acts_stale",):
+            buckets.setdefault((it["stage"], it["code"], it["items"][0]), []).append(it)
+    drop: set[int] = set()
+    for members in buckets.values():
+        if len(members) < GROUP_MIN:
+            continue
+        lead = members[0]
+        lead["group"] = {"count": len(members), "members": [{"id": m["id"], "items": list(m["items"])} for m in members]}
+        lead["title"] = f"{lead['title']}  (and {len(members) - 1} more like it, about {lead['items'][0]})"
+        lead["blocking"] = any(m["blocking"] for m in members)
+        drop |= {id(m) for m in members[1:]}
+    return [it for it in items if id(it) not in drop]
+
+
+def group_members(project, item_id: str) -> list[dict]:
+    """Every finding an item stands for: itself, or all the findings of its group (each {id, items})."""
+    for it in collect(project, include_done=False):
+        if it["id"] == item_id and it.get("group"):
+            return list(it["group"]["members"])
+    return []
 
 
 def answered_path(project):

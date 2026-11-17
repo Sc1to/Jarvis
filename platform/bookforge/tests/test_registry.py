@@ -37,7 +37,7 @@ def test_every_code_the_source_can_raise_has_a_class_and_every_class_is_for_a_co
 
 def test_a_structural_code_says_how_it_becomes_impossible_and_the_classes_are_known():
     for s in R.SPECS.values():
-        assert s.klass in (R.STRUCTURAL, R.WORDING, R.RATING, R.DECISION, R.INFO) and s.stage
+        assert s.klass in (R.STRUCTURAL, R.WORDING, R.RATING, R.DECISION, R.ADVISORY, R.INFO) and s.stage
         if s.klass == R.STRUCTURAL:
             assert s.planned == "done" or s.planned.startswith("A1#") or s.note, f"{s.code}: structural without a plan row"
     assert R.klass("event_not_covered") == R.STRUCTURAL and R.klass("end_state_overreach") == R.WORDING and R.klass("nope") is None
