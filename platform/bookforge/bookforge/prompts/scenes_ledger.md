@@ -59,7 +59,7 @@ Plan the scenes of this chapter, {first_scene} onward: as many as the chapter's 
 - when it happens: `days_later`, how many days after the scene before it happens (0 = the same day; a whole number, never negative), the time of day, and optionally a calendar date and a travel note. A flashback sets `flashback: true` and gives the absolute story `day` instead;
 - research: ids of research notes it relies on, if any. Research notes are reference for accuracy and texture only: never turn one into a beat, an obstacle or a plot device.
 
-Then restate the state tracks listed above at scene level: every state planned for this chapter must appear again, attached to the scene where it takes effect (the from field is now a scene id). Keep every state and every must_show flag; you may sharpen the wording. A must_show state belongs to the scene where it is seen on the page. You may add new entries to a track, and new tracks, when the scenes need them. A state that returns to an earlier value needs a `cause`.
+The state tracks listed above are already planned for the chapter as a whole. Write a state INSIDE the scene where it takes effect or is seen on the page, under `states` (never write scene ids for it): give the `track` id and the state, you may sharpen the wording, and keep must_show: true for a state that must be seen. A track you do not mention here stays as planned and the tool attaches it to a scene. You may add states for new tracks (give `entity` and `kind` the first time). A state that returns to an earlier value needs no `cause`: the tool writes it.
 
 ## Format
 
@@ -76,18 +76,16 @@ scenes:
       - Anna finds the ledger open on the desk.
       - She reads her own name and runs.
     end_state: Anna has the ledger and is on the street; Jonas does not know she has seen it.
+    states:             # optional: states that change or show in this scene
+      - track: anna-shoulder-wound
+        value: deep cut, left shoulder; bleeding
+        must_show: true
     research: []
     days_later: <0 if it follows the scene before it on the same day, 1 for the next day, and so on>
     time: evening
     date: ""            # optional
     flashback: false    # optional
     travel: ""          # optional
-tracks:
-  - id: anna-shoulder-wound
-    plan:
-      - from: {first_scene}   # the scene where the state takes effect: {first_scene}, s2, s3 ... in the order you wrote them
-        value: deep cut, left shoulder; bleeding
-        must_show: true
 ```
 
 Scene ids are consecutive: {first_scene}, then s2, s3 and so on (the tool numbers the scenes: do not write ids).

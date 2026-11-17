@@ -11,8 +11,8 @@ LOAD_BEARING = {
     "ledger": ["{synopsis}", "excerpt", "once_only", "ending", "Do not add plot, do not pad", "questions"],
     "ledger_revise": ["{answers}", "source: author", "exactly as it is"],
     "acts_ledger": ["{carried}", "{ledger_events}", "starts_with", "{starting_events}", "So every event belongs to exactly one act", "the tool works those out from the ledger"],
-    "chapters_ledger": ["events_continued", "{carried}", "{ledger_status}", "{story_so_far}", "{research_notes}", "starts_with", "end_state", "it says nothing about what comes after it", "derived_events", "never retell"],
-    "scenes_ledger": ["{carried}", "{ledger_status}", "{story_so_far}", "{research_notes}", "`starts_with`", "`end_state`", "from 1 to 4", "never turn one into a beat"],
+    "chapters_ledger": ["continues: true", "states", "{carried}", "{ledger_status}", "{story_so_far}", "{research_notes}", "starts_with", "end_state", "it says nothing about what comes after it", "derived_events", "never retell"],
+    "scenes_ledger": ["{carried}", "states", "{ledger_status}", "{story_so_far}", "{research_notes}", "`starts_with`", "`end_state`", "from 1 to 4", "never turn one into a beat"],
     "prose_system": ["Never end on a summary", "Never restate", "never become events"],
     "prose": ["do not restate or summarize it"],
 }

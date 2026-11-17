@@ -93,7 +93,8 @@ def normalize_acts(project, raw: list, ledger) -> tuple[list[str], list[str]]:
     return notes, []
 
 
-def normalize_chapters(project, data, raw: list, act, ledger, first_number: int) -> tuple[list, list[str], list[str]]:
+def normalize_chapters(project, data, raw: list, act, ledger, first_number: int, previous_last: str | None = None,
+                       previous_continued: list[str] | None = None) -> tuple[list, list[str], list[str]]:
     """(chapters, notes, problems). `problems` is only ever about `starts_with` (a start the act does not own, or one that goes backwards): that is the
     model's pick and goes back to it alone. With no ledger the reply is left as it is."""
     if ledger is None:
@@ -102,8 +103,12 @@ def normalize_chapters(project, data, raw: list, act, ledger, first_number: int)
     problems = partition.assign(raw, partition.act_order(ledger.events, act.events, declared if isinstance(declared, list) else None))  # events cut at each starts_with
     if problems:
         return raw, [], problems
+    problems, cont_notes = partition.apply_continues(raw, {e.id: int(e.weight) for e in ledger.events}, previous_last, previous_continued)
+    if problems:
+        return raw, [], problems
     mine = list(act.events) + [e.id for e in ledger.events if e.parent and e.parent in act.events]
     notes = repair.repair_chapters(raw, data.get("tracks") if isinstance(data, dict) else None, [e.model_dump() for e in ledger.events], mine, project.book, first_number)
+    notes = cont_notes + notes
     _note(project, "chapters", act.id, notes)
     return drop_empty_tail(raw), notes, []
 
@@ -171,4 +176,84 @@ def attach_return_causes(tracks: list, scenes: list, chapters: list) -> list[str
             if why:
                 plan[k].cause = why
                 notes.append(f"track {t.id} returns to an earlier state at {plan[k].from_}; its cause is the scene's purpose: {why}")
+    return notes
+
+
+# ── state tracks nested in the chapter or scene they belong to ───────────────
+
+def states_shape(raw: list) -> bool:
+    """The reply is in the new shape as soon as one chapter or scene has a `states` list."""
+    return any(isinstance(x, dict) and "states" in x for x in raw)
+
+
+def pivot_states(data, raw: list, hosts: list[str], keep_old: bool = True) -> list[str]:
+    """States nested in the chapters or scenes (`states: [{track, value, must_show, cause}]`) become the tracks the rest of the pipeline reads, with each
+    entry's `from` set to the id of the chapter or scene it sits in: a position is never written by the model, so a misspelt, foreign or doubled `from`
+    cannot exist. A track's first use gives `entity` and `kind`; later uses give only its id. `data["tracks"]` is replaced (a reply that has both is read by
+    `states` alone). Returns notes. A reply with no `states` anywhere is left as it is (older files)."""
+    if not isinstance(data, dict) or not states_shape(raw):
+        return []
+    tracks: dict[str, dict] = {}
+    for item, host in zip(raw, hosts):
+        if not isinstance(item, dict):
+            continue
+        for st in item.pop("states", None) or []:
+            if not isinstance(st, dict):
+                continue
+            tid = str(st.get("track") or st.get("id") or "").strip()
+            if not tid:
+                continue
+            t = tracks.setdefault(tid, {"id": tid, "plan": []})
+            for k in ("entity", "kind"):
+                if st.get(k) and not t.get(k):
+                    t[k] = st[k]
+            entry = {"from": host, "value": st.get("value", st.get("state", "")), "must_show": bool(st.get("must_show", False))}
+            if st.get("cause"):
+                entry["cause"] = st["cause"]
+            t["plan"] = [e for e in t["plan"] if e["from"] != host] + [entry]  # one state per track per place: the later wins
+    data["tracks"] = list(tracks.values())
+    return []
+
+
+def _score(text: str, entity: str, name: str) -> int:
+    low = text.lower()
+    words = {w for w in entity.lower().replace("-", " ").split() if len(w) > 2} | {w for w in name.lower().split() if len(w) > 2}
+    return sum(low.count(w) for w in words)
+
+
+def claim_chapter_states(data, scenes_raw: list, scene_ids: list[str], chapter_id: str, tracks_so_far: list, entities: dict) -> list[str]:
+    """Scene level, by construction: every state planned for this chapter that no scene restates is attached to a scene by the tool, so the model can
+    never drop one or lose a must_show flag. A scene that restates a track keeps its own wording and inherits must_show from the chapter's state when it
+    gives none. A state nobody claims goes to the scene whose text mentions the track's owner most (the first on a tie). Returns notes."""
+    if not isinstance(data, dict) or not scene_ids:
+        return []
+    book_ch = chapter_id
+    given = {t["id"]: t for t in data.get("tracks") or [] if isinstance(t, dict) and t.get("id")}
+    notes: list[str] = []
+    for t in tracks_so_far:
+        old = [e for e in t.plan if e.from_ == book_ch or e.from_.startswith(book_ch + ".")]
+        if not old:
+            continue
+        mine = given.get(t.id)
+        if mine is None:
+            mine = {"id": t.id, "plan": []}
+            data.setdefault("tracks", []).append(mine)
+            given[t.id] = mine
+        have = mine.setdefault("plan", [])
+        must = any(e.must_show for e in old)
+        if have:
+            if must and not any(bool(e.get("must_show")) for e in have):
+                have[0]["must_show"] = True
+            continue
+        ent = entities.get(t.entity)
+        name = getattr(ent, "name", "") if ent is not None else ""
+        best, best_score = 0, -1
+        for i, sc in enumerate(scenes_raw):
+            text = " ".join([str(sc.get("purpose", "")), " ".join(str(b) for b in sc.get("beats") or [])]) if isinstance(sc, dict) else ""
+            s = _score(text, t.entity, name)
+            if s > best_score:
+                best, best_score = i, s
+        for e in old:
+            have.append({"from": scene_ids[best if must else 0], "value": e.value, "must_show": e.must_show, **({"cause": e.cause} if e.cause else {})})
+        notes.append(f"track {t.id} was not restated in {book_ch}'s scenes; its planned state is attached to {scene_ids[best if must else 0]}")
     return notes
