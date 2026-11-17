@@ -326,4 +326,6 @@ def test_a_judge_that_fails_is_unknown_not_a_loss(book, monkeypatch):
 def test_the_report_says_what_the_plan_comes_to_and_beside_it_the_target(full):
     from bookforge import report
     text = report.build_report(full)
-    assert "The plan comes to about" in text and "the book's target is 90000" in text
+    assert "The plan comes to about" in text
+    # the target is named beside the plan unless the author fixed the scene length (then the plan is not measured against it)
+    assert ("the book's target is 90000" in text) == (not full.config.layers["prose"].words)
