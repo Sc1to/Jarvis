@@ -181,8 +181,8 @@ def test_questions_already_asked_are_not_asked_again(project):
 def test_pages_already_read_are_not_read_again(project):
     first = list(GOOD_RULES)
     run(project, RuleLLM(first), web())
-    new_q = ("Decide what the author needs", questions(("A different question about clavicles?", "clavicle healing", False)))
-    web2 = web()
+    new_q = ("Decide what the author needs", questions(("What did surgeons advise patients about mending bones?", "bone mending advice", False)))
+    web2 = web(searches={"bone mending advice": "results"}, links={"bone mending advice": [ddg(URL_A)]})
     outcome = run(project, RuleLLM([new_q, GOOD_RULES[1]]), web2)
     assert ("fetch", URL_A) not in web2.calls
     assert outcome.answered == 0 and "already read" in outcome.failures[0]

@@ -579,6 +579,6 @@ def test_an_audit_that_cannot_be_done_keeps_the_facts(project):
 
 def test_the_question_prompt_asks_for_institutions_and_practices_and_for_inventions_as_such():
     from bookforge.prompts import render
-    text = render("research_questions", None, layer_focus="f", document="d", max_questions="5", research_notes="n", language="en", realism="r")
+    text = render("research_questions", None, layer_focus="f", document="d", max_questions="5", research_notes="n", existing_needs="none yet", language="en", realism="r")
     assert "Broaden a narrow question to the institution or practice around it" in text
     assert "that is \"invent\"" in text

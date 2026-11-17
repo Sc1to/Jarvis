@@ -127,7 +127,7 @@ class Research(_Strict):
     check_support: bool = True  # an audit: drop a fact whose claim says more than its quote (one small call per page with facts)
     notes_max_chars: int = Field(6000, gt=0)  # research notes included in a prompt
     page_max_chars: int = Field(12000, gt=0)  # page text given to the model (the parts of a long page that mention the question)
-    scene_questions: int = Field(2, ge=0)  # questions researched per chapter before its scenes are planned (0 = none)
+    scene_questions: int = Field(1, ge=0)  # questions researched per chapter before its scenes are planned (0 = none)
 
 
 class BookSettings(_Strict):

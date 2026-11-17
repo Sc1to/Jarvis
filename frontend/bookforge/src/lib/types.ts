@@ -56,6 +56,12 @@ export interface Need {
   reason: string; rule: string; query: string; context: string; sensitive: boolean
   status: 'proposed' | 'approved' | 'rejected'; fact_ids: string[]; decided_by: string
   applies_to: string[]  // chapter or scene ids; empty = the whole book
+  topic?: string; merged_into?: string; merged_from?: string[]
+}
+
+export interface NeedTopics {
+  groups: { scope: string; topic: string; ids: string[]; questions: string[] }[]
+  disagreements: { a: { id: string; rule: string }; b: { id: string; rule: string }; text: string; options: { id: string; label: string; recommended?: boolean }[] }[]
 }
 
 export interface SceneDetail {

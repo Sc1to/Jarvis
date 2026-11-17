@@ -20,6 +20,7 @@ from .hits import Hit, search_hits
 from .wikipedia import wiki_title
 from ..realism import realism_setting
 from .notes import LOOKUP_STANCES, STANCES, QuestionRecord, normalize_question, notes_for_prompt, stores_for
+from . import topics
 
 log = logging.getLogger("platform_bookforge.research")
 
@@ -99,6 +100,7 @@ def generate_questions(ctx, already_answered: set[str], focus: str, document: st
         "research_questions", ctx.project.root,
         layer_focus=focus, document=document[:DOCUMENT_CHARS], max_questions=str(max_questions),
         research_notes=notes_for_prompt(ctx.project, cfg.research.notes_max_chars),
+        existing_needs=topics.existing_text([n for st in stores_for(ctx.project).values() for n in st.live_needs()]),
         language=cfg.book.language,
         realism=(realism if realism is not None else realism_setting(ctx.project)) or "not stated: take it from the premise and the genre",
     )
@@ -501,9 +503,18 @@ def run_research(ctx, scope: str, focus: str, document: str, max_questions: int 
     seen_urls = set().union(*(s.known_urls() for s in all_stores.values()))
     today = datetime.now(timezone.utc).date().isoformat()
     for q in questions:
+        # One topic, one decision: a question on a topic that already has a need (waiting, approved or rejected) adds this place to it.
+        current = [n for st in all_stores.values() for n in st.live_needs() if n.rule or n.fact_ids or n.stance not in LOOKUP_STANCES]  # a lookup that found nothing is retried
+        same = topics.find_existing(current, q.question, q.query)
+        if same is not None:
+            same.applies_to = topics.widen_scope(same.applies_to, list(applies_to or []))
+            same.topic = same.topic or topics.topic_key(topics.need_stems(same))
+            next(st for st in all_stores.values() if any(x.id == same.id for x in st.needs())).save_need(same)
+            continue
+        q_topic = topics.topic_key(topics.topic_stems(q.question, q.query))
         if q.stance == "invent":  # nothing to look up: the proposed rule waits for the author
             store.add_need(layer=ctx.layer, question=q.question, stance=q.stance, reason=q.reason, rule=q.rule,
-                           context=q.context, sensitive=q.sensitive, status="proposed", applies_to=list(applies_to or []))
+                           context=q.context, sensitive=q.sensitive, status="proposed", applies_to=list(applies_to or []), topic=q_topic)
             outcome.decisions += 1
             continue
         outcome.asked += 1
@@ -526,10 +537,13 @@ def run_research(ctx, scope: str, focus: str, document: str, max_questions: int 
         decision = q.stance != "ground"  # a lookup is automatic; an assumption or deviation is the author's to approve
         store.add_need(layer=ctx.layer, question=q.question, stance=q.stance, reason=q.reason, rule=q.rule, query=q.query,
                        context=q.context, sensitive=q.sensitive, fact_ids=fact_ids, applies_to=list(applies_to or []),
-                       status="proposed" if decision and q.rule else "approved", decided_by="" if decision and q.rule else "auto")
+                       status="proposed" if decision and q.rule else "approved", decided_by="" if decision and q.rule else "auto", topic=q_topic)
         if decision and q.rule:
             outcome.decisions += 1
 
+    if outcome.decisions:
+        from .consolidate import settle_minor
+        outcome.decisions -= len(settle_minor(project))  # the book's policy decided the minor ones; only the rest wait for you
     if outcome.asked or outcome.decisions:
         outcome.files = [store.rel(store.sources_path), store.rel(store.questions_path), store.rel(store.needs_path),
                          store.rel(store.write_notes(ctx.layer))]

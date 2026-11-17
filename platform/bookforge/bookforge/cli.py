@@ -700,10 +700,29 @@ def needs_cmd(
     rule: Optional[str] = typer.Option(None, "--rule", help="The rule, assumption or deviation, in your words"),
     applies_to: Optional[list[str]] = typer.Option(None, "--applies-to", help="Chapters or scenes it applies to, like b1.ch03 or b1.ch03.s2 (repeat the option); 'all' for the whole book"),
     show_all: bool = typer.Option(False, "--all", help="Also list lookups that need no decision"),
+    consolidate: bool = typer.Option(False, "--consolidate", help="Merge the needs about one topic into one (preview unless --apply)"),
+    apply: bool = typer.Option(False, "--apply", help="With --consolidate: do the merge (the earlier needs file is kept; --unmerge ID takes it back)"),
+    unmerge: Optional[str] = typer.Option(None, "--unmerge", help="Take back a merge: the id of the merged need"),
 ) -> None:
     """List what the story needs to know or decide, and approve, reject or edit a proposed rule, assumption or deviation."""
     try:
         project = Project.open(path, book)
+        if unmerge:
+            typer.echo("restored: " + ", ".join(ops.undo_consolidation(project, unmerge)))
+            return
+        if consolidate:
+            res = ops.consolidate_needs(project, build_client(project) if apply else None, apply=apply)
+            if apply:
+                typer.echo(f"{res['before']} needs became {res['after']} ({len(res['merged'])} topics merged)")
+                for m in res["merged"]:
+                    typer.echo(f"{m['id']} <- {', '.join(m['from'])}")
+            else:
+                for g in res["groups"]:
+                    typer.echo(f"{g['topic']}: {len(g['ids'])} needs ({', '.join(g['ids'])})")
+                for d in res["disagreements"]:
+                    typer.echo(d["text"])
+                typer.echo(f"{len(res['groups'])} topic(s) would be merged; add --apply to do it")
+            return
         target = approve_id or reject_id or edit_id
         decided = None
         if target:
