@@ -108,7 +108,7 @@ def normalize_chapters(project, data, raw: list, act, ledger, first_number: int,
         return raw, [], problems
     mine = list(act.events) + [e.id for e in ledger.events if e.parent and e.parent in act.events]
     notes = repair.repair_chapters(raw, data.get("tracks") if isinstance(data, dict) else None, [e.model_dump() for e in ledger.events], mine, project.book, first_number)
-    notes = cont_notes + notes
+    notes = cont_notes + notes + scrub_ids(raw, [e.id for e in ledger.events], ("purpose", "summary", "end_state"))
     _note(project, "chapters", act.id, notes)
     return drop_empty_tail(raw), notes, []
 
@@ -124,6 +124,7 @@ def normalize_scenes(project, data, raw: list, chapter, ledger) -> tuple[list[st
     notes = repair.repair_scenes(raw, data.get("tracks") if isinstance(data, dict) else None, list(chapter.events_covered),
                                  list(chapter.events_covered) + list(chapter.events_continued), [e.model_dump() for e in ledger.events], project.book,
                                  parse_position(chapter.id).chapter)
+    notes += scrub_ids(raw, [e.id for e in ledger.events], ("purpose", "beats", "end_state"))  # event ids never belong in the text
     _note(project, "scenes", chapter.id, notes)
     return notes, []
 
@@ -256,4 +257,36 @@ def claim_chapter_states(data, scenes_raw: list, scene_ids: list[str], chapter_i
         for e in old:
             have.append({"from": scene_ids[best if must else 0], "value": e.value, "must_show": e.must_show, **({"cause": e.cause} if e.cause else {})})
         notes.append(f"track {t.id} was not restated in {book_ch}'s scenes; its planned state is attached to {scene_ids[best if must else 0]}")
+    return notes
+
+
+_ID_PHRASES = None
+
+
+def scrub_ids(items: list, event_ids, keys: tuple[str, ...]) -> list[str]:
+    """Event ids are the tool's bookkeeping, never part of what the story says: 'as per event e17', '(e4)' or a bare 'e12' in a purpose, beat or summary
+    is taken out of the text. Returns one note per text changed."""
+    import re
+    ids = sorted({str(i) for i in event_ids}, key=len, reverse=True)
+    if not ids:
+        return []
+    alt = "|".join(re.escape(i) for i in ids)
+    cite = re.compile(rf"\s*[(\[]\s*(?:events?\s+)?(?:{alt})(?:\s*,\s*(?:{alt}))*\s*[)\]]|,?\s*\b(?:as\s+per|per|see|from|in|of)\s+events?\s+(?:{alt})\b|\bevents?\s+(?:{alt})\b|\b(?:{alt})\b", re.I)
+    notes: list[str] = []
+
+    def clean(text: str) -> str:
+        out = cite.sub("", text)
+        return re.sub(r"\s{2,}", " ", re.sub(r"\s+([,.;:])", r"\1", out)).strip()
+
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        for k in keys:
+            v = it.get(k)
+            if isinstance(v, str) and cite.search(v):
+                it[k] = clean(v)
+                notes.append(f"{it.get('id') or 'an item'}: an event id was taken out of its {k}")
+            elif isinstance(v, list) and any(isinstance(x, str) and cite.search(x) for x in v):
+                it[k] = [clean(x) if isinstance(x, str) else x for x in v]
+                notes.append(f"{it.get('id') or 'an item'}: an event id was taken out of its {k}")
     return notes

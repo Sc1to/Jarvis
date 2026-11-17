@@ -380,3 +380,51 @@ def fix_timeline(ctx, scenes: list, timeline: list, findings: list) -> list[str]
         log.info("flat timeline not fixed (the new days are still flat)")
         return []
     return [f"the story days of the scenes were set again from what happens in them (day 1 to day {max(by_id[i].day for i in ids)}); the check passes"]
+
+
+def _check_scene_overreach(original: tuple[str, list[str], str]):
+    base = _check_scene((original[0], original[1]))
+
+    def check(data: dict) -> list[str]:
+        out = base(data)
+        if not isinstance(data.get("end_state"), str) or not data["end_state"].strip():
+            out.append('the reply must also have a non-empty "end_state"')
+        return out
+    return check
+
+
+def fix_scene_overreach(ctx, scenes: list, chapters: list, events: list[dict], findings: list) -> list[str]:
+    """A scene whose purpose, beats or end_state report the outcome of an event a later scene or chapter tells has those three texts rewritten in one
+    narrow call; kept only if the check then no longer finds it (never on a scene you wrote yourself: these are plan texts, not prose)."""
+    project = ctx.project
+    if ctx.llm is None or not project.config.qc.fix_overreach:
+        return []
+    by_id = {s.id: s for s in scenes}
+    by_event = {e["id"]: e for e in events}
+    notes: list[str] = []
+    done: set[str] = set()
+    for f in findings[:MAX_FIXES]:
+        if f.severity != HARD or f.accepted or f.code != "end_state_overreach" or f.stage != "scenes" or len(f.items) < 2:
+            continue
+        sid, ev_id = f.items[0], f.items[1]
+        sc, ev = by_id.get(sid), by_event.get(ev_id)
+        if sc is None or ev is None or sid in done:
+            continue
+        old = (sc.purpose, list(sc.beats), sc.end_state)
+        quote = next((t for t in f.evidence if t.startswith("chapter:")), "")[len("chapter:"):].strip()
+        try:
+            data = ask_json(ctx, f"fix scene overreach {sid}", project.config.layers["scenes"].model, "scene_overreach_fix", _check_scene_overreach(old), max_tokens=1400,
+                            purpose=sc.purpose, beats="\n".join(f"- {b}" for b in sc.beats), end_state=sc.end_state, event=f"{ev_id}: {ev['text']}", quote=quote)
+        except Exception as e:
+            log.info("%s: scene overreach not fixed (%s)", sid, e)
+            continue
+        sc.purpose, sc.beats, sc.end_state = data["purpose"].strip(), [b.strip() for b in data["beats"]], data["end_state"].strip()
+        plain = [x.model_dump() for x in scenes]
+        still = [x for x in state_claims.scene_end_state_overreach(plain, [c.model_dump() for c in chapters], events) if x.items[:2] == [sid, ev_id]]
+        if still:
+            sc.purpose, sc.beats, sc.end_state = old
+            log.info("%s: scene overreach not fixed (the check still finds it)", sid)
+            continue
+        done.add(sid)
+        notes.append(f"{sid}: its purpose, beats or end_state reported the outcome of {ev_id}, which a later scene or chapter tells; the wording was rewritten and the check passes")
+    return notes

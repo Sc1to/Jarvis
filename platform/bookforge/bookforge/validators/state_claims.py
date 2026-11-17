@@ -5,6 +5,8 @@ now public" share no words), so this compares the CHANGE OF STATE each text asse
 public, taken, killed, destroyed, agreed, gone), and two texts that name the same class and share an object describe the same change.
 Nothing here is about any one story: the classes are the ordinary results stories report."""
 
+from dataclasses import replace
+
 from .findings import Finding, hard, soft
 from .text import WORD, canon, content_stems, stem
 
@@ -15,6 +17,7 @@ _RESULT_CLASSES = {
     "DESTROYED": "destroy burn wreck demolish ruin shatter",
     "AGREED": "sign agree accept consent swear pledge",
     "GONE": "depart sail vanish disappear",
+    "BREACHED": "breach rupture pierce",
 }
 _RESULT = {stem(w): label for label, words in _RESULT_CLASSES.items() for w in words.split()}
 
@@ -99,4 +102,36 @@ def state_change_repeated(chapters: list[dict], events: list[dict], stage: str =
                     if xa != xb and same_change(sa, sb):
                         out.append(soft(stage, "state_change_repeated", f"{chapters[i]['id']} ({xa}) and {chapters[j]['id']} ({xb}) both bring about the same change ({', '.join(sorted(same_change(sa, sb)))}): check that the second is not the first again",
                                         [chapters[i]["id"], chapters[j]["id"], xa, xb], [f"{xa}: {by_id[xa]['text'][:160]}", f"{xb}: {by_id[xb]['text'][:160]}"]))
+    return out
+
+
+def scene_end_state_overreach(scenes: list[dict], chapters: list[dict], events: list[dict], stage: str = "scenes") -> list[Finding]:
+    """The scene-level twin: a scene's purpose, beats and end_state may report only what the events told so far (its own and earlier ones) bring about.
+    A scene is a unit that owns its events (a scene that only goes on with the one before it owns the same ones); the check is the chapter check run over
+    the scenes in story order, so the outcome of an event a LATER scene or chapter tells is caught where it is claimed too early."""
+    by_ch = {c["id"]: c for c in chapters}
+    units: list[dict] = []
+    prev_owned: set[str] = set()
+    last_chapter = None
+    for sc in scenes:
+        chapter = sc.get("chapter") or sc["id"].rsplit(".s", 1)[0]
+        own = set(sc.get("events") or [])
+        if chapter != last_chapter:
+            own |= set(by_ch.get(chapter, {}).get("events_continued") or [])
+            prev_owned = set()
+        owned = own or prev_owned  # a scene with no event of its own goes on with the scene before it
+        prev_owned = owned
+        last_chapter = chapter
+        units.append({"id": sc["id"], "events_covered": sorted(owned), "end_state": sc.get("end_state", ""),
+                      "summary": " ".join([str(sc.get("purpose", ""))] + [str(b) for b in sc.get("beats") or []])})
+    found = end_state_overreach(units, events, stage)
+    out = []
+    for f in found:
+        sid = f.items[0]
+        sc = next((x for x in scenes if x["id"] == sid), {})
+        quoted = f"scene: {sc.get('purpose', '')} {' '.join(str(b) for b in sc.get('beats') or [])} End: {sc.get('end_state', '')}"[:220]
+        ev_line = next((t for t in f.evidence if t.startswith("event ")), "")
+        text = (f.message.replace("summary or end_state", "purpose, beats or end_state").replace("a later chapter tells it", "a later scene or chapter tells it")
+                .replace("a chapter may claim", "a scene may claim").replace("a chapter about deciding", "a scene about deciding"))
+        out.append(replace(f, message=text, evidence=[f"chapter: {quoted[len('scene: '):]}", ev_line]))
     return out
