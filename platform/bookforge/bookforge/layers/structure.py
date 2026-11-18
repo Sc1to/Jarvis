@@ -364,7 +364,7 @@ def _build_chapters(ctx: StepContext, files: list[str]) -> str:
 
     from ..validators import ledger as ledger_checks
 
-    tracks = store.load_tracks(project)
+    tracks = store.tracks_without_book_plan(store.load_tracks(project), project.book)  # this plan starts from earlier layers and books, not from its own previous output
     ledger = store.active_ledger(project)
     done: list[Chapter] = []
     adopted: list[str] = []
@@ -423,6 +423,9 @@ def _build_chapters(ctx: StepContext, files: list[str]) -> str:
 
     if ledger is not None:  # the whole-book checks come BEFORE anything is saved: a failure leaves the files as they were, so a rerun starts clean
         files.append(_book_chapter_checks(project, done, ledger, ctx))
+    tracks, orphans = store.prune_orphan_entries(tracks, {c.id for c in done}, project.book)  # backstop: a state at a chapter that is not in the plan cannot be saved
+    if orphans:
+        healing.note(project, "chapters", "tracks", [f"{orphans} state(s) pointed at chapters that are not in the plan; they were removed"])
     with store.transaction([store.constants_path(project), store.tracks_path(project), store.chapters_path(project), store.ledger_path(project), store.acts_path(project)]):
         store.save_constants(project, constants)  # a failure anywhere in here puts every one of these files back as it was
         store.save_tracks(project, tracks)

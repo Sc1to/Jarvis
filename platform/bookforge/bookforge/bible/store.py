@@ -93,6 +93,46 @@ def load_tracks(project: Project) -> list[Track]:
     return _records(tracks_path(project), "tracks", Track)
 
 
+def _of_book(from_: str, book: str) -> bool:
+    from .positions import parse_position
+    try:
+        return parse_position(from_).book == book
+    except ValueError:
+        return False
+
+
+def tracks_without_book_plan(tracks: list[Track], book: str) -> list[Track]:
+    """The tracks as earlier layers and earlier books left them: every plan entry of THIS book removed (a layer that plans the chapters starts from what came
+    before it, never from its own previous plan, whose entries would outlive the chapters they were written for). Entries of other books stay: they are
+    inherited state. A track left with no entry and no `starts_as` is dropped."""
+    out = []
+    for t in tracks:
+        c = t.model_copy(deep=True)
+        c.plan = [e for e in c.plan if not _of_book(e.from_, book)]
+        if c.plan or str(c.starts_as).strip():
+            out.append(c)
+    return out
+
+
+def prune_orphan_entries(tracks: list[Track], chapter_ids: set[str], book: str) -> tuple[list[Track], int]:
+    """Entries of this book whose chapter is not in the plan are removed (and a track left empty dropped). Returns (tracks, how many entries went)."""
+    from .positions import parse_position
+    removed = 0
+    out = []
+    for t in tracks:
+        keep = []
+        for e in t.plan:
+            if _of_book(e.from_, book) and parse_position(e.from_).chapter_ref not in chapter_ids:
+                removed += 1
+            else:
+                keep.append(e)
+        if len(keep) != len(t.plan):
+            t = t.model_copy(update={"plan": keep})
+        if t.plan or str(t.starts_as).strip():
+            out.append(t)
+    return out, removed
+
+
 def save_tracks(project: Project, tracks: list[Track]) -> None:
     _write(tracks_path(project), "tracks", tracks)
 
