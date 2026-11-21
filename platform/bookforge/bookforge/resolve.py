@@ -456,6 +456,12 @@ def record_decision(project, item_id: str, action: str, text: str = "") -> None:
     _log(project, item_id, proposal, verdict)
 
 
+def log_outcome(project, item_id: str, outcome: str, verdict: str, label: str = "tool decision", mode: str | None = None) -> None:
+    """One line for a decision that is not an Inbox proposal (the intake's cast entries and developments): applied | accepted | overridden | undone.
+    The same file feeds `decision_stats`, the demotion rule and the morning report."""
+    _log(project, item_id, {"outcome": outcome, "label": label, "mode": mode or answers_mod.load(project)["mode"]}, verdict)
+
+
 def _log(project, item_id: str, proposal: dict, verdict: str) -> None:
     from datetime import datetime, timezone
     p = path(project).with_name("decisions.jsonl")

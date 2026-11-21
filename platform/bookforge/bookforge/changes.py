@@ -151,7 +151,8 @@ def _apply_event(project: Project, cr: ChangeRequest) -> None:
     parents = [x for x in chapter.events_covered if x in by_id and not by_id[x].parent]
     if not parents:
         raise ChangeError("this chapter tells no event of its own that a complication could belong to: redo the ledger instead")
-    intake.register_events(project, [{"scene": scene.id, "parent": parents[-1], "text": cr.proposal.get("text") or cr.observed}])
+    added = intake.register_events(project, [{"scene": scene.id, "parent": parents[-1], "text": cr.proposal.get("text") or cr.observed}])
+    cr.proposal = {**cr.proposal, "event_id": added[0]}  # so an undo knows which event this was
 
 
 def apply(project: Project, cr: ChangeRequest, by: str) -> None:
@@ -222,8 +223,92 @@ def file_new(project: Project, scene: Scene, found: list[dict]) -> list[ChangeRe
             cr = ChangeRequest(id=_next_id(existing + created), kind="event", proposed_by=scene.id, reason="the prose tells a development no beat contains",
                                planned="(not in the plan)", observed=item["text"], evidence=item["quote"], created=now(), proposal={"text": item["text"]})
         save(project, cr)
+        _settle_as_tool(project, cr, item)
         created.append(cr)
     return created
+
+
+OUTCOME = {"entity": "intake_entity", "event": "intake_event"}
+_AUTO_KINDS = ("character", "place", "object")
+
+
+def _tool_may_apply(project: Project, cr: ChangeRequest, item: dict) -> bool:
+    """The book's mode and the outcome's record decide whether the tool applies a request it has just filed: assist settles a verified new cast entry (or an alias),
+    auto also registers a minor development; an outcome you keep overriding is only suggested."""
+    from . import answers, resolve
+    mode = answers.load(project)["mode"]
+    if mode == "shadow" or OUTCOME[cr.kind] in resolve.demoted(project):
+        return False
+    if cr.kind == "event":
+        return mode == "auto"
+    if item.get("same_as"):
+        return True  # another name for someone in the cast: nothing to add
+    if item.get("entity_kind") not in _AUTO_KINDS or not item.get("quote") or not item.get("facts"):
+        return False
+    toks = {t for t in re.split(r"[^a-z0-9]+", cr.observed.lower()) if len(t) >= 3}
+    for e in store.load_constants(project).entities:
+        if toks & {t for t in re.split(r"[^a-z0-9]+", (e.id + " " + e.name).lower()) if len(t) >= 3}:
+            return False  # a name that overlaps an entity already in the cast may be another name for it: yours to say
+    return True
+
+
+def _settle_as_tool(project: Project, cr: ChangeRequest, item: dict) -> None:
+    from . import resolve
+    if not _tool_may_apply(project, cr, item):
+        return
+    try:
+        apply(project, cr, "tool")
+    except BookforgeError as e:  # a cast or ledger check refused it: it waits for you, with the reason
+        cr.reason = f"{cr.reason} (the tool tried to apply it and could not: {e})"
+        save(project, cr)
+        log.info("%s not applied by the tool: %s", cr.id, e)
+        return
+    resolve.log_outcome(project, cr.id, OUTCOME[cr.kind], "applied", "tool decision")
+
+
+def undo(project: Project, cr_id: str) -> ChangeRequest:
+    """Take back what the tool applied: the cast entry or the registered development goes, and the request is yours to decide again."""
+    from . import intake, resolve
+    cr = get(project, cr_id)
+    if cr.status != "applied" or cr.decided_by != "tool" or cr.kind not in OUTCOME:
+        raise ChangeError(f"{cr_id} was not applied by the tool")
+    try:
+        if cr.kind == "entity" and not cr.proposal.get("same_as"):
+            from . import cast
+            cast.delete(project, cr.proposal.get("id") or cr.entity)
+        elif cr.kind == "event":
+            intake.unregister_event(project, cr.proposal.get("event_id", ""))
+    except BookforgeError as e:
+        raise ChangeError(f"cannot take {cr_id} back: {e}") from e
+    cr.proposal = {k: v for k, v in cr.proposal.items() if k != "event_id"}
+    cr.status, cr.decided, cr.decided_by = "pending", None, None
+    save(project, cr)
+    resolve.log_outcome(project, cr.id, OUTCOME[cr.kind], "undone", "tool decision")
+    return cr
+
+
+def impact(project: Project, cr: ChangeRequest) -> list[str]:
+    """What approving this request changes, in plain lines (no model): shown before you press the button, and kept as the record of what the tool did."""
+    if cr.kind == "entity":
+        p = cr.proposal
+        if p.get("same_as"):
+            return [f"{p.get('name') or cr.observed} is another name for {p['same_as']}: nothing is added to the cast"]
+        facts = "; ".join(p.get("facts") or [])
+        return [f"Add {p.get('name') or cr.observed} ({p.get('entity_kind', 'character')}) to the cast" + (f", fixed facts: {facts}" if facts else ""),
+                f"Scenes that name {p.get('name') or cr.observed} become consistent with the cast"]
+    if cr.kind == "event":
+        try:
+            scene = next(s for s in store.load_scenes(project) if s.id == cr.proposed_by)
+            chapter = next(c for c in store.load_chapters(project) if c.id == scene.chapter)
+            ledger = store.active_ledger(project)
+            by_id = {e.id: e for e in ledger.events} if ledger else {}
+            parents = [x for x in chapter.events_covered if x in by_id and not by_id[x].parent]
+        except StopIteration:
+            return []
+        built = sum(1 for s in store.load_scenes(project) if s.chapter == chapter.id and project.state.items.get(s.id) and project.state.items[s.id].status in ("accepted", "checked", "drafted"))
+        return ([f"Register a minor complication under {parents[-1]}: {cr.proposal.get('text') or cr.observed}"] if parents else ["This chapter has no event of its own to attach it to: redo the ledger instead"]) + \
+               [f"Added to {chapter.id} and {scene.id}, so the ledger checks cover it"] + ([f"{built} written scene(s) of {chapter.id} were built on the old plan and will be marked out of date"] if built else [])
+    return [f"{len(cr.affects)} scene(s) from {cr.proposed_by} on get '{cr.observed}' for {cr.entity or cr.track}"]
 
 
 def approve(project: Project, cr_id: str) -> ChangeRequest:

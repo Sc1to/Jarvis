@@ -23,6 +23,9 @@ export function ChangeDiff({ cr, series, book, onDone, locked }: { cr: ChangeReq
         <div className="whitespace-pre-wrap break-words bg-red-50 p-2 text-red-900">− plan: {cr.planned}</div>
         <div className="whitespace-pre-wrap break-words bg-emerald-50 p-2 text-emerald-900">+ prose: {cr.observed}</div>
       </div>
+      {cr.impact && cr.impact.length > 0 && (
+        <ul className="list-disc space-y-0.5 pl-5 text-xs text-slate-700" aria-label="What approving changes">{cr.impact.map((l) => <li key={l}>{l}</li>)}</ul>
+      )}
       {cr.evidence && <blockquote className="border-l-4 border-slate-300 pl-3 text-xs italic text-slate-600">“{cr.evidence}”</blockquote>}
       <ErrorBanner message={act.error} onClose={act.clear} />
       {cr.status === 'pending' ? (
@@ -106,6 +109,8 @@ export default function Inbox({ series, book, status, reload }: { series: string
   const locked = status.job?.status === 'running'
   const pending = changes.data?.filter((c) => c.status === 'pending') ?? []
   const rejectedOpen = changes.data?.filter((c) => c.status === 'rejected' && !c.fixed) ?? []
+  const doneByTool = changes.data?.filter((c) => c.status === 'applied' && c.decided_by === 'tool' && (c.kind === 'entity' || c.kind === 'event')) ?? []
+  const undo = useAction()
   const staleAny = (stale.data?.scenes.length ?? 0) > 0
   const waiting = needs.data?.filter((n) => n.status === 'proposed' && (n.rule || n.stance === 'invent')) ?? []
   const decided = needs.data?.filter((n) => n.decided_by === 'author') ?? []
@@ -179,6 +184,22 @@ export default function Inbox({ series, book, status, reload }: { series: string
           ))}
         </div>
       </Card>
+
+      {doneByTool.length > 0 && (
+        <Card title={`Done by the tool (${doneByTool.length})`}>
+          <p className="mb-2 text-xs text-slate-600">New people and developments the prose brought in, which the tool added to the plan on its own because this book is in assist or auto mode. Each can be taken back.</p>
+          <ErrorBanner message={undo.error} onClose={undo.clear} />
+          <ul className="space-y-3">
+            {doneByTool.map((c) => (
+              <li key={c.id} className="space-y-1 text-sm">
+                <p><a className="font-medium underline" href={href({ series, book, tab: 'scene', id: c.proposed_by })}>{c.proposed_by}</a> · {c.kind === 'entity' ? `new in the prose: ${c.observed}` : c.observed}</p>
+                {c.impact && c.impact.length > 0 && <ul className="list-disc pl-5 text-xs text-slate-700">{c.impact.map((l) => <li key={l}>{l}</li>)}</ul>}
+                <Button disabled={undo.busy || !!locked} onClick={async () => { if (await undo.run(() => post(`${base}/changes/${c.id}/undo`))) { changes.reload(); reload() } }}>Undo</Button>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
 
       <Card title="Out of date" right={staleAny && (
         <Button kind="primary" disabled={fix.busy || !!locked} onClick={async () => { if (await fix.run(() => post(`${base}/stale/fix`, {}))) reload() }}>Fix all</Button>

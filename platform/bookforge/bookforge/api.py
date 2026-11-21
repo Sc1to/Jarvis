@@ -675,7 +675,14 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
 
     @router.get("/series/{series}/books/{book}/changes")
     def changes(series: str, book: str):
-        return ok([c.model_dump() for c in change_requests.list_requests(open_project(series, book))])
+        project = open_project(series, book)
+        return ok([{**c.model_dump(), "impact": change_requests.impact(project, c) if c.status in ("pending", "applied") else []} for c in change_requests.list_requests(project)])
+
+    @router.post("/series/{series}/books/{book}/changes/{cr_id}/undo")
+    def undo_change(series: str, book: str, cr_id: str):
+        project = open_project(series, book)
+        require_idle(series)
+        return ok(ops.undo_change(project, cr_id).model_dump())
 
     @router.get("/series/{series}/books/{book}/needs")
     def needs(series: str, book: str):

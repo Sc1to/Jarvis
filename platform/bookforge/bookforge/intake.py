@@ -120,3 +120,34 @@ def register_events(project: Project, items: list[dict]) -> list[str]:
     if project.config.git.commit_each_step:
         vcs.commit(project.root, f"{project.book}: you registered {len(added)} development(s) as story events ({', '.join(added)})", paths)
     return added
+
+
+def unregister_event(project: Project, event_id: str) -> None:
+    """Take back a development `register_events` added: remove the derived event from the ledger, the chapter and the scene. All or nothing, validated like the registration."""
+    from .documents import _ledger_problems
+    from .layers import structure
+    ledger = store.active_ledger(project)
+    ev = next((e for e in ledger.events if e.id == event_id), None) if ledger else None
+    if ev is None or ev.source != "derived" or not ev.parent:
+        raise IntakeError(f"'{event_id}' is not a minor complication that can be taken back")
+    if any(event_id in (e.after or []) for e in ledger.events if e.id != event_id):
+        raise IntakeError(f"something comes after {event_id}; take that back first")
+    paths = [store.ledger_path(project), store.chapters_path(project), store.scenes_path(project)]
+    before = structure.validate_chapters_file(project) + structure.validate_scenes_file(project)
+    ledger_before = _ledger_problems(project, store.ledger_path(project).read_text(encoding="utf-8"))
+    chapters, scenes = store.load_chapters(project), store.load_scenes(project)
+    for c in chapters:
+        c.events_covered = [x for x in c.events_covered if x != event_id]
+        c.events_continued = [x for x in c.events_continued if x != event_id]
+    for sc in scenes:
+        sc.events = [x for x in sc.events if x != event_id]
+    with store.transaction(paths):
+        store.save_ledger(project, ledger.model_copy(update={"events": [e for e in ledger.events if e.id != event_id]}))
+        store.save_chapters(project, chapters)
+        store.save_scenes(project, scenes)
+        new = [p for p in structure.validate_chapters_file(project) + structure.validate_scenes_file(project) if p not in before]
+        new += [p for p in _ledger_problems(project, store.ledger_path(project).read_text(encoding="utf-8")) if p not in ledger_before]
+        if new:
+            raise IntakeError("taking this back would leave the plan inconsistent: " + "; ".join(new[:4]))
+    if project.config.git.commit_each_step:
+        vcs.commit(project.root, f"{project.book}: took back the development {event_id}", paths)
