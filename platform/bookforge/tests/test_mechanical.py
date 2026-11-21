@@ -73,7 +73,9 @@ def test_length_warns_then_blocks():
     assert "length" not in codes(check_scene(BASE, ctx(scene_words=(100, 600))))
     warn = check_scene(BASE, ctx(scene_words=(n + 20, n + 400)))
     assert [(i.code, i.severity) for i in warn.issues if i.code == "length"] == [("length", "warn")]
-    block = check_scene(BASE, ctx(scene_words=(n * 3, n * 6)))
+    shorter = check_scene(BASE, ctx(scene_words=(n * 3, n * 6)))  # well under the range, but not a fragment: advice, not a stop
+    assert [(i.code, i.severity) for i in shorter.issues if i.code == "length"] == [("length", "warn")]
+    block = check_scene(BASE, ctx(scene_words=(n * 5, n * 10)))
     assert [(i.code, i.severity) for i in block.issues if i.code == "length"] == [("length", "block")]
     too_long = check_scene(BASE, ctx(scene_words=(10, n // 3)))
     assert ("length", "block") in [(i.code, i.severity) for i in too_long.issues]

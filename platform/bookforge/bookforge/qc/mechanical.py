@@ -39,7 +39,7 @@ you your yours yourself said asked
 """.split())
 
 BLOCK, WARN, NOTE = "block", "warn", "note"
-FAR_OFF = (0.5, 2.0)  # a scene under half the minimum or over twice the maximum length blocks; merely outside the range warns
+FAR_OFF = (0.25, 2.0)  # a scene under a quarter of the minimum (a fragment) or over twice the maximum (padding) blocks; merely outside the range warns: the target is advice, a scene may finish shorter when its beats are all on the page
 
 
 def words(text: str) -> list[str]:
