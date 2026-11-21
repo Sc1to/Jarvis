@@ -556,6 +556,21 @@ def test_only_listed_documents_can_be_read(full):
         error(client.get(f"{B}/documents/{key}"), 404)
 
 
+def test_an_edit_that_names_a_new_character_offers_to_add_it(book):
+    import yaml
+    text = data(client.get(f"{B}/documents/scenes"))["text"]
+    plan = yaml.safe_load(text)
+    plan["scenes"][0]["characters"].append("sheriff-marek")
+    plan["scenes"][0]["beats"].append("Sheriff Marek arrives at the harbor and questions Anna about the ledger.")
+    edited = yaml.safe_dump(plan, sort_keys=False)
+    out = data(client.put(f"{B}/documents/scenes", json={"text": edited}))
+    assert out["saved"] is False and out["needs_cast"][0]["id"] == "sheriff-marek"
+    assert data(client.get(f"{B}/documents/scenes"))["text"] == text  # nothing changed
+    ok = data(client.post(f"{B}/documents/scenes/with-cast", json={"text": edited, "entities": out["needs_cast"]}))
+    assert ok["saved"] is True and ok["added"] == ["sheriff-marek"]
+    assert "sheriff-marek" in [e["id"] for e in data(client.get(f"{B}/cast"))["entities"]]
+
+
 def test_a_very_large_document_is_cut_and_says_so(full):
     (full.root / "style" / "guide.md").write_text("word " * 200_000)
     doc = data(client.get(f"{B}/documents/style_guide"))

@@ -177,6 +177,55 @@ function SplitBible({ series, book }: { series: string; book: string }) {
   )
 }
 
+interface CastItem { id: string; kind: string; name: string; facts: string[]; used_in: string; may_be: string[] }
+interface CastChoice extends CastItem { alias_of?: string }
+
+/** The edit is fine except that it names things the cast does not have: add them (the facts come from your own text) or say they are another name for someone already in the cast, and save both together. */
+function CastProposal({ base, docKey, text, items, onSaved, onCancel }: { base: string; docKey: string; text: string; items: CastItem[]; onSaved: () => void; onCancel: () => void }) {
+  const [choice, setChoice] = useState<CastChoice[]>(items)
+  const act = useAction()
+  const set = (i: number, patch: Partial<CastChoice>) => setChoice((c) => c.map((x, k) => (k === i ? { ...x, ...patch } : x)))
+  return (
+    <div className="space-y-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+      <p><strong>This edit introduces {items.length === 1 ? 'something' : `${items.length} things`} the cast does not have.</strong> Nothing is saved yet. Add {items.length === 1 ? 'it' : 'them'} to the cast and save the edit together, or say {items.length === 1 ? 'it is' : 'they are'} another name for someone who is already there.</p>
+      {choice.map((c, i) => (
+        <div key={c.id} className="space-y-2 rounded-md border border-amber-200 bg-white p-2 text-slate-800">
+          <p className="text-xs text-slate-500">Used as <code>{c.id}</code> ({c.used_in})</p>
+          {c.may_be.length > 0 && (
+            <label className="block text-xs font-medium">Is this someone already in the cast?
+              <select value={c.alias_of ?? ''} onChange={(e) => set(i, { alias_of: e.target.value || undefined })} className="mt-1 block min-h-10 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-normal">
+                <option value="">No, a new entry</option>
+                {c.may_be.map((m) => <option key={m} value={m}>Yes: {m}</option>)}
+              </select>
+            </label>
+          )}
+          {!c.alias_of && (
+            <>
+              <div className="flex flex-wrap gap-2">
+                <label className="min-w-0 flex-1 text-xs font-medium">Name
+                  <input value={c.name} onChange={(e) => set(i, { name: e.target.value })} className="mt-1 block min-h-10 w-full rounded-md border border-slate-300 px-2 text-sm font-normal" /></label>
+                <label className="text-xs font-medium">Kind
+                  <select value={c.kind} onChange={(e) => set(i, { kind: e.target.value })} className="mt-1 block min-h-10 rounded-md border border-slate-300 bg-white px-2 text-sm font-normal">
+                    {['character', 'place', 'object', 'group', 'concept'].map((k) => <option key={k}>{k}</option>)}</select></label>
+              </div>
+              <label className="block text-xs font-medium">What is fixed about it (one per line; taken from your text, change freely)
+                <textarea value={c.facts.join('\n')} onChange={(e) => set(i, { facts: e.target.value.split('\n').filter((l) => l.trim()) })} rows={3}
+                  className="mt-1 w-full rounded-md border border-slate-300 p-2 text-sm font-normal" /></label>
+            </>
+          )}
+        </div>
+      ))}
+      <ErrorBanner message={act.error} onClose={act.clear} />
+      <div className="flex flex-wrap gap-2">
+        <Button kind="primary" disabled={act.busy} onClick={async () => {
+          if (await act.run(() => api(`${base}/${encodeURIComponent(docKey)}/with-cast`, { method: 'POST', body: { text, entities: choice.map((c) => (c.alias_of ? { id: c.id, alias_of: c.alias_of } : { id: c.id, kind: c.kind, name: c.name, facts: c.facts })) } }))) onSaved()
+        }}>{act.busy ? 'Saving…' : 'Add to the cast and save'}</Button>
+        <Button disabled={act.busy} onClick={onCancel}>Back to editing</Button>
+      </div>
+    </div>
+  )
+}
+
 /** The files you review at the checkpoints. You can edit them here: an edit is checked first and refused, with the reason, if it breaks the structure. */
 export default function Documents({ series, book, docKey }: { series: string; book: string; docKey?: string }) {
   const base = `${bookPath(series, book)}/documents`
@@ -184,6 +233,7 @@ export default function Documents({ series, book, docKey }: { series: string; bo
   const doc = useApi<DocumentFull>(docKey ? `${base}/${encodeURIComponent(docKey)}` : null)
   const [draft, setDraft] = useState<string | null>(null)  // the text being edited, or null when just reading
   const save = useAction()
+  const [proposal, setProposal] = useState<CastItem[] | null>(null)  // what the edit being saved introduces
 
   if (docKey) {
     if (doc.error) return <div className="space-y-3"><ErrorBanner message={doc.error} /><a className="text-sm underline" href={href({ series, book, tab: 'documents' })}>All documents</a></div>
@@ -202,11 +252,15 @@ export default function Documents({ series, book, docKey }: { series: string; bo
               <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={22} spellCheck={d.kind !== 'yaml'}
                 aria-label={`Edit ${d.title}`} className="w-full rounded-md border border-slate-300 p-2 font-mono text-xs leading-relaxed" />
               <ErrorBanner message={save.error} onClose={save.clear} />
+              {proposal && <CastProposal base={base} docKey={d.key} text={draft} items={proposal} onCancel={() => setProposal(null)} onSaved={() => { setProposal(null); setDraft(null); doc.reload(); list.reload() }} />}
               <div className="flex flex-wrap gap-2">
-                <Button kind="primary" disabled={save.busy} onClick={async () => {
-                  if (await save.run(() => api(`${base}/${encodeURIComponent(d.key)}`, { method: 'PUT', body: { text: draft } }))) { setDraft(null); doc.reload() }
+                <Button kind="primary" disabled={save.busy || !!proposal} onClick={async () => {
+                  let res: { saved: boolean; needs_cast?: CastItem[] } | undefined
+                  const ok = await save.run(async () => { res = await api(`${base}/${encodeURIComponent(d.key)}`, { method: 'PUT', body: { text: draft } }) as typeof res })
+                  if (ok && res?.needs_cast) setProposal(res.needs_cast)
+                  else if (ok) { setDraft(null); doc.reload() }
                 }}>{save.busy ? 'Saving…' : 'Save'}</Button>
-                <Button disabled={save.busy} onClick={() => { setDraft(null); save.clear() }}>Cancel</Button>
+                <Button disabled={save.busy} onClick={() => { setDraft(null); setProposal(null); save.clear() }}>Cancel</Button>
               </div>
             </div>
           ) : (

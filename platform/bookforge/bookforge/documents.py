@@ -90,6 +90,85 @@ class EditRefused(BookforgeError):
         self.problems = problems
 
 
+class EditNeedsCast(EditRefused):
+    """The only thing wrong with the edit is that it names people, places or things the cast does not have. Nothing was saved; `proposal` says what to add."""
+
+    def __init__(self, problems: list[str], proposal: list[dict]):
+        super().__init__(problems)
+        self.proposal = proposal
+
+
+_UNKNOWN_ID = re.compile(r"^(?P<label>.*?): '(?P<id>[a-z][a-z0-9-]*)' is not in the cast")
+
+
+def _unknown_ids(problems: list[str]) -> list[tuple[str, str]]:
+    """(label, id) for every problem that is an unknown cast id; [] unless ALL of them are."""
+    found = [_UNKNOWN_ID.match(p) for p in problems]
+    return [(m["label"], m["id"]) for m in found] if found and all(found) else []
+
+
+def _tokens(entity_id: str) -> list[str]:
+    return [t for t in entity_id.split("-") if len(t) >= 3]
+
+
+def _facts_from(text: str, entity_id: str) -> list[str]:
+    """What the edit itself says about the new entity: the lines of the edited text that mention its name, in the author's own words."""
+    toks = _tokens(entity_id)
+    out: list[str] = []
+    for line in text.splitlines():
+        body = re.sub(r"^\s*-\s*", "", line).strip().strip("\"'")
+        key = re.match(r"^(purpose|summary|end_state|situation|learns|title)\s*:\s*(.+)$", body)
+        body = key.group(2).strip().strip("\"'") if key else body
+        if len(body.split()) >= 5 and any(t in body.lower() for t in toks) and not body.lower().startswith(("characters:", "pov:", "setting:")):
+            out.append(body[:240])
+        if len(out) >= 3:
+            break
+    return out or [f"Introduced by an edit of the plan; details still open."]
+
+
+def propose_cast(project: Project, text: str, unknown: list[tuple[str, str]]) -> list[dict]:
+    """For each unknown id: a suggested entity (kind from where it was used, name from the id, facts from the edit's own words) and the existing entities it may be an alias of."""
+    constants = bible.load_constants(project)
+    out, seen = [], set()
+    for label, eid in unknown:
+        if eid in seen:
+            continue
+        seen.add(eid)
+        kind = "place" if "setting" in label else "character"
+        toks = set(_tokens(eid))
+        aliases = [e.id for e in constants.entities if (toks & set(_tokens(e.id)) or toks & {w.lower() for w in e.name.split() if len(w) >= 3}) and (e.kind == kind or kind == "character" and e.kind == "group")]
+        out.append({"id": eid, "kind": kind, "name": eid.replace("-", " ").title(), "facts": _facts_from(text, eid), "used_in": label, "may_be": aliases[:3]})
+    return out
+
+
+def replace_id(text: str, old: str, new: str) -> str:
+    """The id in a plan text, wherever it stands as a whole token (`'old'`, `old,` ...), replaced by an existing one."""
+    return re.sub(rf"(?<![A-Za-z0-9-]){re.escape(old)}(?![A-Za-z0-9-])", new, text)
+
+
+def save_with_cast(project: Project, doc: Doc, text: str, entities: list[dict]) -> list[str]:
+    """Save the edit together with the cast entries it needs, all or nothing. Each entry is {id, kind, name, facts} (a new entity) or {id, alias_of} (the id was a
+    second name for an existing entity: the plan text is changed to the existing id). Returns the ids added. If the edit is still refused, the entries are taken out again."""
+    from . import cast
+    added: list[str] = []
+    try:
+        for e in entities:
+            if e.get("alias_of"):
+                text = replace_id(text, e["id"], e["alias_of"])
+            else:
+                cast.add(project, e["id"], e["kind"], e["name"], list(e.get("facts") or []))
+                added.append(e["id"])
+        save(project, doc, text)
+    except Exception:
+        for eid in reversed(added):
+            try:
+                cast.delete(project, eid)
+            except Exception:  # the entry stays: it is harmless, and the cast tab can remove it
+                pass
+        raise
+    return added
+
+
 def editable(doc: Doc) -> bool:
     return doc.group != "Research"  # research notes are written by the research step, and read-only
 
@@ -183,6 +262,9 @@ def save(project: Project, doc: Doc, text: str) -> None:
             doc.path.unlink(missing_ok=True)
         else:
             doc.path.write_text(old, encoding="utf-8")
+        unknown = _unknown_ids(new)
+        if unknown:  # not wrong, only new: offer to add what it introduces instead of making you leave the editor
+            raise EditNeedsCast(new, propose_cast(project, text, unknown))
         raise EditRefused(new)
     if project.config.git.commit_each_step:
         vcs.commit(project.root, f"{project.book}: you edited {doc.title}", [doc.path])

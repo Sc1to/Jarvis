@@ -228,6 +228,19 @@ class DocBody(BaseModel):
     text: str
 
 
+class CastProposalItem(BaseModel):
+    id: str
+    kind: str = "character"
+    name: str = ""
+    facts: list[str] = []
+    alias_of: str | None = None  # the id was a second name for this existing entity
+
+
+class DocWithCastBody(BaseModel):
+    text: str
+    entities: list[CastProposalItem]
+
+
 class RewriteBody(BaseModel):
     targets: list[str]  # scene ids, chapter ids, or "all"
     force: bool = False
@@ -588,8 +601,21 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
         if doc is None:
             raise HTTPException(404, f"no document '{key}'")
         require_idle(series)
-        documents.save(project, doc, body.text)
+        try:
+            documents.save(project, doc, body.text)
+        except documents.EditNeedsCast as e:  # the edit is fine except that it names things the cast lacks: say what to add, change nothing
+            return ok({"key": doc.key, "saved": False, "needs_cast": e.proposal, "problems": e.problems})
         return ok({"key": doc.key, "saved": True})
+
+    @router.post("/series/{series}/books/{book}/documents/{key}/with-cast")
+    def document_save_with_cast(series: str, book: str, key: str, body: DocWithCastBody):
+        project = open_project(series, book)
+        doc = documents.find(project, key)
+        if doc is None:
+            raise HTTPException(404, f"no document '{key}'")
+        require_idle(series)
+        added = documents.save_with_cast(project, doc, body.text, [e.model_dump() for e in body.entities])
+        return ok({"key": doc.key, "saved": True, "added": added})
 
     @router.get("/series/{series}/books/{book}/report")
     def report_now(series: str, book: str):
