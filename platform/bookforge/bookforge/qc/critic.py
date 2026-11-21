@@ -35,6 +35,7 @@ class CriticReport:
     weakest: list[Weak] = field(default_factory=list)
     error: str | None = None  # the critique could not be obtained; it does not block the scene
     beats: list[dict] = field(default_factory=list)  # per planned beat: {beat: 1-based number, verdict: shown|thin|missing|out_of_order, note}
+    unplanned: list[dict] = field(default_factory=list)  # developments the scene tells that no beat contains: {what, quote} (quote verified against the text)
 
     @property
     def lowest(self) -> int:
@@ -49,7 +50,7 @@ class CriticReport:
 
     def to_dict(self) -> dict:
         return {"scores": self.scores, "lowest": self.lowest if self.scores else None, "error": self.error,
-                "weakest": [vars(w) for w in self.weakest], "beats": self.beats}
+                "weakest": [vars(w) for w in self.weakest], "beats": self.beats, "unplanned": self.unplanned}
 
 
 def rubric_line(project, criterion: str) -> str:
@@ -103,6 +104,18 @@ def clean_beats(raw, count: int) -> list[dict]:
     return sorted(out, key=lambda x: x["beat"])
 
 
+def clean_unplanned(raw, text: str) -> list[dict]:
+    """Developments the critic says the scene tells beyond its beats, kept only when it quotes the scene (an unquoted claim is dropped)."""
+    out = []
+    for u in raw if isinstance(raw, list) else []:
+        if not isinstance(u, dict):
+            continue
+        what, quote = " ".join(str(u.get("what", "")).split())[:240], " ".join(str(u.get("quote", "")).split())
+        if what and len(quote.split()) >= MIN_QUOTE_WORDS and quote_in_page(quote, text):
+            out.append({"what": what, "quote": quote})
+    return out[:3]
+
+
 def run_critic(ctx, scene: Scene, text: str) -> CriticReport:
     project = ctx.project
     try:
@@ -114,7 +127,7 @@ def run_critic(ctx, scene: Scene, text: str) -> CriticReport:
         return CriticReport(error=str(e))
     beats = clean_beats(data.get("beats"), len(scene.beats))
     weakest = [Weak(w["criterion"], " ".join(w["quote"].split()), str(w["issue"]).strip()) for w in data["weakest"]]
-    return CriticReport(scores={c: data["scores"][c] for c in CRITERIA}, weakest=weakest, beats=beats)
+    return CriticReport(scores={c: data["scores"][c] for c in CRITERIA}, weakest=weakest, beats=beats, unplanned=clean_unplanned(data.get("unplanned"), text))
 
 
 def critic_flags(project, report: CriticReport, ignore=()) -> list[Flag]:

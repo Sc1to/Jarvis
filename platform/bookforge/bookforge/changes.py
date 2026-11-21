@@ -14,6 +14,7 @@ A request whose affected scenes are all in the proposing scene's chapter is appl
 """
 
 import logging
+import re
 from typing import Literal
 
 import yaml
@@ -42,8 +43,10 @@ class ChangeRequest(BaseModel):
 
     id: str
     status: Status = "pending"
+    kind: Literal["state", "entity", "event"] = "state"  # a tracked state differs from the plan | the prose brings in a new person, place or thing | a development no beat contains
+    proposal: dict = {}  # entity: {id, name, entity_kind, facts, same_as}; event: {text}
     proposed_by: str  # the scene
-    track: str
+    track: str = ""
     entity: str = ""
     reason: str
     planned: str  # what the plan says
@@ -57,6 +60,10 @@ class ChangeRequest(BaseModel):
     fixed: bool = False  # rejected, and the scene's prose has since been brought back in line with the plan
 
     def message(self) -> str:
+        if self.kind == "entity":
+            return (f"the scene brings in {self.observed}, who or which is not in the plan or the cast: take them out, or use someone or something that is already in the cast")
+        if self.kind == "event":
+            return f"the scene tells something the plan does not contain ({self.observed}): leave it out, so the scene tells only its planned beats"
         return (f"the scene shows '{self.observed}' but the plan for {self.entity or self.track} says '{self.planned}': "
                 f"make the passage agree with the plan")
 
@@ -125,8 +132,40 @@ def affected_scenes(tracks: list[Track], scenes: list[Scene], track_id: str, at:
     return out
 
 
+def _apply_entity(project: Project, cr: ChangeRequest) -> None:
+    from . import cast
+    p = cr.proposal
+    if p.get("same_as"):
+        return  # it was another name for someone who is in the cast already: nothing to add
+    eid = p.get("id") or re.sub(r"[^a-z0-9]+", "-", cr.observed.lower()).strip("-")
+    if not any(e.id == eid for e in store.load_constants(project).entities):
+        cast.add(project, eid, p.get("entity_kind", "character"), p.get("name") or cr.observed, list(p.get("facts") or []) or [cr.evidence[:240] or "Introduced by a scene."])
+
+
+def _apply_event(project: Project, cr: ChangeRequest) -> None:
+    from . import intake
+    scene = next(s for s in store.load_scenes(project) if s.id == cr.proposed_by)
+    chapter = next(c for c in store.load_chapters(project) if c.id == scene.chapter)
+    ledger = store.active_ledger(project)
+    by_id = {e.id: e for e in ledger.events} if ledger else {}
+    parents = [x for x in chapter.events_covered if x in by_id and not by_id[x].parent]
+    if not parents:
+        raise ChangeError("this chapter tells no event of its own that a complication could belong to: redo the ledger instead")
+    intake.register_events(project, [{"scene": scene.id, "parent": parents[-1], "text": cr.proposal.get("text") or cr.observed}])
+
+
 def apply(project: Project, cr: ChangeRequest, by: str) -> None:
-    """Write the change into the track and mark the request applied."""
+    """Write the change (a track entry, a cast entry, or a registered development) and mark the request applied."""
+    if cr.kind == "entity":
+        _apply_entity(project, cr)
+        cr.status, cr.decided, cr.decided_by = "applied", now(), by
+        save(project, cr)
+        return
+    if cr.kind == "event":
+        _apply_event(project, cr)
+        cr.status, cr.decided, cr.decided_by = "applied", now(), by
+        save(project, cr)
+        return
     tracks = store.load_tracks(project)
     store.save_tracks(project, _with_entry(tracks, cr.track, cr.proposed_by, cr.observed))
     cr.status, cr.decided, cr.decided_by = "applied", now(), by
@@ -158,6 +197,31 @@ def file_gaps(project: Project, scene: Scene, scenes: list[Scene], gaps: list[di
             apply(project, cr, "auto")
             tracks = store.load_tracks(project)
             by_id = {t.id: t for t in tracks}
+        created.append(cr)
+    return created
+
+
+def file_new(project: Project, scene: Scene, found: list[dict]) -> list[ChangeRequest]:
+    """File a change request for each new entity or event the prose brought in (never applied by itself: they change the cast and the ledger). One per scene and thing;
+    a name already decided or waiting (by any scene) is not proposed again."""
+    existing = list_requests(project)
+    created: list[ChangeRequest] = []
+    for item in found:
+        if item["kind"] == "entity":
+            name = item["name"]
+            if any(c.kind == "entity" and c.observed.lower() == name.lower() for c in existing + created):
+                continue
+            eid = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+            cr = ChangeRequest(id=_next_id(existing + created), kind="entity", proposed_by=scene.id, entity=eid,
+                               reason="the prose introduces a person, place or thing the cast does not have",
+                               planned="(not in the cast)", observed=name, evidence=item["quote"], created=now(),
+                               proposal={"id": eid, "name": name, "entity_kind": item["entity_kind"], "facts": item["facts"], "same_as": item["same_as"]})
+        else:
+            if any(c.kind == "event" and c.proposed_by == scene.id and c.observed == item["text"] for c in existing + created):
+                continue
+            cr = ChangeRequest(id=_next_id(existing + created), kind="event", proposed_by=scene.id, reason="the prose tells a development no beat contains",
+                               planned="(not in the plan)", observed=item["text"], evidence=item["quote"], created=now(), proposal={"text": item["text"]})
+        save(project, cr)
         created.append(cr)
     return created
 
