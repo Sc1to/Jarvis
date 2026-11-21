@@ -182,7 +182,7 @@ def test_flagged_scenes_make_the_layer_need_you_and_are_rewritten_on_the_next_ru
     (lambda t: "Sure! Here is the scene:\n\n" + t, "chatter"),
     (lambda t: t[: t.rindex(".")] + " and then she", "cut_off"),
     (lambda t: "# Scene 1\n\n" + t, "formatting"),
-    (lambda t: t.split(".")[0] + ".", "length"),
+    (lambda t: " ".join(t.split()[:8]) + ".", "length"),  # a fragment, far under the range
 ])
 def test_other_blocking_problems_also_flag_the_scene(book, breaker, code):
     sid = "b1.ch01.s1"
@@ -256,7 +256,7 @@ def test_the_model_gets_the_briefing_and_the_word_range(book):
     first = scene_calls(llm, "b1.ch01.s1")[0]
     system, user = first["messages"][0]["content"], first["messages"][1]["content"]
     assert "Return only the scene text" in system and "English" in system
-    assert "Write scene b1.ch01.s1 as continuous prose of about 100 to 600 words" in user
+    assert "Write scene b1.ch01.s1 as continuous prose. The length guide is 100 to 600 words" in user and "Never add events, clues" in user
     assert "Point of view: third-limited. Tense: past." in user
     assert "1. Something happens.\n2. Anna decides." in user and "## Series north star" in user
     assert first["role"] == "writer" and first["options"] == {"max_tokens": int(600 * 1.6) + 300, "draft": 0, "grow": False}

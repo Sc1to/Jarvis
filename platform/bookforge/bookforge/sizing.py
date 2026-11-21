@@ -53,8 +53,8 @@ def length_guidance(words: int | None) -> str:
     scenes = min(4, max(1, round(words / SCENE_TARGET_WORDS)))
     beats = min(9, max(3, round(words / scenes / WORDS_PER_BEAT_MID)))
     return (f"This chapter should come to about {words} words when written. That is about {scenes} scene{'s' if scenes != 1 else ''} of about {words // scenes} words, "
-           f"each with about {beats} beats. Reach it by showing the chapter's events in more depth (the moments inside them, what each person does and notices, what it costs), "
-           "never by inventing events, repeating one, or adding a scene that tells nothing new.")
+           f"each with about {beats} beats. Give each scene the beats it needs, concrete enough that the writer invents nothing (what is seen, what each person knows and wants, what follows from it), "
+           "never by inventing events, repeating one, or adding a scene that tells nothing new. If the events cannot honestly carry that many words, plan fewer, fuller scenes: the author is told what the plan comes to.")
 
 
 def plan_vs_target(project, scenes) -> tuple[int, int, int]:
