@@ -211,6 +211,8 @@ def pivot_states(data, raw: list, hosts: list[str], keep_old: bool = True) -> li
             entry = {"from": host, "value": st.get("value", st.get("state", "")), "must_show": bool(st.get("must_show", False))}
             if st.get("cause"):
                 entry["cause"] = st["cause"]
+            if str(st.get("status", "")).strip() in ("observed", "hypothesis", "false_belief"):
+                entry["status"] = str(st["status"]).strip()
             t["plan"] = [e for e in t["plan"] if e["from"] != host] + [entry]  # one state per track per place: the later wins
     data["tracks"] = list(tracks.values())
     return []
@@ -255,7 +257,7 @@ def claim_chapter_states(data, scenes_raw: list, scene_ids: list[str], chapter_i
             if s > best_score:
                 best, best_score = i, s
         for e in old:
-            have.append({"from": scene_ids[best if must else 0], "value": e.value, "must_show": e.must_show, **({"cause": e.cause} if e.cause else {})})
+            have.append({"from": scene_ids[best if must else 0], "value": e.value, "must_show": e.must_show, **({"cause": e.cause} if e.cause else {}), **({"status": e.status} if e.status != "established" else {})})
         notes.append(f"track {t.id} was not restated in {book_ch}'s scenes; its planned state is attached to {scene_ids[best if must else 0]}")
     return notes
 

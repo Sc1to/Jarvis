@@ -171,6 +171,7 @@ class QC(_Strict):
     extract_observed: bool = True  # record what each accepted scene says about the tracked states
     review_structure: bool = True  # critic review of acts, chapters and scene plans against their parents
     confirm_repeats: bool = True  # each hard repeat finding is put to the critic once: only 'different events' downgrades it
+    beat_review: bool = True  # before any prose: one critic call per chapter reads the scenes' beats for placeholders, unsupported conclusions and thin material; a critical finding is rewritten once, never stops a run
     fix_timeline: bool = True  # a book whose scenes all sit on one story day gets its days set again from what happens in the scenes, kept only if the days then differ
     fix_tension: bool = True  # a flat stretch of chapter tension is rated again from what happens in the chapters, kept only if the check then passes
     warn_unfixable: bool = True  # an overreach or flat tension the fixes could not clear is kept as a warning, not a stop

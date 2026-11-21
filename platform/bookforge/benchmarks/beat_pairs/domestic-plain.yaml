@@ -1,0 +1,18 @@
+id: domestic-plain
+purpose: A couple has breakfast and their relationship moves a little.
+pov: Hana
+setting: a small kitchen on a weekday morning
+characters:
+- name: Hana
+  facts:
+  - a nurse on night shifts; dry, affectionate
+- name: Joel
+  facts:
+  - her husband, a teacher; talkative in the morning
+beats:
+- Hana comes home and Joel is making breakfast.
+- They talk about their day.
+- Something is said that matters.
+words:
+- 400
+- 800

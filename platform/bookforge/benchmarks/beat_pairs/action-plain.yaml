@@ -1,0 +1,18 @@
+id: action-plain
+purpose: A group crosses a dangerous place and one of them is in danger.
+pov: Kit
+setting: a rope footbridge over a gorge
+characters:
+- name: Kit
+  facts:
+  - a young surveyor, afraid of heights, good at keeping calm
+- name: Ravi
+  facts:
+  - the guide, older, knows the bridge
+beats:
+- They start across the bridge.
+- Something goes wrong.
+- They get across.
+words:
+- 400
+- 800

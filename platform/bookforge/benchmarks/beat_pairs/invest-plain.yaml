@@ -1,0 +1,19 @@
+id: invest-plain
+purpose: Two investigators find out whether someone has been using a closed lodge.
+pov: Nora
+setting: a holiday lodge closed for the winter
+characters:
+- name: Nora
+  facts:
+  - a detective inspector, methodical, dry humour
+- name: Dan
+  facts:
+  - her sergeant, experienced, practical
+beats:
+- Nora notices something unusual about the fridge.
+- Dan suggests an innocent explanation.
+- Nora considers it.
+- They discover another clue.
+words:
+- 500
+- 1000

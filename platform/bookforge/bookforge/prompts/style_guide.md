@@ -47,6 +47,7 @@ Write the guide in markdown, between {words_min} and {words_max} words, with exa
 {touchstones_section}
 
 Rules:
+- How ornate or spare the prose is belongs to THIS book's genre and voice: say it in the Voice, Diction and Description sections (precise and economical, or lush), never as a general rule; routine events are not dressed in dramatic language unless the voice calls for it.
 - Be concrete and usable: say what to do and what to avoid, with short invented examples where they help. "Keep sentences short and plain in action, longer in reflection" beats "write beautifully".
 - Learn the register of the successful titles from the findings and describe it in your own words. NEVER quote, copy or imitate specific sentences from any book or page; no passage of more than a few words may be taken from a source.
 - Respect what is fixed (point of view, tense, language) and "What it is not" in the north stars.

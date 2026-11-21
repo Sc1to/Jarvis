@@ -74,6 +74,10 @@ def build_questions(project, scene: Scene, scenes: list[Scene]) -> tuple[list[Qu
             if s.must_show:
                 items.append(("shown", f"{names.get(s.entity, s.entity)}: {s.value}", None))
             continue
+        if s.status in ("hypothesis", "false_belief"):  # not a fact: the scene must not state it as one
+            items.append(("contradiction", f"Not established (only suspected or wrongly believed; it is NOT a fact of the story): {names.get(s.entity, s.entity)} ({s.kind}): {s.value}. "
+                                           "A scene that narrates this as plainly true contradicts that", None))
+            continue
         fact = f"{names.get(s.entity, s.entity)} ({s.kind}): {s.value}"
         items.append(("contradiction", fact, None))
         if s.must_show:

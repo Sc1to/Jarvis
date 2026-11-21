@@ -63,6 +63,7 @@ class PlanEntry(_Record):
     value: Annotated[str, BeforeValidator(as_text), StringConstraints(strip_whitespace=True, min_length=1, max_length=300)]
     cause: Loose = ""  # what makes the state return to an earlier value (an event id or a few words); empty for a normal change
     must_show: bool = False  # the change itself must happen on the page in that scene
+    status: Literal["established", "observed", "hypothesis", "false_belief"] = "established"  # a state nobody has verified is not a fact: what is only suspected or wrongly believed is said so
 
 
 class Track(_Record):
@@ -119,6 +120,8 @@ class Scene(_Record):
     research: list[str] = []
     events: list[str] = []  # ledger event ids this scene carries
     end_state: Loose = ""  # where things stand when the scene ends
+    situation: Loose = ""  # optional: where things stand when the scene opens, including what the viewpoint character knows or believes
+    learns: Loose = ""  # optional: what is new by the end (information, a decision, a shift in a relationship)
 
 
 class TimelineEntry(_Record):

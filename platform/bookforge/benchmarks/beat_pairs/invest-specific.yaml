@@ -1,0 +1,21 @@
+id: invest-specific
+purpose: Two investigators find out whether someone has been using a closed lodge.
+pov: Nora
+setting: a holiday lodge closed for the winter
+characters:
+- name: Nora
+  facts:
+  - a detective inspector, methodical, dry humour
+- name: Dan
+  facts:
+  - her sergeant, experienced, practical
+situation: The lodge was winterised and locked three weeks ago; Nora and Dan are checking it because a neighbour reported a light on. Neither knows yet whether anyone was inside.
+learns: Someone may have been in the lodge recently, which is not yet proof of anything; Dan will find out who had access last week.
+beats:
+- Nora opens the fridge. It is empty except for one carton of milk, already opened, with a use-by date that falls after the lodge was closed.
+- "Dan offers a reasonable alternative: the park's small winter maintenance crew may have used the lodge. This is plausible and he says it as a colleague, not as a correction."
+- Nora agrees it is possible and does not treat the milk as proof of a crime; she points out only that the date means the carton was brought in after the closure.
+- Nora asks Dan to establish who had access to the lodge during the past week, which gives them a specific task rather than a conclusion.
+words:
+- 500
+- 1000

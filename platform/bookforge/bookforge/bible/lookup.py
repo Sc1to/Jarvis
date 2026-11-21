@@ -24,6 +24,7 @@ class TrackState:
     must_show: bool  # begins here AND has to happen on the page
     previous: str | None  # the value before this entry, if any
     version: int
+    status: str = "established"  # established | observed | hypothesis | false_belief
 
 
 def state_at(tracks: Iterable[Track], position: str, entities: Iterable[str] | None = None) -> list[TrackState]:
@@ -46,12 +47,12 @@ def state_at(tracks: Iterable[Track], position: str, entities: Iterable[str] | N
         if current is None:
             if str(t.starts_as).strip():  # carried in from an earlier book: true from the first scene until the plan changes it
                 states.append(TrackState(track_id=t.id, entity=t.entity, kind=t.kind, value=str(t.starts_as).strip(), since="start of the book",
-                                         begins_here=False, must_show=False, previous=None, version=t.version))
+                                         begins_here=False, must_show=False, previous=None, version=t.version, status="established"))
             continue
         begins = parse_position(current.from_).key == pos.key
         states.append(TrackState(
             track_id=t.id, entity=t.entity, kind=t.kind, value=current.value, since=parse_position(current.from_).id,
-            begins_here=begins, must_show=begins and current.must_show, previous=previous, version=t.version,
+            begins_here=begins, must_show=begins and current.must_show, previous=previous, version=t.version, status=current.status,
         ))
     return states
 

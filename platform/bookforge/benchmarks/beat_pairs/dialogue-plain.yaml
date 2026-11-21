@@ -1,0 +1,18 @@
+id: dialogue-plain
+purpose: Two colleagues decide what to do about a problem.
+pov: Ines
+setting: a quiet office after hours
+characters:
+- name: Ines
+  facts:
+  - a project lead, careful, dislikes drama
+- name: Tomas
+  facts:
+  - her deputy, easygoing, good with clients
+beats:
+- They discuss the problem with the contract.
+- They talk about options.
+- They agree on a plan.
+words:
+- 400
+- 800
