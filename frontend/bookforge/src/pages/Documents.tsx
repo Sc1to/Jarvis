@@ -226,6 +226,47 @@ function CastProposal({ base, docKey, text, items, onSaved, onCancel }: { base: 
   )
 }
 
+interface EventCandidate { scene: string; chapter: string; beat: string; parents: string[]; parent: string; text: string }
+
+/** Your edit is saved. These new beats bring in something that happens which the story-event ledger does not know, so the ledger checks cannot protect it: register each as a small complication of the chapter's own event, or leave it as detail. */
+function EventProposal({ base, items, onDone }: { base: string; items: EventCandidate[]; onDone: () => void }) {
+  const [rows, setRows] = useState(items.map((i) => ({ ...i, take: true })))
+  const [result, setResult] = useState<string | null>(null)
+  const act = useAction()
+  const set = (i: number, patch: Partial<EventCandidate & { take: boolean }>) => setRows((r) => r.map((x, k) => (k === i ? { ...x, ...patch } : x)))
+  const chosen = rows.filter((r) => r.take)
+  return (
+    <div className="space-y-3 rounded-md border border-sky-300 bg-sky-50 p-3 text-sm text-sky-900">
+      <p><strong>Your edit is saved.</strong> {rows.length === 1 ? 'One new beat' : `${rows.length} new beats`} bring in something that happens which the story-event ledger does not know. Register {rows.length === 1 ? 'it' : 'them'} as small complications (one line each) so the checks can protect {rows.length === 1 ? 'it' : 'them'} (no event told twice, in order, nothing leaked early), or leave {rows.length === 1 ? 'it' : 'them'} as plain detail.</p>
+      {rows.map((r, i) => (
+        <div key={`${r.scene}:${i}`} className="space-y-2 rounded-md border border-sky-200 bg-white p-2 text-slate-800">
+          <label className="flex items-start gap-2 text-xs font-medium"><input type="checkbox" checked={r.take} onChange={(e) => set(i, { take: e.target.checked })} className="mt-0.5 h-4 w-4" />
+            <span>Register in {r.scene}: <span className="font-normal italic">{r.beat}</span></span></label>
+          {r.take && (
+            <div className="flex flex-wrap gap-2">
+              <label className="min-w-0 flex-1 text-xs font-medium">What happens (one line)
+                <input value={r.text} onChange={(e) => set(i, { text: e.target.value })} className="mt-1 block min-h-10 w-full rounded-md border border-slate-300 px-2 text-sm font-normal" /></label>
+              <label className="text-xs font-medium">A complication of
+                <select value={r.parent} onChange={(e) => set(i, { parent: e.target.value })} className="mt-1 block min-h-10 rounded-md border border-slate-300 bg-white px-2 text-sm font-normal">
+                  {r.parents.map((p) => <option key={p}>{p}</option>)}</select></label>
+            </div>
+          )}
+        </div>
+      ))}
+      <ErrorBanner message={act.error} onClose={act.clear} />
+      {result && <p className="rounded-md border border-emerald-300 bg-emerald-50 p-2 text-emerald-900">{result}</p>}
+      <div className="flex flex-wrap gap-2">
+        {!result && <Button kind="primary" disabled={act.busy || !chosen.length} onClick={async () => {
+          let out: { added: string[] } | undefined
+          const ok = await act.run(async () => { out = await api(`${base}/scenes/events`, { method: 'POST', body: { items: chosen.map((r) => ({ scene: r.scene, parent: r.parent, text: r.text })) } }) as typeof out })
+          if (ok && out) { setResult(`Registered as ${out.added.join(', ')}. The chapters and scenes that tell them are marked out of date where the plan changed.`); onDone() }
+        }}>{act.busy ? 'Registering…' : `Register ${chosen.length}`}</Button>}
+        <Button disabled={act.busy} onClick={onDone}>{result ? 'Close' : 'Leave as detail'}</Button>
+      </div>
+    </div>
+  )
+}
+
 /** The files you review at the checkpoints. You can edit them here: an edit is checked first and refused, with the reason, if it breaks the structure. */
 export default function Documents({ series, book, docKey }: { series: string; book: string; docKey?: string }) {
   const base = `${bookPath(series, book)}/documents`
@@ -234,6 +275,7 @@ export default function Documents({ series, book, docKey }: { series: string; bo
   const [draft, setDraft] = useState<string | null>(null)  // the text being edited, or null when just reading
   const save = useAction()
   const [proposal, setProposal] = useState<CastItem[] | null>(null)  // what the edit being saved introduces
+  const [events, setEvents] = useState<EventCandidate[] | null>(null)  // saved beats that bring in developments the ledger lacks
 
   if (docKey) {
     if (doc.error) return <div className="space-y-3"><ErrorBanner message={doc.error} /><a className="text-sm underline" href={href({ series, book, tab: 'documents' })}>All documents</a></div>
@@ -242,6 +284,7 @@ export default function Documents({ series, book, docKey }: { series: string; bo
     return (
       <div className="space-y-3">
         <a className="text-sm text-slate-600 underline" onClick={() => { setDraft(null); save.clear() }} href={href({ series, book, tab: 'documents' })}>← All documents</a>
+        {events && <EventProposal base={base} items={events} onDone={() => { setEvents(null); doc.reload() }} />}
         {(d.key === 'style_guide' || d.key === 'style_suggested') && <StyleSuggest series={series} book={book} onDone={doc.reload} />}
         {LAYER_OF[d.key] && <WriteAgain series={series} book={book} docKey={d.key} />}
         <Card title={d.title} right={<span className="flex items-center gap-2 text-xs text-slate-500">{d.group}
@@ -255,10 +298,10 @@ export default function Documents({ series, book, docKey }: { series: string; bo
               {proposal && <CastProposal base={base} docKey={d.key} text={draft} items={proposal} onCancel={() => setProposal(null)} onSaved={() => { setProposal(null); setDraft(null); doc.reload(); list.reload() }} />}
               <div className="flex flex-wrap gap-2">
                 <Button kind="primary" disabled={save.busy || !!proposal} onClick={async () => {
-                  let res: { saved: boolean; needs_cast?: CastItem[] } | undefined
+                  let res: { saved: boolean; needs_cast?: CastItem[]; new_events?: EventCandidate[] } | undefined
                   const ok = await save.run(async () => { res = await api(`${base}/${encodeURIComponent(d.key)}`, { method: 'PUT', body: { text: draft } }) as typeof res })
                   if (ok && res?.needs_cast) setProposal(res.needs_cast)
-                  else if (ok) { setDraft(null); doc.reload() }
+                  else if (ok) { setDraft(null); doc.reload(); setEvents(res?.new_events?.length ? res.new_events : null) }
                 }}>{save.busy ? 'Saving…' : 'Save'}</Button>
                 <Button disabled={save.busy} onClick={() => { setDraft(null); setProposal(null); save.clear() }}>Cancel</Button>
               </div>
