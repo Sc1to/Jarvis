@@ -49,7 +49,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from . import inbox as inbox_mod, model_admin, books as book_mgmt, deletion, documents, push, assemble as assembly, export as exporting, bench as benchmarks, changes as change_requests, ops, report as morning_report, scenefiles, stale as staleness
+from . import intake as intake_mod, inbox as inbox_mod, model_admin, books as book_mgmt, deletion, documents, push, assemble as assembly, export as exporting, bench as benchmarks, changes as change_requests, ops, report as morning_report, scenefiles, stale as staleness
 from .bible import store
 from . import cast as cast_mod
 from .constants import CHECKPOINTS, LAYER_ORDER
@@ -234,6 +234,16 @@ class CastProposalItem(BaseModel):
     name: str = ""
     facts: list[str] = []
     alias_of: str | None = None  # the id was a second name for this existing entity
+
+
+class NewEventItem(BaseModel):
+    scene: str
+    parent: str
+    text: str
+
+
+class RegisterEventsBody(BaseModel):
+    items: list[NewEventItem]
 
 
 class DocWithCastBody(BaseModel):
@@ -601,11 +611,22 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
         if doc is None:
             raise HTTPException(404, f"no document '{key}'")
         require_idle(series)
+        old = documents.read(doc)[0] if doc.key == "scenes" else ""
         try:
             documents.save(project, doc, body.text)
         except documents.EditNeedsCast as e:  # the edit is fine except that it names things the cast lacks: say what to add, change nothing
             return ok({"key": doc.key, "saved": False, "needs_cast": e.proposal, "problems": e.problems})
-        return ok({"key": doc.key, "saved": True})
+        new_events = intake_mod.new_event_candidates(project, old, body.text) if doc.key == "scenes" else []  # saved; these beats bring in developments the ledger does not know
+        return ok({"key": doc.key, "saved": True, **({"new_events": new_events} if new_events else {})})
+
+    @router.post("/series/{series}/books/{book}/documents/scenes/events")
+    def register_events(series: str, book: str, body: RegisterEventsBody):
+        project = open_project(series, book)
+        require_idle(series)
+        try:
+            return ok({"added": intake_mod.register_events(project, [i.model_dump() for i in body.items])})
+        except intake_mod.IntakeError as e:
+            raise HTTPException(422, str(e)) from None
 
     @router.post("/series/{series}/books/{book}/documents/{key}/with-cast")
     def document_save_with_cast(series: str, book: str, key: str, body: DocWithCastBody):
