@@ -173,6 +173,8 @@ def build_report(project: Project, since: str | None = None, today: str | None =
         elif item.status == "stale":
             needs.append(f"Scene **{s.id}** is stale ({item.note or 'something it was built from changed'}): `stale --fix`.")
     for cr in changes.list_requests(project):
+        if cr.status == "applied" and cr.decided_by == "tool" and cr.kind in changes.OUTCOME:
+            needs.append(f"The tool applied change request **{cr.id}** ({cr.proposed_by}): " + "; ".join(changes.impact(project, cr)[:2]) + f". Wrong? `changes --undo {cr.id}`.")
         if cr.status == "pending":
             needs.append(f"Change request **{cr.id}** ({cr.proposed_by}, {cr.entity or cr.track}): plan '{cr.planned}', prose '{cr.observed}'; "
                          f"{len(cr.affects)} scene(s), {cr.scope}. `changes --approve {cr.id}` or `--reject {cr.id}`.")

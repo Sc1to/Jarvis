@@ -443,13 +443,25 @@ def redo_layer(project: Project, layer: str, note: str = "", cascade: bool = Fal
 
 def decide_change(project: Project, cr_id: str, approve: bool | None, dismiss: bool = False) -> change_requests.ChangeRequest:
     """Approve (the plan follows the prose), reject (the prose follows the plan) or dismiss (neither changes)."""
+    from . import resolve
+    before = change_requests.get(project, cr_id)
     if dismiss:
         decided = change_requests.dismiss(project, cr_id)
     else:
         decided = change_requests.approve(project, cr_id) if approve else change_requests.reject(project, cr_id)
+    if before.kind in change_requests.OUTCOME:  # what you said about the tool's suggestion: the record that earns (or loses) its trust
+        resolve.log_outcome(project, decided.id, change_requests.OUTCOME[before.kind], "accepted" if decided.status == "applied" else "overridden", "proposal")
     if project.config.git.commit_each_step:
         vcs.commit(project.root, f"{project.book}: change request {decided.id} {decided.status}")
     return decided
+
+
+def undo_change(project: Project, cr_id: str) -> change_requests.ChangeRequest:
+    """Take back a new cast entry or development the tool applied on its own."""
+    cr = change_requests.undo(project, cr_id)
+    if project.config.git.commit_each_step:
+        vcs.commit(project.root, f"{project.book}: took back the tool's decision {cr.id}")
+    return cr
 
 
 # ── rewriting scenes ──────────────────────────────────────────────────────────

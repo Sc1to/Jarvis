@@ -666,11 +666,16 @@ def changes_cmd(
     approve_id: Optional[str] = typer.Option(None, "--approve", help="Apply this change request to the plan"),
     reject_id: Optional[str] = typer.Option(None, "--reject", help="Keep the plan: the scene's prose will be patched to agree with it"),
     dismiss_id: Optional[str] = typer.Option(None, "--dismiss", help="Keep both: the prose stays as written and the plan is not changed"),
+    undo_id: Optional[str] = typer.Option(None, "--undo", help="Take back a cast entry or development the tool applied on its own"),
 ) -> None:
     """List change requests (the prose says something the plan does not); approve, reject or dismiss one."""
     try:
         project = Project.open(path, book)
         decided = None
+        if undo_id:
+            undone = ops.undo_change(project, undo_id)
+            typer.echo(f"{undone.id}: taken back; it is pending again (--approve, --reject or --dismiss)")
+            return
         if approve_id or reject_id or dismiss_id:
             decided = ops.decide_change(project, approve_id or reject_id or dismiss_id, bool(approve_id), dismiss=bool(dismiss_id))
         requests = change_requests.list_requests(project)
