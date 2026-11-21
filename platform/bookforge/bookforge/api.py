@@ -617,7 +617,7 @@ def create_router(get_data_dir: Callable[[], str]) -> APIRouter:
         except documents.EditNeedsCast as e:  # the edit is fine except that it names things the cast lacks: say what to add, change nothing
             return ok({"key": doc.key, "saved": False, "needs_cast": e.proposal, "problems": e.problems})
         new_events = intake_mod.new_event_candidates(project, old, body.text) if doc.key == "scenes" else []  # saved; these beats bring in developments the ledger does not know
-        return ok({"key": doc.key, "saved": True, "new_events": new_events})
+        return ok({"key": doc.key, "saved": True, **({"new_events": new_events} if new_events else {})})
 
     @router.post("/series/{series}/books/{book}/documents/scenes/events")
     def register_events(series: str, book: str, body: RegisterEventsBody):
