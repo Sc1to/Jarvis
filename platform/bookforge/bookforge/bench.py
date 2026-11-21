@@ -36,6 +36,7 @@ from .qc.support import voice_excerpt
 log = logging.getLogger("platform_bookforge.bench")
 
 SHIPPED_DIR = Path(__file__).resolve().parent.parent / "benchmarks"
+PAIRS_DIR = SHIPPED_DIR / "beat_pairs"  # the same scene with plain beats and with specific beats, for the beats x prompt experiment (docs/BOOKFORGE.md); run by name, never by default
 
 
 class BenchError(BookforgeError):
@@ -57,6 +58,8 @@ class Benchmark(BaseModel):
     characters: list[Character] = Field(min_length=1)
     beats: list[str] = Field(min_length=2, max_length=10)
     words: tuple[int, int] = (300, 600)
+    situation: str = ""  # optional, as in a planned scene
+    learns: str = ""
 
     def slug(self, name: str) -> str:
         s = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
@@ -64,7 +67,8 @@ class Benchmark(BaseModel):
 
     def scene(self) -> Scene:
         return Scene(id=self.id, purpose=self.purpose, pov=self.slug(self.pov), setting="setting",
-                     characters=[self.slug(c.name) for c in self.characters], beats=self.beats)
+                     characters=[self.slug(c.name) for c in self.characters], beats=self.beats,
+                     situation=self.situation, learns=self.learns)
 
     def briefing(self, project: Project) -> str:
         banned = load_banned(scenefiles.read(project.root / project.config.qc.banned_phrases) or "")
@@ -73,14 +77,17 @@ class Benchmark(BaseModel):
         parts = [("Style guide and sample", voice_excerpt(project))]
         if banned:
             parts.append(("Phrases never to use", "\n".join(f"- {b}" for b in banned[:80])))
-        parts += [("Cast", cast), ("This scene", f"Purpose: {self.purpose}\nViewpoint character: {self.pov}\nSetting: {self.setting}\n"
-                                                   f"Beats, in order (what happens and why, not how to write it):\n{beats}")]
+        opening = f"Where things stand when it opens (including what the viewpoint character knows or believes): {self.situation}\n" if self.situation.strip() else ""
+        closing = f"\nWhat is new by the end: {self.learns}" if self.learns.strip() else ""
+        parts += [("Cast", cast), ("This scene", f"Purpose: {self.purpose}\nViewpoint character: {self.pov}\nSetting: {self.setting}\n{opening}"
+                                                   f"Beats, in order (what happens and why, not how to write it):\n{beats}{closing}")]
         return "\n\n".join(f"## {h}\n\n{b}" for h, b in parts)
 
 
 def load_benchmarks(project: Project, only: list[str] | None = None) -> list[Benchmark]:
     found: dict[str, Benchmark] = {}
-    for directory in (SHIPPED_DIR, project.root / "workbench" / "benchmarks"):
+    directories = [SHIPPED_DIR, project.root / "workbench" / "benchmarks"] + ([PAIRS_DIR] if only else [])  # the pairs only when asked for by name
+    for directory in directories:
         for path in sorted(directory.glob("*.yaml")) if directory.is_dir() else []:
             try:
                 b = Benchmark.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))

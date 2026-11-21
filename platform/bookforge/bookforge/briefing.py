@@ -165,9 +165,18 @@ def build_briefing(project: Project, scene_id: str, max_tokens: int | None = Non
                         f"even after cutting everything that can be cut. Largest parts: {top}")
 
 
+def _scene_fp(scene: Scene) -> dict:
+    """The scene as fingerprinted: the optional planning fields count only when they are filled in, so scenes planned before they existed do not go stale."""
+    plain = scene.model_dump()
+    for key in ("situation", "learns"):
+        if not str(plain.get(key, "")).strip():
+            plain.pop(key, None)
+    return plain
+
+
 def _assemble(d: _Data, k: _Knobs) -> tuple[list[Section], Deps]:
     project, scene, chapter = d.project, d.scene, d.chapter
-    deps = Deps(scene=tag(scene.id, [scene.model_dump(), (d.timeline_entry(scene.id) or TimelineEntry(id=scene.id, day=1, time="?")).model_dump()]),
+    deps = Deps(scene=tag(scene.id, [_scene_fp(scene), (d.timeline_entry(scene.id) or TimelineEntry(id=scene.id, day=1, time="?")).model_dump()]),
                 parent=tag(chapter.id, chapter.model_dump()))
     sections: list[Section] = []
 
@@ -224,7 +233,7 @@ def _assemble(d: _Data, k: _Knobs) -> tuple[list[Section], Deps]:
         deps.bible += [tag(f"decision:{n.id}", [n.stance, n.rule]) for n in decisions]
 
     states = state_at(d.tracks, scene.id, entity_ids)
-    state_lines = []
+    state_lines, unsure_lines = [], []
     for s in states:
         line = f"- {d.name(s.entity)} ({s.kind}): {s.value}"
         if s.begins_here:
@@ -232,10 +241,14 @@ def _assemble(d: _Data, k: _Knobs) -> tuple[list[Section], Deps]:
                                 else "This state begins in this scene.")
             if s.previous:
                 line += f" Before this: {s.previous}"
-        state_lines.append(line)
-        deps.bible.append(tag(f"track:{s.track_id}", [s.since, s.value, s.must_show, s.previous]))
+        (state_lines if s.status in ("established", "observed") else unsure_lines).append(
+            line + (" (seen, not yet explained)" if s.status == "observed" else ""))
+        deps.bible.append(tag(f"track:{s.track_id}", [s.since, s.value, s.must_show, s.previous] + ([s.status] if s.status != "established" else [])))
     sections.append(Section("Story state at this scene (facts the scene must not contradict)",
                             "\n".join(state_lines) or "no tracked states apply yet"))
+    if unsure_lines:
+        sections.append(Section("Suspected or believed, NOT established (a character may think or say this; the narration and the other characters must not treat it as true)",
+                                "\n".join(unsure_lines)))
 
     when = d.timeline_entry(scene.id)
     prev = scenefiles.previous_scene(d.scenes, scene.id)
@@ -263,9 +276,11 @@ def _assemble(d: _Data, k: _Knobs) -> tuple[list[Section], Deps]:
 
     # 4. the scene, the chapter, research
     beats = "\n".join(f"{i}. {b}" for i, b in enumerate(scene.beats, 1))
+    opening = (f"Where things stand when it opens (including what the viewpoint character knows or believes): {scene.situation}\n" if str(scene.situation).strip() else "")
+    closing = (f"What is new by the end: {scene.learns}\n" if str(scene.learns).strip() else "")
     sections.append(Section("This scene", f"Scene {scene.id}\nPurpose: {scene.purpose}\nViewpoint character: {d.name(scene.pov)}\n"
-                                          f"Setting: {d.name(scene.setting)}\nPresent: {', '.join(d.name(c) for c in scene.characters)}\n"
-                                          f"Beats, in order (what happens and why, not how to write it):\n{beats}"))
+                                          f"Setting: {d.name(scene.setting)}\nPresent: {', '.join(d.name(c) for c in scene.characters)}\n{opening}"
+                                          f"Beats, in order (what happens and why, not how to write it):\n{beats}\n{closing}".rstrip()))
     sections.append(Section("This chapter", f"{chapter.id} {chapter.title}\nPurpose: {chapter.purpose}\nSummary: {chapter.summary}\n"
                                             f"Tension: {chapter.tension}/10"))
     fact_ids = list(dict.fromkeys(scene.research + chapter.research))[:MAX_RESEARCH_NOTES]

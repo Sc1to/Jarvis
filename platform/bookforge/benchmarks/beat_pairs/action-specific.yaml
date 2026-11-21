@@ -1,0 +1,21 @@
+id: action-specific
+purpose: A group crosses a dangerous place and one of them is in danger.
+pov: Kit
+setting: a rope footbridge over a gorge
+characters:
+- name: Kit
+  facts:
+  - a young surveyor, afraid of heights, good at keeping calm
+- name: Ravi
+  facts:
+  - the guide, older, knows the bridge
+situation: The bridge is the only way to the survey site before dark. Ravi has crossed it before, in the dry; it has rained for two days.
+learns: Kit finds she can act while afraid, and Ravi accepts that she saw the danger before he did.
+beats:
+- Ravi goes first and tests each plank with his weight; Kit follows two planks behind, holding the rope handline with both hands and counting planks to keep her mind off the drop.
+- Halfway across, the fourth plank behind Ravi gives way under Kit's left foot. She falls to one knee with her leg through the gap and the handline taking her weight; her pack is dragging her sideways.
+- Ravi starts back towards her. Kit tells him to stay where he is, because the second plank is cracked as well and two people on it will not hold. She frees her leg herself, slips the pack off one shoulder and pushes it ahead of her to him.
+- She crosses the rest on her hands and knees, along the edge where the planks are fixed to the beam. At the far side Ravi says only that she was right about the plank, and hands her the pack.
+words:
+- 400
+- 800

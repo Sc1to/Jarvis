@@ -1,0 +1,21 @@
+id: dialogue-specific
+purpose: Two colleagues decide what to do about a problem.
+pov: Ines
+setting: a quiet office after hours
+characters:
+- name: Ines
+  facts:
+  - a project lead, careful, dislikes drama
+- name: Tomas
+  facts:
+  - her deputy, easygoing, good with clients
+situation: Both already know the client has asked for delivery a month early; what they have not yet settled is how to answer. Ines is tired and wants it decided tonight.
+learns: They settle on a counter-offer, and Ines learns Tomas had already half-prepared it.
+beats:
+- "Ines states the problem in one sentence: the client wants delivery a month early and the contract allows it only with a penalty clause that favours them. Tomas has read the clause and does not repeat it."
+- Tomas proposes offering the early date for the first half of the work only, because it can be done with the current team. Ines asks what it costs; he gives a number he has already worked out.
+- "Ines is not convinced about the second half and says why: the supplier delay. Tomas agrees that is a risk and jokes that he had hoped she would not notice."
+- They agree to offer the split delivery and to say nothing about the supplier until it is confirmed. Ines asks him to draft it tonight; he says it is already in his bag.
+words:
+- 400
+- 800

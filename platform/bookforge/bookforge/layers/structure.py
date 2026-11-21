@@ -540,6 +540,12 @@ def _book_scene_checks(project, chapters: list[Chapter], scenes_all: list, timel
     if caused:
         healing.note(project, "scenes", "causes", caused)
     tracks_plain = [to_plain(t) for t in tracks]
+    from ..qc import beat_review
+    from ..validators import beats as beat_checks
+    scene_by_id = {s.id: s for s in scenes_all}
+    gate, gate_notes = beat_review.review_chapters(ctx, chapters, scenes_all, tracks, lambda sc: sizing.scene_word_range(project, sc)) if ctx is not None else ([], [])
+    if gate_notes:
+        healing.note(project, "scenes", "beats", gate_notes)
 
     def compute() -> list:
         sc = [s.model_dump() for s in scenes_all]
@@ -549,6 +555,7 @@ def _book_scene_checks(project, chapters: list[Chapter], scenes_all: list, timel
                  + state_checks.track_regressions(tracks_plain) + state_checks.location_conflicts(sc, tl, tracks_plain) + state_checks.day_regressions(sc, tl)
                  + state_checks.timeline_flat(tl) + ledger_checks.plan_vs_target(project, scenes_all)
                  + state_claims.scene_end_state_overreach(sc, ch, ev)
+                 + beat_checks.vague_beats(sc) + beat_checks.thin_for_range(sc, lambda x: sizing.scene_word_range(project, scene_by_id[x["id"]])) + gate
                  + name_checks.pov_findings(sc, constants, "scenes", ("purpose",)) + name_checks.unknown_names(sc, constants, "scenes", ("purpose",)))
         return accepted.apply(project, confirm_repeats(ctx, found), "scenes")
 
