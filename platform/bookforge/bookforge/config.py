@@ -168,6 +168,7 @@ class QC(_Strict):
     revise_flagged: bool = True  # a flagged scene is first revised from its saved text with what was found; only then written again
     critic_rewrite: bool = True  # beats_covered or pacing below the minimum: write the scene again once, with the critic's notes, instead of patching three lines
     critic_check: bool = True  # the rubric critique
+    intake_from_prose: bool = True  # a written scene that brings in a new person, place or development the plan lacks becomes a change request for you to decide (a model call only when a new name turns up)
     extract_observed: bool = True  # record what each accepted scene says about the tracked states
     review_structure: bool = True  # critic review of acts, chapters and scene plans against their parents
     confirm_repeats: bool = True  # each hard repeat finding is put to the critic once: only 'different events' downgrades it

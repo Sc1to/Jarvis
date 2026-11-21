@@ -160,6 +160,9 @@ def record_extraction(ctx: StepContext, scene: Scene, scenes: list[Scene], text:
                            sort_keys=False, allow_unicode=True), encoding="utf-8")
         paths += [scenefiles.extracted_path(project, sid), store.tracks_path(project)]
     filed = changes.file_gaps(project, scene, scenes, extraction.gaps)
+    if project.config.qc.intake_from_prose:  # something the prose brings in that the plan lacks: a new person or place, or a development no beat contains
+        from ..qc import intake_prose
+        filed += changes.file_new(project, scene, intake_prose.find(ctx, scene, text, review))
     if filed:
         review["extraction"]["change_requests"] = [c.id for c in filed]
         paths += changes.paths(project, filed)

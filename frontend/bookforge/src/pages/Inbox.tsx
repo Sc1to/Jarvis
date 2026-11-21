@@ -10,15 +10,15 @@ export function ChangeDiff({ cr, series, book, onDone, locked }: { cr: ChangeReq
   const act = useAction()
   const base = `${bookPath(series, book)}/changes/${cr.id}`
   const decide = async (what: 'approve' | 'reject' | 'dismiss') => {
-    const msg = what === 'approve' ? 'Change the plan to match the prose?'
+    const msg = what === 'approve' ? (cr.kind === 'entity' ? 'Add this to the cast, as the scene has it?' : cr.kind === 'event' ? 'Register this as a story event (a small complication) so the plan matches the prose?' : 'Change the plan to match the prose?')
       : what === 'dismiss' ? 'Leave both as they are? The prose stays and the plan is not changed.'
-      : 'Keep the plan? The scene will be patched to agree with it.'
+      : 'Keep the plan? The scene will be patched to agree with it (what it brings in is taken out).'
     if (window.confirm(msg) && (await act.run(() => post(`${base}/${what}`)))) onDone()
   }
   return (
     <div className="space-y-2">
       <p className="text-sm"><a className="font-medium underline" href={href({ series, book, tab: 'scene', id: cr.proposed_by })}>{cr.proposed_by}</a>
-        {' '}· {cr.entity || cr.track} · {cr.affects.length} scene(s) affected · {cr.scope === 'within_chapter' ? 'inside one chapter' : 'reaches later chapters'}</p>
+        {' '}· {cr.kind === 'entity' ? `new in the prose: ${cr.observed}` : cr.kind === 'event' ? 'a development the plan does not contain' : `${cr.entity || cr.track} · ${cr.affects.length} scene(s) affected · ${cr.scope === 'within_chapter' ? 'inside one chapter' : 'reaches later chapters'}`}</p>
       <div className="overflow-hidden rounded-md border border-slate-200 font-mono text-xs">
         <div className="whitespace-pre-wrap break-words bg-red-50 p-2 text-red-900">− plan: {cr.planned}</div>
         <div className="whitespace-pre-wrap break-words bg-emerald-50 p-2 text-emerald-900">+ prose: {cr.observed}</div>
@@ -27,7 +27,7 @@ export function ChangeDiff({ cr, series, book, onDone, locked }: { cr: ChangeReq
       <ErrorBanner message={act.error} onClose={act.clear} />
       {cr.status === 'pending' ? (
         <div className="flex gap-2">
-          <Button kind="primary" disabled={act.busy || locked} onClick={() => decide('approve')}>Approve (change the plan)</Button>
+          <Button kind="primary" disabled={act.busy || locked} onClick={() => decide('approve')}>{cr.kind === 'entity' ? 'Approve (add to the cast)' : cr.kind === 'event' ? 'Approve (register as an event)' : 'Approve (change the plan)'}</Button>
           <Button kind="danger" disabled={act.busy || locked} onClick={() => decide('reject')}>Reject (keep the plan)</Button>
           <Button disabled={act.busy || locked} onClick={() => decide('dismiss')}>Dismiss (keep the prose, leave the plan)</Button>
         </div>
